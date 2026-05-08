@@ -23,18 +23,25 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
 import { ChartNode } from "./nodes/chart-node";
 import { TextNode } from "./nodes/text-node";
+import { StickyNoteNode } from "./nodes/sticky-note-node";
+import { DividerNode } from "./nodes/divider-node";
 import { WebDesignCanvas } from "./web-design-canvas";
 import type { WorkspaceNode } from "@/types/workspace";
 
 const nodeTypes: NodeTypes = {
   chartNode: ChartNode,
   textNode: TextNode,
+  stickyNoteNode: StickyNoteNode,
+  dividerNode: DividerNode,
 };
 
 function normalizeWorkspaceNodes(nodes: WorkspaceNode[]): Node[] {
-  return nodes.map((node) =>
-    node.type === "textNode" ? { ...node, dragHandle: ".text-node-drag-handle" } : node
-  ) as Node[];
+  return nodes.map((node) => {
+    if (node.type === "textNode") return { ...node, dragHandle: ".text-node-drag-handle" };
+    if (node.type === "stickyNoteNode") return { ...node, dragHandle: ".sticky-note-drag-handle" };
+    if (node.type === "dividerNode") return { ...node, dragHandle: ".divider-node-drag-handle" };
+    return node;
+  }) as Node[];
 }
 
 export function WorkspaceCanvas() {

@@ -80,7 +80,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
 
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-cream bg-ivory cursor-grab">
-        <GripVertical className="w-4 h-4 text-stone-gray shrink-0" />
+        <GripVertical className="canvas-export-ignore w-4 h-4 text-stone-gray shrink-0" />
 
         {isEditing ? (
           <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -118,7 +118,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
           </div>
         )}
 
-        <div className="nodrag flex items-center gap-0.5 shrink-0">
+        <div className="canvas-export-ignore nodrag flex items-center gap-0.5 shrink-0">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

@@ -40,7 +40,26 @@ export type SectionNodeData = {
   height: number;
 };
 
-export type WorkspaceNodeData = ChartNodeData | TextNodeData | SectionNodeData;
+export type StickyNoteColor = "yellow" | "blue" | "green" | "pink";
+
+export type StickyNoteNodeData = {
+  type: "stickyNote";
+  content: string;
+  color: StickyNoteColor;
+  width: number;
+  height: number;
+  rotation?: number;
+};
+
+export type DividerNodeData = {
+  type: "divider";
+  label?: string;
+  lineStyle: "solid" | "dashed";
+  width: number;
+  rotation?: number;
+};
+
+export type WorkspaceNodeData = ChartNodeData | TextNodeData | SectionNodeData | StickyNoteNodeData | DividerNodeData;
 
 export type WorkspaceNode = Node<WorkspaceNodeData>;
 export type WorkspaceEdge = Edge;

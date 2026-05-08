@@ -181,7 +181,7 @@ function TextNodeComponent({ id, data, selected, width, height }: NodeProps) {
       onMouseLeave={() => setIsHovered(false)}
     >
       {(isHovered || selected) && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex -translate-x-full items-start pr-2 pt-1">
+        <div className="canvas-export-ignore pointer-events-none absolute inset-y-0 left-0 flex -translate-x-full items-start pr-2 pt-1">
           <button
             type="button"
             aria-label={t("workspace.textBlock.edit")}

@@ -9,6 +9,8 @@ import {
   LayoutTemplate,
   Loader2,
   MessageSquare,
+  Minus,
+  NotebookPen,
   Pencil,
   Type,
   X,
@@ -35,7 +37,7 @@ import {
   exportFixedCanvasToPng,
   exportFixedCanvasToPdf,
 } from "@/lib/workspace/canvas-export";
-import type { TextNodeData } from "@/types/workspace";
+import type { DividerNodeData, StickyNoteNodeData, TextNodeData } from "@/types/workspace";
 
 const DEFAULT_TEXT_NODE_WIDTH = 480;
 const DEFAULT_TEXT_NODE_HEIGHT = 220;
@@ -164,8 +166,52 @@ export function WorkspaceToolbar() {
     });
   };
 
+  const handleAddStickyNote = () => {
+    const rotations = [-2, 1.5, -0.8, 2.2];
+    const nodeData: StickyNoteNodeData = {
+      type: "stickyNote",
+      content: "",
+      color: (["yellow", "blue", "green", "pink"] as const)[nodes.length % 4],
+      width: 240,
+      height: 200,
+      rotation: rotations[nodes.length % rotations.length],
+    };
+    addNode({
+      id: `node-${generateId()}`,
+      type: "stickyNoteNode",
+      position: { x: 60 + (nodes.length % 4) * 260, y: 60 + Math.floor(nodes.length / 4) * 220 },
+      dragHandle: ".sticky-note-drag-handle",
+      width: 240,
+      height: 200,
+      initialWidth: 240,
+      initialHeight: 200,
+      data: nodeData,
+    });
+  };
+
+  const handleAddDivider = () => {
+    const nodeData: DividerNodeData = {
+      type: "divider",
+      lineStyle: "solid",
+      width: 480,
+      rotation: 0,
+    };
+    addNode({
+      id: `node-${generateId()}`,
+      type: "dividerNode",
+      position: { x: 50, y: 60 + nodes.length * 80 },
+      dragHandle: ".divider-node-drag-handle",
+      width: 480,
+      height: 24,
+      initialWidth: 480,
+      initialHeight: 24,
+      data: nodeData,
+    });
+  };
+
   return (
-    <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-border-cream bg-ivory shrink-0">
+    <header className="flex flex-col border-b border-border-cream bg-ivory shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
       <div className="flex min-w-[180px] flex-1 items-center gap-3">
         <div className="min-w-0">
           {isEditingTitle ? (
@@ -270,119 +316,145 @@ export function WorkspaceToolbar() {
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setActivePanel(isChatVisible ? "workspace" : "both")}
-        >
-          <MessageSquare className="w-4 h-4" />
-          {isChatVisible ? t("workspace.hideChat") : t("workspace.showChat")}
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActivePanel(isChatVisible ? "workspace" : "both")}
+          >
+            <MessageSquare className="w-4 h-4" />
+            {isChatVisible ? t("workspace.hideChat") : t("workspace.showChat")}
+          </Button>
 
-        <Separator orientation="vertical" className="h-6 mx-1" />
+          <Separator orientation="vertical" className="h-6 mx-1" />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              aria-label={t("workspace.canvasFormat.label")}
-              className="max-w-[180px]"
-            >
-              <LayoutTemplate className="w-4 h-4" />
-              <span className="truncate">{t(activeCanvasPreset.labelKey)}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            {CANVAS_FORMAT_PRESETS.map((preset) => (
-              <DropdownMenuItem
-                key={preset.id}
-                className="items-start justify-between gap-3"
-                onSelect={() => setCanvasFormat({ id: preset.id })}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={t("workspace.canvasFormat.label")}
+                className="max-w-[180px]"
               >
-                <span className="min-w-0">
-                  <span className="block truncate text-body-sm font-medium">
-                    {t(preset.labelKey)}
+                <LayoutTemplate className="w-4 h-4" />
+                <span className="truncate">{t(activeCanvasPreset.labelKey)}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {CANVAS_FORMAT_PRESETS.map((preset) => (
+                <DropdownMenuItem
+                  key={preset.id}
+                  className="items-start justify-between gap-3"
+                  onSelect={() => setCanvasFormat({ id: preset.id })}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-body-sm font-medium">
+                      {t(preset.labelKey)}
+                    </span>
+                    <span className="block truncate text-label text-stone-gray">
+                      {t(preset.descriptionKey)}
+                    </span>
                   </span>
-                  <span className="block truncate text-label text-stone-gray">
-                    {t(preset.descriptionKey)}
-                  </span>
-                </span>
-                {canvasFormat.id === preset.id && (
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-terracotta" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  {canvasFormat.id === preset.id && (
+                    <Check className="mt-1 h-4 w-4 shrink-0 text-terracotta" />
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-        <Separator orientation="vertical" className="h-6 mx-1" />
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" onClick={handleAddTextNode}>
-              <Type className="w-4 h-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t("workspace.addTextBlock")}</TooltipContent>
-        </Tooltip>
-
-        {!isWebDesign && (
-          <>
-            <Separator orientation="vertical" className="h-6 mx-1" />
-            {isInfinite ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleExportPng}
-                    disabled={isExporting}
-                    aria-label={t("workspace.export.png")}
-                  >
-                    {isExporting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Download className="w-4 h-4" />
-                    )}
-                    {isExporting ? t("workspace.export.exporting") : t("workspace.export.button")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.export.png")}</TooltipContent>
-              </Tooltip>
-            ) : (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={isExporting}
-                    aria-label={t("workspace.export.button")}
-                  >
-                    {isExporting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Download className="w-4 h-4" />
-                    )}
-                    {isExporting ? t("workspace.export.exporting") : t("workspace.export.button")}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuItem onSelect={handleExportPng}>
-                    <FileImage className="w-4 h-4 mr-2" />
-                    {t("workspace.export.png")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={handleExportPdf}>
-                    <FileText className="w-4 h-4 mr-2" />
-                    {t("workspace.export.pdf")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </>
-        )}
+          {!isWebDesign && (
+            <>
+              <Separator orientation="vertical" className="h-6 mx-1" />
+              {isInfinite ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportPng}
+                      disabled={isExporting}
+                      aria-label={t("workspace.export.png")}
+                    >
+                      {isExporting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      {isExporting ? t("workspace.export.exporting") : t("workspace.export.button")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("workspace.export.png")}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={isExporting}
+                      aria-label={t("workspace.export.button")}
+                    >
+                      {isExporting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      {isExporting ? t("workspace.export.exporting") : t("workspace.export.button")}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem onSelect={handleExportPng}>
+                      <FileImage className="w-4 h-4 mr-2" />
+                      {t("workspace.export.png")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={handleExportPdf}>
+                      <FileText className="w-4 h-4 mr-2" />
+                      {t("workspace.export.pdf")}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Content palette row — only for free-canvas modes */}
+      {!isWebDesign && (
+        <div className="flex items-center gap-1 border-t border-border-cream bg-parchment/50 px-4 py-1">
+          <span className="mr-1.5 text-label text-stone-gray shrink-0">
+            {t("workspace.addContent")}
+          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={handleAddTextNode}>
+                <Type className="w-3.5 h-3.5" />
+                <span className="text-xs">{t("workspace.addTextBlock")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.addTextBlock")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={handleAddStickyNote}>
+                <NotebookPen className="w-3.5 h-3.5" />
+                <span className="text-xs">{t("workspace.addStickyNote")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.addStickyNote")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={handleAddDivider}>
+                <Minus className="w-3.5 h-3.5" />
+                <span className="text-xs">{t("workspace.addDivider")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.addDivider")}</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
     </header>
   );
 }

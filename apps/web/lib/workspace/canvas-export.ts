@@ -10,6 +10,15 @@ function getViewportElement(): HTMLElement | null {
   return document.querySelector(".react-flow__viewport");
 }
 
+function exportFilter(domNode: HTMLElement): boolean {
+  if (domNode.classList) {
+    if (domNode.classList.contains("canvas-export-ignore")) return false;
+    if (domNode.classList.contains("react-flow__resize-control")) return false;
+    if (domNode.classList.contains("react-flow__node-resizer")) return false;
+  }
+  return true;
+}
+
 async function captureViewport(
   viewportEl: HTMLElement,
   outputWidth: number,
@@ -20,6 +29,7 @@ async function captureViewport(
     backgroundColor: "#f5f4ed",
     width: outputWidth,
     height: outputHeight,
+    filter: exportFilter,
     style: {
       width: `${outputWidth}px`,
       height: `${outputHeight}px`,

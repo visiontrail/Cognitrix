@@ -155,6 +155,40 @@ describe("GlobalSidebar", () => {
     });
   });
 
+  it("renames a conversation inline from the sidebar row", async () => {
+    renderWithProviders(<GlobalSidebar />);
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Rename conversation: Turnover Rate Investigation",
+      })
+    );
+
+    const input = screen.getByRole("textbox", { name: "Conversation name" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Q1 Turnover Deep Dive{Enter}");
+
+    await waitFor(() => {
+      expect(useChatStore.getState().sessions[0]?.title).toBe("Q1 Turnover Deep Dive");
+    });
+  });
+
+  it("cancels an inline conversation rename via Escape", async () => {
+    renderWithProviders(<GlobalSidebar />);
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Rename conversation: Turnover Rate Investigation",
+      })
+    );
+
+    const input = screen.getByRole("textbox", { name: "Conversation name" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Discarded title{Escape}");
+
+    expect(useChatStore.getState().sessions[0]?.title).toBe("Turnover Rate Investigation");
+  });
+
   it("deletes a workspace from its always-visible row action", async () => {
     renderWithProviders(<GlobalSidebar />);
 

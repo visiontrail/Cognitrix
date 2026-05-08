@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   MessageSquare,
   LayoutDashboard,
   Plus,
   PanelLeftClose,
+  Pencil,
   Trash2,
   BarChart3,
   Columns2,
@@ -15,6 +17,7 @@ import {
   PenLine,
   ChevronUp,
   Check,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -67,6 +70,7 @@ export function GlobalSidebar() {
   const sessions = useChatStore((s) => s.sessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
+  const renameSession = useChatStore((s) => s.renameSession);
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -193,6 +197,11 @@ export function GlobalSidebar() {
                     onClick={() => handleSelectSession(session.id)}
                     onDelete={() => deleteSession.mutate(session.id)}
                     deleteAriaLabel={t("sidebar.deleteConversation", { title: session.title })}
+                    onRename={(nextTitle) => renameSession(session.id, nextTitle)}
+                    renameAriaLabel={t("sidebar.renameConversation", { title: session.title })}
+                    renameInputAriaLabel={t("sidebar.renameConversationInput")}
+                    renameSaveAriaLabel={t("sidebar.renameConversationSave")}
+                    renameCancelAriaLabel={t("sidebar.renameConversationCancel")}
                   />
                 ))
               )}
@@ -371,6 +380,11 @@ function SidebarItem({
   onClick,
   onDelete,
   deleteAriaLabel,
+  onRename,
+  renameAriaLabel,
+  renameInputAriaLabel,
+  renameSaveAriaLabel,
+  renameCancelAriaLabel,
 }: {
   active: boolean;
   icon: React.ReactNode;
@@ -379,17 +393,67 @@ function SidebarItem({
   onClick: () => void;
   onDelete: () => void;
   deleteAriaLabel: string;
+  onRename?: (nextTitle: string) => void;
+  renameAriaLabel?: string;
+  renameInputAriaLabel?: string;
+  renameSaveAriaLabel?: string;
+  renameCancelAriaLabel?: string;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraft(title);
+    }
+  }, [title, isEditing]);
+
+  useEffect(() => {
+    if (isEditing) {
+      const node = inputRef.current;
+      if (node) {
+        node.focus();
+        node.select();
+      }
+    }
+  }, [isEditing]);
+
+  const startRename = () => {
+    setDraft(title);
+    setIsEditing(true);
+  };
+
+  const cancelRename = () => {
+    setDraft(title);
+    setIsEditing(false);
+  };
+
+  const commitRename = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === title) {
+      cancelRename();
+      return;
+    }
+    onRename?.(trimmed);
+    setIsEditing(false);
+  };
+
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onClick}
+      onClick={() => {
+        if (isEditing) return;
+        onClick();
+      }}
       onKeyDown={(e) => {
+        if (isEditing) return;
         if (e.key === "Enter" || e.key === " ") onClick();
       }}
       className={cn(
-        "group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 px-2 py-2 rounded-comfortable cursor-pointer transition-colors overflow-hidden",
+        "group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 px-2 py-2 rounded-comfortable transition-colors overflow-hidden",
+        isEditing ? "cursor-default" : "cursor-pointer",
         active
           ? "bg-warm-sand text-near-black shadow-ring-warm"
           : "text-olive-gray hover:bg-border-cream hover:text-near-black"
@@ -399,24 +463,93 @@ function SidebarItem({
         {icon}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-body-sm font-medium truncate" title={title}>
-          {title}
-        </p>
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitRename();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelRename();
+              }
+            }}
+            onBlur={commitRename}
+            aria-label={renameInputAriaLabel ?? "Rename"}
+            className="w-full rounded-subtle border border-ring-warm bg-ivory px-1.5 py-0.5 text-body-sm font-medium text-near-black focus:outline-none focus:ring-1 focus:ring-terracotta"
+            maxLength={120}
+          />
+        ) : (
+          <p className="text-body-sm font-medium truncate" title={title}>
+            {title}
+          </p>
+        )}
         <p className="text-label text-stone-gray truncate" title={subtitle}>
           {subtitle}
         </p>
       </div>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        className="shrink-0 opacity-100 p-1 rounded-subtle text-stone-gray hover:bg-error-crimson/10 hover:text-error-crimson focus-visible:text-error-crimson transition-colors"
-        aria-label={deleteAriaLabel}
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        {isEditing ? (
+          <>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation();
+                commitRename();
+              }}
+              className="p-1 rounded-subtle text-stone-gray hover:bg-warm-sand hover:text-terracotta focus-visible:text-terracotta transition-colors"
+              aria-label={renameSaveAriaLabel ?? "Save"}
+            >
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation();
+                cancelRename();
+              }}
+              className="p-1 rounded-subtle text-stone-gray hover:bg-warm-sand hover:text-near-black focus-visible:text-near-black transition-colors"
+              aria-label={renameCancelAriaLabel ?? "Cancel"}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        ) : (
+          <>
+            {onRename && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startRename();
+                }}
+                className="p-1 rounded-subtle text-stone-gray hover:bg-warm-sand hover:text-terracotta focus-visible:text-terracotta transition-colors"
+                aria-label={renameAriaLabel ?? "Rename"}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="opacity-100 p-1 rounded-subtle text-stone-gray hover:bg-error-crimson/10 hover:text-error-crimson focus-visible:text-error-crimson transition-colors"
+              aria-label={deleteAriaLabel}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

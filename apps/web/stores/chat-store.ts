@@ -40,6 +40,7 @@ type ChatState = {
     sessionId: string,
     updates: { lastMessage?: string; messageDelta?: number; title?: string }
   ) => void;
+  renameSession: (sessionId: string, title: string) => void;
   setComposerText: (text: string) => void;
   setIsComposing: (value: boolean) => void;
 
@@ -309,6 +310,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...state,
         sessions,
       };
+      persistChatState(nextState);
+      return { sessions };
+    }),
+
+  renameSession: (sessionId, title) =>
+    set((state) => {
+      const normalizedTitle = normalizeSessionTitle(title);
+      let changed = false;
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId || session.title === normalizedTitle) {
+          return session;
+        }
+        changed = true;
+        return { ...session, title: normalizedTitle };
+      });
+      if (!changed) {
+        return state;
+      }
+      const nextState = { ...state, sessions };
       persistChatState(nextState);
       return { sessions };
     }),

@@ -29,6 +29,10 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "sidebar.emptyWorkspaces": "No workspaces yet. Create one to compose reports.",
     "sidebar.deleteConversation": "Delete conversation: {{title}}",
     "sidebar.deleteWorkspace": "Delete workspace: {{title}}",
+    "sidebar.renameConversation": "Rename conversation: {{title}}",
+    "sidebar.renameConversationInput": "Conversation name",
+    "sidebar.renameConversationSave": "Save name",
+    "sidebar.renameConversationCancel": "Cancel rename",
     "sidebar.itemCount": "{{count}} items",
     "sidebar.footerTagline": "AI-Native BI Platform",
 
@@ -467,6 +471,10 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "sidebar.emptyWorkspaces": "还没有工作空间，创建一个开始搭建报告。",
     "sidebar.deleteConversation": "删除会话：{{title}}",
     "sidebar.deleteWorkspace": "删除工作空间：{{title}}",
+    "sidebar.renameConversation": "重命名会话：{{title}}",
+    "sidebar.renameConversationInput": "会话名称",
+    "sidebar.renameConversationSave": "保存名称",
+    "sidebar.renameConversationCancel": "取消重命名",
     "sidebar.itemCount": "{{count}} 个项目",
     "sidebar.footerTagline": "AI 原生 BI 平台",
 

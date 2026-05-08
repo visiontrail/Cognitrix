@@ -81,7 +81,7 @@ function TextNodeComponent({ id, data, selected, width, height }: NodeProps) {
           minHeight={MIN_TEXT_NODE_HEIGHT}
         />
 
-        <div className="flex items-center gap-2 border-b border-border-cream bg-ivory px-3 py-1.5">
+        <div className="text-node-drag-handle flex items-center gap-2 border-b border-border-cream bg-ivory px-3 py-1.5 cursor-grab active:cursor-grabbing">
           <span className="flex-1 text-label text-stone-gray">{t("workspace.textBlock")}</span>
           <div className="flex items-center gap-0.5 shrink-0">
             <Button
@@ -176,7 +176,7 @@ function TextNodeComponent({ id, data, selected, width, height }: NodeProps) {
   return (
     <div
       className={`text-node-drag-handle relative bg-transparent ${isHovered ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
-      style={{ width: nodeWidth, minHeight: nodeHeight }}
+      style={{ width: nodeWidth }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

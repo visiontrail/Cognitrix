@@ -10,6 +10,8 @@ import { useWorkspaceStore } from "../../stores/workspace-store";
 vi.mock("../../hooks/use-chat", () => ({
   useChatMessages: () => ({ isLoading: false }),
   useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useSendMessage: () => ({ mutate: vi.fn() }),
+  stopChatResponse: vi.fn(),
 }));
 
 describe("ChatPanel workspace binding", () => {
@@ -27,6 +29,7 @@ describe("ChatPanel workspace binding", () => {
       chatSidebarOpen: true,
       workspaceSidebarOpen: false,
       isSending: false,
+      sendingBySession: {},
       isSaving: false,
     });
 

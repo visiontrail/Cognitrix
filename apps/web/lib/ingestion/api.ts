@@ -50,6 +50,7 @@ export class IngestionApiError extends Error {
 export async function createIngestionUpload(input: {
   workspaceId: string;
   file: File;
+  signal?: AbortSignal;
 }): Promise<IngestionUploadResult> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const body = new FormData();
@@ -60,6 +61,7 @@ export async function createIngestionUpload(input: {
     method: "POST",
     headers,
     body,
+    signal: input.signal,
   });
 
   const payload = await readPayload(response);
@@ -129,6 +131,7 @@ export async function approveIngestionProposal(input: {
   jobId: string;
   proposalId: string;
   approvedAction: IngestionProposalAction;
+  signal?: AbortSignal;
   userOverrides?: {
     targetTable?: string;
     timeGrain?: IngestionTimeGrain;
@@ -149,7 +152,8 @@ export async function approveIngestionProposal(input: {
             }
           : undefined,
       },
-      "ingestion_approve_failed"
+      "ingestion_approve_failed",
+      input.signal
     )
   );
 
@@ -225,6 +229,7 @@ export async function* streamIngestionPlan(input: {
   jobId: string;
   conversationId?: string;
   message?: string;
+  signal?: AbortSignal;
 }): AsyncGenerator<IngestionSSEEvent> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const response = await fetch(`${API_BASE_URL}/ingestion/plan/stream`, {
@@ -236,6 +241,7 @@ export async function* streamIngestionPlan(input: {
       conversation_id: input.conversationId,
       message: input.message,
     }),
+    signal: input.signal,
   });
   if (!response.ok || !response.body) {
     const payload = await response.json().catch(() => null);
@@ -252,6 +258,7 @@ export async function* streamIngestionSetupConfirm(input: {
   conversationId?: string;
   message?: string;
   setup: IngestionCatalogSetupSeed;
+  signal?: AbortSignal;
 }): AsyncGenerator<IngestionSSEEvent> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const response = await fetch(`${API_BASE_URL}/ingestion/setup/confirm/stream`, {
@@ -264,6 +271,7 @@ export async function* streamIngestionSetupConfirm(input: {
       message: input.message,
       setup: toApiSetupSeed(input.setup),
     }),
+    signal: input.signal,
   });
   if (!response.ok || !response.body) {
     const payload = await response.json().catch(() => null);
@@ -278,6 +286,7 @@ export async function* streamIngestionExecute(input: {
   workspaceId: string;
   jobId: string;
   proposalId: string;
+  signal?: AbortSignal;
 }): AsyncGenerator<IngestionSSEEvent> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const response = await fetch(`${API_BASE_URL}/ingestion/execute/stream`, {
@@ -288,6 +297,7 @@ export async function* streamIngestionExecute(input: {
       job_id: input.jobId,
       proposal_id: input.proposalId,
     }),
+    signal: input.signal,
   });
   if (!response.ok || !response.body) {
     const payload = await response.json().catch(() => null);
@@ -298,7 +308,12 @@ export async function* streamIngestionExecute(input: {
   }
 }
 
-async function postJson(path: string, body: Record<string, unknown>, fallbackCode: string): Promise<unknown> {
+async function postJson(
+  path: string,
+  body: Record<string, unknown>,
+  fallbackCode: string,
+  signal?: AbortSignal
+): Promise<unknown> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
@@ -307,6 +322,7 @@ async function postJson(path: string, body: Record<string, unknown>, fallbackCod
       ...headers,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   const payload = await readPayload(response);

@@ -23,7 +23,7 @@ function ThinkingDots() {
 export function MessageList({ sessionId }: { sessionId: string }) {
   const { t } = useI18n();
   const messages = useChatStore((s) => s.messagesBySession[sessionId] ?? EMPTY_MESSAGES);
-  const isSending = useUIStore((s) => s.isSending);
+  const isSending = useUIStore((s) => Boolean(s.sendingBySession[sessionId]));
   // Hide the fallback indicator once AgentTrace is live in the placeholder message
   const hasLiveTrace = useChatStore((s) => {
     const msgs = s.messagesBySession[sessionId] ?? EMPTY_MESSAGES;
@@ -55,7 +55,7 @@ export function MessageList({ sessionId }: { sessionId: string }) {
             <div className="w-8 h-8 rounded-full bg-warm-sand flex items-center justify-center shrink-0">
               <Brain className="w-4 h-4 text-terracotta" />
             </div>
-            <span className="text-[11px] text-stone-gray select-none">思考中</span>
+            <span className="text-[11px] text-stone-gray select-none">{t("chat.thinking")}</span>
             <ThinkingDots />
           </div>
         )}

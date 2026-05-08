@@ -14,6 +14,7 @@ type UIState = {
   workspaceSidebarOpen: boolean;
   chatCanvasSplitRatio: number;
   isSending: boolean;
+  sendingBySession: Record<string, boolean>;
   isSaving: boolean;
   appMode: AppMode;
 
@@ -24,6 +25,7 @@ type UIState = {
   toggleChatSidebar: () => void;
   toggleWorkspaceSidebar: () => void;
   setIsSending: (value: boolean) => void;
+  setSessionSending: (sessionId: string, value: boolean) => void;
   setIsSaving: (value: boolean) => void;
   setAppMode: (mode: AppMode) => void;
 };
@@ -34,6 +36,7 @@ export const useUIStore = create<UIState>((set) => ({
   workspaceSidebarOpen: false,
   chatCanvasSplitRatio: 0.5,
   isSending: false,
+  sendingBySession: {},
   isSaving: false,
   appMode: loadAppMode(),
 
@@ -44,6 +47,19 @@ export const useUIStore = create<UIState>((set) => ({
   toggleChatSidebar: () => set((s) => ({ chatSidebarOpen: !s.chatSidebarOpen })),
   toggleWorkspaceSidebar: () => set((s) => ({ workspaceSidebarOpen: !s.workspaceSidebarOpen })),
   setIsSending: (value) => set({ isSending: value }),
+  setSessionSending: (sessionId, value) =>
+    set((state) => {
+      const sendingBySession = { ...state.sendingBySession };
+      if (value) {
+        sendingBySession[sessionId] = true;
+      } else {
+        delete sendingBySession[sessionId];
+      }
+      return {
+        sendingBySession,
+        isSending: Object.keys(sendingBySession).length > 0,
+      };
+    }),
   setIsSaving: (value) => set({ isSaving: value }),
   setAppMode: (mode) => {
     setStoredAppMode(mode);

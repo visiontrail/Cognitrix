@@ -65,6 +65,7 @@ describe("GlobalSidebar", () => {
       chatSidebarOpen: true,
       workspaceSidebarOpen: false,
       isSending: false,
+      sendingBySession: {},
       isSaving: false,
     });
   });

@@ -105,7 +105,7 @@ export function useSendMessage() {
   const appendMessage = useChatStore((s) => s.appendMessage);
   const touchSession = useChatStore((s) => s.touchSession);
   const addAsset = useAssetStore((s) => s.addAsset);
-  const setIsSending = useUIStore((s) => s.setIsSending);
+  const setSessionSending = useUIStore((s) => s.setSessionSending);
 
   return useMutation({
     mutationFn: async ({
@@ -121,58 +121,70 @@ export function useSendMessage() {
       approvedAction?: IngestionProposalAction;
       preferredChartType?: QueryChartType;
     }) => {
-      setIsSending(true);
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
       if (!workspaceId) {
         throw new Error(t("chat.toast.noWorkspace"));
       }
-      const trimmedContent = content.trim();
-      const pendingApproval = useChatStore.getState().pendingIngestionBySession[sessionId];
-      if (attachment) {
-        useChatStore.getState().clearPendingIngestionApproval(sessionId);
-        return runIngestionConversationResponse({
-          sessionId,
-          workspaceId,
-          content: trimmedContent || t("chat.ingestion.defaultRequirement"),
-          attachment,
-          t,
-        });
-      }
-      if (pendingApproval) {
-        const options = collectApprovalOptions(pendingApproval.plan);
-        const resolvedAction =
-          approvedAction && options.includes(approvedAction)
-            ? approvedAction
-            : resolvePendingApprovalAction({
-                rawInput: trimmedContent,
-                pending: pendingApproval,
-              });
-        if (!resolvedAction) {
-          throw new Error(
-            t("chat.ingestion.awaitingApprovalInvalidChoice", {
-              options: formatPendingApprovalOptions({
-                pending: pendingApproval,
-                t,
-              }),
-            })
-          );
+      const abortController = new AbortController();
+      activeChatControllers.set(sessionId, abortController);
+      try {
+        const trimmedContent = content.trim();
+        const pendingApproval = useChatStore.getState().pendingIngestionBySession[sessionId];
+        if (attachment) {
+          useChatStore.getState().clearPendingIngestionApproval(sessionId);
+          return await runIngestionConversationResponse({
+            sessionId,
+            workspaceId,
+            content: trimmedContent || t("chat.ingestion.defaultRequirement"),
+            attachment,
+            signal: abortController.signal,
+            t,
+          });
         }
-        return runIngestionApprovalResponse({
+        if (pendingApproval) {
+          const options = collectApprovalOptions(pendingApproval.plan);
+          const resolvedAction =
+            approvedAction && options.includes(approvedAction)
+              ? approvedAction
+              : resolvePendingApprovalAction({
+                  rawInput: trimmedContent,
+                  pending: pendingApproval,
+                });
+          if (!resolvedAction) {
+            throw new Error(
+              t("chat.ingestion.awaitingApprovalInvalidChoice", {
+                options: formatPendingApprovalOptions({
+                  pending: pendingApproval,
+                  t,
+                }),
+              })
+            );
+          }
+          return await runIngestionApprovalResponse({
+            sessionId,
+            pending: pendingApproval,
+            approvedAction: resolvedAction,
+            signal: abortController.signal,
+            t,
+          });
+        }
+        return await streamAssistantResponse({
           sessionId,
-          pending: pendingApproval,
-          approvedAction: resolvedAction,
+          content: trimmedContent,
+          preferredChartType,
+          workspaceId,
+          signal: abortController.signal,
           t,
         });
+      } finally {
+        if (activeChatControllers.get(sessionId) === abortController) {
+          activeChatControllers.delete(sessionId);
+        }
+        setSessionSending(sessionId, false);
       }
-      return streamAssistantResponse({
-        sessionId,
-        content: trimmedContent,
-        preferredChartType,
-        workspaceId,
-        t,
-      });
     },
     onMutate: ({ sessionId, content, attachment }) => {
+      setSessionSending(sessionId, true);
       const normalizedContent = formatUserMessageContent({
         content,
         attachmentName: attachment?.name,
@@ -232,8 +244,8 @@ export function useSendMessage() {
         messageDelta: 1,
       });
     },
-    onSettled: () => {
-      setIsSending(false);
+    onSettled: (_data, _error, { sessionId }) => {
+      setSessionSending(sessionId, false);
     },
   });
 }
@@ -304,18 +316,31 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "gauge",
 ]);
 type TranslateFn = (key: string, params?: Record<string, string | number | null | undefined>) => string;
+const activeChatControllers = new Map<string, AbortController>();
+
+export function stopChatResponse(sessionId: string): boolean {
+  const controller = activeChatControllers.get(sessionId);
+  if (!controller) {
+    return false;
+  }
+  controller.abort();
+  activeChatControllers.delete(sessionId);
+  return true;
+}
 
 async function streamAssistantResponse({
   sessionId,
   content,
   preferredChartType,
   workspaceId,
+  signal,
   t,
 }: {
   sessionId: string;
   content: string;
   preferredChartType?: QueryChartType;
   workspaceId: string;
+  signal?: AbortSignal;
   t: TranslateFn;
 }): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
   const messageId = `msg-${generateId()}`;
@@ -332,43 +357,18 @@ async function streamAssistantResponse({
     timestamp: new Date().toISOString(),
   };
   store.appendMessage(sessionId, placeholder);
+  const removePlaceholder = () => {
+    useChatStore.setState((s) => ({
+      messagesBySession: {
+        ...s.messagesBySession,
+        [sessionId]: (s.messagesBySession[sessionId] ?? []).filter((m) => m.id !== messageId),
+      },
+    }));
+  };
 
   const aiMessage = buildMessageWithChartPreference({ content, preferredChartType });
   const authContext = getActiveAuthContext(DEFAULT_AUTH_CONTEXT);
   const authorizationHeader = await getAuthorizationHeader(API_BASE_URL, authContext);
-  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authorizationHeader,
-    },
-    body: JSON.stringify({
-      user_id: authContext.userId,
-      project_id: authContext.projectId,
-      workspace_id: workspaceId,
-      role: authContext.role,
-      department: authContext.department,
-      clearance: authContext.clearance,
-      dataset_table: DEFAULT_DATASET_TABLE,
-      message: aiMessage,
-      preferred_chart_type: preferredChartType ?? null,
-      conversation_id: sessionId,
-      request_id: generateId(),
-    }),
-  });
-
-  if (!response.ok || !response.body) {
-    useChatStore.getState().endTrace(messageId, "error");
-    // Remove placeholder so onError can append the error message cleanly
-    const current = useChatStore.getState().messagesBySession[sessionId] ?? [];
-    useChatStore.setState((s) => ({
-      messagesBySession: {
-        ...s.messagesBySession,
-        [sessionId]: current.filter((m) => m.id !== messageId),
-      },
-    }));
-    throw new Error(`chat_stream_failed_${response.status}`);
-  }
 
   let finalText = "";
   let latestSpec: unknown = null;
@@ -376,77 +376,119 @@ async function streamAssistantResponse({
   let planningStepCounter = 0;
   let toolStepCount = 0;
 
-  for await (const streamEvent of parseSSEStream(response.body)) {
-    const payload = isRecord(streamEvent.data) ? streamEvent.data : {};
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authorizationHeader,
+      },
+      body: JSON.stringify({
+        user_id: authContext.userId,
+        project_id: authContext.projectId,
+        workspace_id: workspaceId,
+        role: authContext.role,
+        department: authContext.department,
+        clearance: authContext.clearance,
+        dataset_table: DEFAULT_DATASET_TABLE,
+        message: aiMessage,
+        preferred_chart_type: preferredChartType ?? null,
+        conversation_id: sessionId,
+        request_id: generateId(),
+      }),
+      signal,
+    });
 
-    if (streamEvent.event === "planning") {
-      const text = String(payload.text ?? "");
-      useChatStore.getState().pushTraceStep(messageId, {
-        kind: "planning",
-        id: `planning-${planningStepCounter++}`,
-        text,
-        startedAt: Date.now(),
-      });
-      continue;
+    if (!response.ok || !response.body) {
+      useChatStore.getState().endTrace(messageId, "error");
+      removePlaceholder();
+      throw new Error(`chat_stream_failed_${response.status}`);
     }
 
-    if (streamEvent.event === "tool_use") {
-      const stepId = String(payload.step_id ?? `tool-${toolStepCount}`);
-      const startedAt = typeof payload.started_at === "number" ? (payload.started_at as number) * 1000 : Date.now();
-      const tool = String(payload.tool_name ?? "unknown");
-      const args = isRecord(payload.arguments) ? payload.arguments : {};
-      toolStepCount++;
-      useChatStore.getState().pushTraceStep(messageId, {
-        kind: "tool",
-        id: stepId,
-        tool,
-        args,
-        startedAt,
-        status: "running",
-      });
-      continue;
-    }
+    for await (const streamEvent of parseSSEStream(response.body)) {
+      const payload = isRecord(streamEvent.data) ? streamEvent.data : {};
 
-    if (streamEvent.event === "tool_result") {
-      const stepId = String(payload.step_id ?? "");
-      const completedAt = typeof payload.completed_at === "number" ? (payload.completed_at as number) * 1000 : Date.now();
-      const startedAt = typeof payload.started_at === "number" ? (payload.started_at as number) * 1000 : undefined;
-      const status = payload.status === "error" ? "error" : "ok";
-      const result = payload.result;
-      const resultPreview = computeResultPreview(result);
-      const patch: Record<string, unknown> = { completedAt, status, result, resultPreview };
-      if (startedAt !== undefined) {
-        patch.startedAt = startedAt;
+      if (streamEvent.event === "planning") {
+        const text = String(payload.text ?? "");
+        useChatStore.getState().pushTraceStep(messageId, {
+          kind: "planning",
+          id: `planning-${planningStepCounter++}`,
+          text,
+          startedAt: Date.now(),
+        });
+        continue;
       }
-      useChatStore.getState().patchTraceStep(messageId, stepId, patch as Parameters<typeof store.patchTraceStep>[2]);
-      continue;
-    }
 
-    if (streamEvent.event === "error") {
-      if (!finalText) {
-        finalText = String(payload.message ?? t("chat.requestFailed"));
+      if (streamEvent.event === "tool_use") {
+        const stepId = String(payload.step_id ?? `tool-${toolStepCount}`);
+        const startedAt = typeof payload.started_at === "number" ? (payload.started_at as number) * 1000 : Date.now();
+        const tool = String(payload.tool_name ?? "unknown");
+        const args = isRecord(payload.arguments) ? payload.arguments : {};
+        toolStepCount++;
+        useChatStore.getState().pushTraceStep(messageId, {
+          kind: "tool",
+          id: stepId,
+          tool,
+          args,
+          startedAt,
+          status: "running",
+        });
+        continue;
       }
-      useChatStore.getState().pushTraceStep(messageId, {
-        kind: "error",
-        id: `error-${Date.now()}`,
-        message: String(payload.message ?? ""),
-        code: payload.code ? String(payload.code) : undefined,
-        at: Date.now(),
-      });
-      terminalReason = "error";
-      continue;
-    }
 
-    if (streamEvent.event === "spec") {
-      latestSpec = payload.spec ?? null;
-      continue;
-    }
+      if (streamEvent.event === "tool_result") {
+        const stepId = String(payload.step_id ?? "");
+        const completedAt = typeof payload.completed_at === "number" ? (payload.completed_at as number) * 1000 : Date.now();
+        const startedAt = typeof payload.started_at === "number" ? (payload.started_at as number) * 1000 : undefined;
+        const status = payload.status === "error" ? "error" : "ok";
+        const result = payload.result;
+        const resultPreview = computeResultPreview(result);
+        const patch: Record<string, unknown> = { completedAt, status, result, resultPreview };
+        if (startedAt !== undefined) {
+          patch.startedAt = startedAt;
+        }
+        useChatStore.getState().patchTraceStep(messageId, stepId, patch as Parameters<typeof store.patchTraceStep>[2]);
+        continue;
+      }
 
-    if (streamEvent.event === "final") {
-      finalText = String(payload.text ?? finalText);
-      terminalReason = "final";
-      continue;
+      if (streamEvent.event === "error") {
+        if (!finalText) {
+          finalText = String(payload.message ?? t("chat.requestFailed"));
+        }
+        useChatStore.getState().pushTraceStep(messageId, {
+          kind: "error",
+          id: `error-${Date.now()}`,
+          message: String(payload.message ?? ""),
+          code: payload.code ? String(payload.code) : undefined,
+          at: Date.now(),
+        });
+        terminalReason = "error";
+        continue;
+      }
+
+      if (streamEvent.event === "spec") {
+        latestSpec = payload.spec ?? null;
+        continue;
+      }
+
+      if (streamEvent.event === "final") {
+        finalText = String(payload.text ?? finalText);
+        terminalReason = "final";
+        continue;
+      }
     }
+  } catch (error) {
+    if (isAbortError(error)) {
+      useChatStore.getState().endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
+    useChatStore.getState().endTrace(messageId, "error");
+    removePlaceholder();
+    throw error;
   }
 
   useChatStore.getState().endTrace(messageId, terminalReason);
@@ -584,12 +626,14 @@ async function runIngestionConversationResponse({
   workspaceId,
   content,
   attachment,
+  signal,
   t,
 }: {
   sessionId: string;
   workspaceId: string;
   content: string;
   attachment: File;
+  signal?: AbortSignal;
   t: TranslateFn;
 }): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
   const messageId = `msg-${generateId()}`;
@@ -617,8 +661,16 @@ async function runIngestionConversationResponse({
 
   let upload: IngestionUploadResult;
   try {
-    upload = await createIngestionUpload({ workspaceId, file: attachment });
+    upload = await createIngestionUpload({ workspaceId, file: attachment, signal });
   } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
     store.endTrace(messageId, "error");
     removePlaceholder();
     throw err;
@@ -628,7 +680,7 @@ async function runIngestionConversationResponse({
 
   try {
     const { decisionPayload: planPayload, hasError: planHasError } = await consumeIngestionStreamIntoTrace(
-      streamIngestionPlan({ workspaceId, jobId: upload.jobId, conversationId: sessionId, message: content }),
+      streamIngestionPlan({ workspaceId, jobId: upload.jobId, conversationId: sessionId, message: content, signal }),
       messageId,
     );
     traceHasError = planHasError;
@@ -648,6 +700,7 @@ async function runIngestionConversationResponse({
           conversationId: sessionId,
           message: content,
           setup: plan.suggestedCatalogSeed,
+          signal,
         }),
         messageId,
       );
@@ -690,6 +743,14 @@ async function runIngestionConversationResponse({
     };
     return { assistantMessage, chartAsset: undefined, preAppended: true };
   } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
     store.endTrace(messageId, "error");
     removePlaceholder();
     throw err;
@@ -700,11 +761,13 @@ async function runIngestionApprovalResponse({
   sessionId,
   pending,
   approvedAction,
+  signal,
   t,
 }: {
   sessionId: string;
   pending: PendingIngestionApproval;
   approvedAction: IngestionProposalAction;
+  signal?: AbortSignal;
   t: TranslateFn;
 }): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
   const messageId = `msg-${generateId()}`;
@@ -742,8 +805,17 @@ async function runIngestionApprovalResponse({
         approvedAction === "time_partitioned_new_table"
           ? { timeGrain: plan.proposal.timeGrain }
           : undefined,
+      signal,
     });
   } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
     store.endTrace(messageId, "error");
     removePlaceholder();
     throw err;
@@ -761,6 +833,7 @@ async function runIngestionApprovalResponse({
           workspaceId: plan.workspaceId,
           jobId: plan.jobId,
           proposalId: plan.proposalId,
+          signal,
         }),
         messageId,
       );
@@ -818,6 +891,14 @@ async function runIngestionApprovalResponse({
     };
     return { assistantMessage, chartAsset: undefined, preAppended: true };
   } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
     store.endTrace(messageId, "error");
     removePlaceholder();
     throw err;
@@ -843,6 +924,36 @@ function createUserMessage(sessionId: string, content: string): ChatMessage {
     content,
     timestamp: new Date().toISOString(),
   };
+}
+
+function buildStoppedAssistantMessage({
+  sessionId,
+  messageId,
+  t,
+}: {
+  sessionId: string;
+  messageId: string;
+  t: TranslateFn;
+}): ChatMessage {
+  const trace = useChatStore.getState().traceByMessageId[messageId];
+  const traceSteps = trace?.steps ?? [];
+  const toolCallCount = traceSteps.filter((s) => s.kind === "tool").length;
+  const durationMs = trace ? (trace.endedAt ?? Date.now()) - trace.startedAt : 0;
+  return {
+    id: messageId,
+    sessionId,
+    role: "assistant",
+    content: t("chat.stopped"),
+    timestamp: new Date().toISOString(),
+    traceSummary:
+      traceSteps.length > 0
+        ? { stepCount: toolCallCount, durationMs, status: "incomplete" }
+        : undefined,
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function formatUserMessageContent({

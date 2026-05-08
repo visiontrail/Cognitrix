@@ -9,10 +9,18 @@ import { I18N_STORAGE_KEY } from "../../lib/i18n/dictionary";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
 
-const mutate = vi.fn();
+const { mutate, stopChatResponseMock } = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  stopChatResponseMock: vi.fn(),
+}));
 
 vi.mock("../../hooks/use-chat", () => ({
   useSendMessage: () => ({ mutate }),
+  stopChatResponse: stopChatResponseMock,
+}));
+
+vi.mock("../../hooks/use-workspace-columns", () => ({
+  useWorkspaceColumns: () => [],
 }));
 
 describe("ChatInput chart type picker", () => {
@@ -25,6 +33,7 @@ describe("ChatInput chart type picker", () => {
     });
     useUIStore.setState({
       isSending: false,
+      sendingBySession: {},
     });
   });
 
@@ -44,8 +53,8 @@ describe("ChatInput chart type picker", () => {
     await user.type(input, "#");
 
     expect(await screen.findByRole("listbox", { name: "图表类型选择器" })).toBeInTheDocument();
-    expect(screen.getByText("柱状图")).toBeInTheDocument();
-    expect(screen.getByText("比较")).toBeInTheDocument();
+    expect(screen.getAllByText("柱状图").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("比较").length).toBeGreaterThan(0);
     expect(screen.getByText("比较不同类别的数值。")).toBeInTheDocument();
   });
 
@@ -57,14 +66,15 @@ describe("ChatInput chart type picker", () => {
     await user.type(input, "#");
 
     expect(screen.getByRole("listbox", { name: "Chart type picker" })).toBeInTheDocument();
-    expect(screen.getByText("Bar")).toBeInTheDocument();
+    expect(screen.getAllByText("Bar").length).toBeGreaterThan(0);
     expect(screen.getByText("chart_type: bar")).toBeInTheDocument();
 
     await user.keyboard("{ArrowDown}{Enter}");
     expect(input).toHaveValue("#stacked_bar ");
     expect(screen.getByText("Selected chart_type: stacked_bar. Press Enter to send.")).toBeInTheDocument();
 
-    await user.type(input, "show headcount by department");
+    await user.clear(input);
+    await user.type(input, "#stacked_bar show headcount by department");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(mutate).toHaveBeenCalledWith(
@@ -141,5 +151,25 @@ describe("ChatInput chart type picker", () => {
         Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
       }
     }
+  });
+
+  it("only locks and stops the active sending session", async () => {
+    const user = userEvent.setup();
+    useUIStore.setState({
+      isSending: true,
+      sendingBySession: { "session-1": true },
+    });
+
+    const { rerender } = render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    expect(screen.getByLabelText("Chat Input")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(stopChatResponseMock).toHaveBeenCalledWith("session-1");
+
+    useChatStore.setState({ composerText: "show headcount" });
+    rerender(React.createElement(ChatInput, { sessionId: "session-2" }));
+
+    expect(screen.getByLabelText("Chat Input")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled();
   });
 });

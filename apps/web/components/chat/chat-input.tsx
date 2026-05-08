@@ -1,12 +1,12 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { Send, Loader2, Paperclip, X } from "lucide-react";
+import { Send, Paperclip, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { useSendMessage } from "@/hooks/use-chat";
+import { stopChatResponse, useSendMessage } from "@/hooks/use-chat";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceColumns, type ColumnMentionItem } from "@/hooks/use-workspace-columns";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const composerText = useChatStore((s) => s.composerText);
   const setComposerText = useChatStore((s) => s.setComposerText);
   const pendingApproval = useChatStore((s) => s.pendingIngestionBySession[sessionId]);
-  const isSending = useUIStore((s) => s.isSending);
+  const isSending = useUIStore((s) => Boolean(s.sendingBySession[sessionId]));
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const sendMessage = useSendMessage();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -113,6 +113,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     sessionId,
     setComposerText,
   ]);
+
+  const handleStop = useCallback(() => {
+    stopChatResponse(sessionId);
+  }, [sessionId]);
 
   const handleApprovalOption = useCallback(
     (approvedAction: IngestionProposalAction) => {
@@ -438,14 +442,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
           <Button
             size="default"
-            variant="default"
-            onClick={handleSubmit}
-            disabled={(!composerText.trim() && !selectedFile) || isSending || inputLockedByApproval}
+            variant={isSending ? "secondary" : "default"}
+            onClick={isSending ? handleStop : handleSubmit}
+            disabled={isSending ? false : (!composerText.trim() && !selectedFile) || inputLockedByApproval}
             className="shrink-0 h-[44px] w-[44px] rounded-generous p-0 self-center"
-            aria-label={t("chat.send")}
+            aria-label={isSending ? t("chat.stop") : t("chat.send")}
           >
             {isSending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Square className="w-4 h-4 fill-current" />
             ) : (
               <Send className="w-4 h-4" />
             )}

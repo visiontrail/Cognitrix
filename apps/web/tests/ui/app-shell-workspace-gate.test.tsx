@@ -56,6 +56,7 @@ describe("AppShell workspace gate", () => {
       workspaceSidebarOpen: false,
       chatCanvasSplitRatio: 0.5,
       isSending: false,
+      sendingBySession: {},
       isSaving: false,
     });
   });

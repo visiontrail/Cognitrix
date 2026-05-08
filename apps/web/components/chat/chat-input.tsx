@@ -409,7 +409,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               }
               rows={1}
               disabled={isSending || inputLockedByApproval}
-              className="w-full resize-none rounded-generous border border-border-cream bg-parchment px-4 py-3 text-body-sm text-near-black placeholder:text-stone-gray focus:outline-none focus:ring-2 focus:ring-focus-blue focus:border-focus-blue transition-colors disabled:opacity-50 min-h-[44px] max-h-[160px] scrollbar-thin"
+              className="w-full resize-none rounded-generous border border-border-cream bg-parchment px-4 py-2 text-body-sm text-near-black placeholder:text-stone-gray focus:outline-none focus:ring-2 focus:ring-focus-blue focus:border-focus-blue transition-colors disabled:opacity-50 min-h-[44px] max-h-[160px] scrollbar-thin"
               style={{
                 height: "44px",
                 minHeight: "44px",

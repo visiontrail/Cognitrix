@@ -61,13 +61,14 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
       ? t("chat.trace.errored", { duration: durationStr })
       : `${t("chat.trace.thoughtFor", { duration: durationStr })} · ${t("chat.trace.toolCallsCount", { count: traceSummary!.stepCount })}`;
     return (
-      <div className="mb-2">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span
           className={`text-[10px] select-none cursor-help ${hasError ? "text-terracotta" : "text-stone-gray"}`}
           title={t("chat.trace.bodiesUnavailableAfterReload")}
         >
           {label}
         </span>
+        <span className="text-[10px] text-stone-gray/75 select-none">{t("chat.trace.aiDisclaimer")}</span>
       </div>
     );
   }
@@ -149,14 +150,17 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
 
   return (
     <div className="mb-2">
-      <button
-        type="button"
-        className={`text-[10px] underline-offset-2 hover:underline select-none ${hasError ? "text-terracotta" : "text-stone-gray"}`}
-        onClick={() => setTraceState(messageId, isExpanded ? "collapsed" : "expanded")}
-        title={isExpanded ? t("chat.trace.collapse") : t("chat.trace.expand")}
-      >
-        {chipLabel}
-      </button>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <button
+          type="button"
+          className={`text-[10px] underline-offset-2 hover:underline select-none ${hasError ? "text-terracotta" : "text-stone-gray"}`}
+          onClick={() => setTraceState(messageId, isExpanded ? "collapsed" : "expanded")}
+          title={isExpanded ? t("chat.trace.collapse") : t("chat.trace.expand")}
+        >
+          {chipLabel}
+        </button>
+        <span className="text-[10px] text-stone-gray/75 select-none">{t("chat.trace.aiDisclaimer")}</span>
+      </div>
 
       {isExpanded && steps.length > 0 && (
         <div className="mt-1 max-h-[60vh] overflow-y-auto border-l border-border-cream pl-3 space-y-0.5">

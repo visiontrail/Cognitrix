@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -156,36 +155,33 @@ export function GlobalSidebar() {
         />
       </nav>
 
-      <ScrollArea className="flex-1">
-        <div className="pl-3 pr-5 py-3">
-          {/* Chat Sessions */}
-          <div className="mb-4">
-            <div className="sticky top-0 z-10 bg-ivory flex items-center justify-between mb-2 px-1 py-0.5">
-              <span className="text-label text-stone-gray uppercase tracking-wider font-medium">
-                {t("sidebar.section.conversations")}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t("sidebar.action.newConversation")}
-                    onClick={handleNewChat}
-                    disabled={createSession.isPending}
-                    className="h-6 w-6 rounded-subtle border border-ring-warm bg-ivory text-near-black shadow-ring-warm hover:bg-warm-sand hover:text-near-black"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("sidebar.action.newConversation")}</TooltipContent>
-              </Tooltip>
-            </div>
-
-            <div className="space-y-0.5">
+      <div className="grid min-h-0 flex-1 grid-rows-[7fr_3fr]">
+        {/* Chat Sessions — fixed upper ~70% with independent scroll */}
+        <div className="flex min-h-0 min-w-0 flex-col border-b border-border-cream">
+          <div className="flex shrink-0 items-center justify-between px-3 pr-5 pt-3 pb-2">
+            <span className="text-label text-stone-gray uppercase tracking-wider font-medium">
+              {t("sidebar.section.conversations")}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("sidebar.action.newConversation")}
+                  onClick={handleNewChat}
+                  disabled={createSession.isPending}
+                  className="h-6 w-6 rounded-subtle border border-ring-warm bg-ivory text-near-black shadow-ring-warm hover:bg-warm-sand hover:text-near-black"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("sidebar.action.newConversation")}</TooltipContent>
+            </Tooltip>
+          </div>
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="space-y-0.5 px-3 pr-5 pb-3">
               {sessions.length === 0 ? (
-                <p className="text-caption text-stone-gray px-2 py-3">
-                  {t("sidebar.emptyConversations")}
-                </p>
+                <p className="text-caption text-stone-gray px-2 py-3">{t("sidebar.emptyConversations")}</p>
               ) : (
                 sessions.map((session) => (
                   <SidebarItem
@@ -206,38 +202,35 @@ export function GlobalSidebar() {
                 ))
               )}
             </div>
+          </ScrollArea>
+        </div>
+
+        {/* Workspaces — fixed lower ~30% with independent scroll */}
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <div className="flex shrink-0 items-center justify-between px-3 pr-5 pt-3 pb-2">
+            <span className="text-label text-stone-gray uppercase tracking-wider font-medium">
+              {t("sidebar.section.workspaces")}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("sidebar.action.newWorkspace")}
+                  onClick={handleNewWorkspace}
+                  disabled={createWorkspace.isPending}
+                  className="h-6 w-6 rounded-subtle border border-ring-warm bg-ivory text-near-black shadow-ring-warm hover:bg-warm-sand hover:text-near-black"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("sidebar.action.newWorkspace")}</TooltipContent>
+            </Tooltip>
           </div>
-
-          <Separator className="my-3" />
-
-          {/* Workspaces */}
-          <div>
-            <div className="sticky top-0 z-10 bg-ivory flex items-center justify-between mb-2 px-1 py-0.5">
-              <span className="text-label text-stone-gray uppercase tracking-wider font-medium">
-                {t("sidebar.section.workspaces")}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t("sidebar.action.newWorkspace")}
-                    onClick={handleNewWorkspace}
-                    disabled={createWorkspace.isPending}
-                    className="h-6 w-6 rounded-subtle border border-ring-warm bg-ivory text-near-black shadow-ring-warm hover:bg-warm-sand hover:text-near-black"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("sidebar.action.newWorkspace")}</TooltipContent>
-              </Tooltip>
-            </div>
-
-            <div className="space-y-0.5">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="space-y-0.5 px-3 pr-5 pb-3">
               {workspaces.length === 0 ? (
-                <p className="text-caption text-stone-gray px-2 py-3">
-                  {t("sidebar.emptyWorkspaces")}
-                </p>
+                <p className="text-caption text-stone-gray px-2 py-3">{t("sidebar.emptyWorkspaces")}</p>
               ) : (
                 workspaces.map((ws) => (
                   <SidebarItem
@@ -253,9 +246,9 @@ export function GlobalSidebar() {
                 ))
               )}
             </div>
-          </div>
+          </ScrollArea>
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Footer */}
       <div className="border-t border-border-cream px-3 py-2">

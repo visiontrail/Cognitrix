@@ -2,10 +2,11 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { GlobalSidebar } from "../../components/shared/global-sidebar";
+import * as workspaceApi from "../../lib/workspace/api";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
 import { useWorkspaceStore } from "../../stores/workspace-store";
@@ -20,13 +21,17 @@ function renderWithProviders(ui: React.ReactElement) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>{ui}</TooltipProvider>
+      <TooltipProvider>
+        {/* Sidebar uses flex/grid fill; give a viewport height like AppShell */}
+        <div className="h-[720px]">{ui}</div>
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }
 
 describe("GlobalSidebar", () => {
   beforeEach(() => {
+    vi.spyOn(workspaceApi, "deleteWorkspace").mockResolvedValue(undefined);
     useChatStore.setState({
       sessions: [
         {
@@ -71,6 +76,7 @@ describe("GlobalSidebar", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     window.localStorage.clear();
     useChatStore.setState({
       sessions: [],

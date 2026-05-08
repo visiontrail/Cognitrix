@@ -18,7 +18,6 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
-    ClaudeSDKError,
     HookMatcher,
     PermissionResultAllow,
     PermissionResultDeny,
@@ -617,31 +616,52 @@ class AgentRuntime:
             run_context=run_context,
         )
 
-        try:
-            async with self._sdk_client_factory(options=options) as client:
-                await client.query(request.message, session_id=session.agent_session_id)
+        async def execute_sdk_turn(sdk_options: ClaudeAgentOptions) -> None:
+            nonlocal final_answer
+            async with self._sdk_client_factory(options=sdk_options) as client:
+                await client.query(request.message)
                 async for message in client.receive_response():
                     candidate = self._consume_sdk_message(message=message, run_context=run_context)
                     if candidate is not None:
                         final_answer = candidate
-        except ClaudeSDKError as exc:
-            self._flush_pending_sdk_tool_results(run_context)
-            if _has_tool_observation(tool_trace):
-                recovered = _recover_final_answer_from_tool_trace(
-                    tool_trace=tool_trace, request_message=request.message
-                )
-                final_answer = recovered if recovered is not None else _recover_failed_final_answer_from_tool_trace(
-                    tool_trace=tool_trace, request_message=request.message, sdk_error=str(exc),
-                )
-            else:
-                raise AgentRuntimeError(
-                    code="AGENT_SDK_FAILED",
-                    message=f"Claude Agent SDK failed: {exc}",
-                    should_fallback=False,
-                ) from exc
+
+        try:
+            await execute_sdk_turn(options)
         except Exception as exc:
             self._flush_pending_sdk_tool_results(run_context)
-            if _has_tool_observation(tool_trace):
+            if _is_missing_claude_session_error(exc) and session.turn_count > 0 and not tool_trace:
+                logger.warning(
+                    "agent_sdk_resume_missing conversation_id=%s request_id=%s agent_session_id=%s; retrying with fresh SDK session",
+                    request.conversation_id,
+                    request.request_id,
+                    session.agent_session_id,
+                )
+                session.agent_session_id = str(uuid.uuid4())
+                retry_options = self._build_sdk_options(
+                    request=request,
+                    session=session,
+                    system_text=system_text,
+                    run_context=run_context,
+                    force_fresh_session=True,
+                )
+                try:
+                    await execute_sdk_turn(retry_options)
+                except Exception as retry_exc:
+                    self._flush_pending_sdk_tool_results(run_context)
+                    if _has_tool_observation(tool_trace):
+                        recovered = _recover_final_answer_from_tool_trace(
+                            tool_trace=tool_trace, request_message=request.message
+                        )
+                        final_answer = recovered if recovered is not None else _recover_failed_final_answer_from_tool_trace(
+                            tool_trace=tool_trace, request_message=request.message, sdk_error=str(retry_exc),
+                        )
+                    else:
+                        raise AgentRuntimeError(
+                            code="AGENT_SDK_FAILED",
+                            message=f"Claude Agent SDK failed: {retry_exc}",
+                            should_fallback=False,
+                        ) from retry_exc
+            elif _has_tool_observation(tool_trace):
                 recovered = _recover_final_answer_from_tool_trace(
                     tool_trace=tool_trace, request_message=request.message
                 )
@@ -746,6 +766,7 @@ class AgentRuntime:
         session: AgentSessionState,
         system_text: str,
         run_context: SDKRunContext,
+        force_fresh_session: bool = False,
     ) -> ClaudeAgentOptions:
         async def can_use_tool(
             tool_name: str,
@@ -817,7 +838,11 @@ class AgentRuntime:
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = (
                 self.settings.anthropic_default_haiku_model.strip() or model
             )
-        resume_session = session.agent_session_id if session.turn_count > 0 else None
+        resume_session = (
+            session.agent_session_id
+            if session.turn_count > 0 and session.agent_session_id and not force_fresh_session
+            else None
+        )
 
         return ClaudeAgentOptions(
             tools=[],
@@ -830,7 +855,7 @@ class AgentRuntime:
                 "PostToolUseFailure": [HookMatcher(matcher=None, hooks=[post_tool_failure])],
             },
             permission_mode="default",
-            session_id=None if resume_session else session.agent_session_id,
+            session_id=None,
             resume=resume_session,
             max_turns=self.settings.agent_max_tool_steps,
             model=model,
@@ -1738,6 +1763,11 @@ def _parse_sdk_tool_response_text(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # LLM message helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_missing_claude_session_error(error: Exception) -> bool:
+    message = str(error)
+    return "No conversation found with session ID" in message
 
 
 

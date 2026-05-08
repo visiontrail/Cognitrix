@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,11 @@ def install_scripted_sdk_client(runtime: Any, scenario: Any) -> None:
             self.options = options
             self.prompt = ""
             self.session_id = ""
+            self.cli_session_id = str(
+                getattr(options, "resume", None)
+                or getattr(options, "session_id", None)
+                or f"session-{uuid.uuid4()}"
+            )
 
         async def __aenter__(self) -> "_ScriptedClaudeSDKClient":
             return self
@@ -152,7 +158,7 @@ def install_scripted_sdk_client(runtime: Any, scenario: Any) -> None:
         async def receive_response(self):  # type: ignore[no-untyped-def]
             script = scenario(self.prompt, self.options)
             final_answer = dict(script.get("final_answer") or {})
-            session_id = str(script.get("session_id") or self.session_id)
+            session_id = str(script.get("session_id") or self.cli_session_id)
 
             for index, call in enumerate(script.get("tool_calls") or [], start=1):
                 raw_name = str(call["name"])

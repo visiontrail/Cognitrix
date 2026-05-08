@@ -454,6 +454,87 @@ def test_sdk_tool_execution_errors_are_model_visible_observations(monkeypatch, t
     assert parsed["error"]["code"] == "NO_DATASET_TABLES"
 
 
+def test_agent_runtime_retries_fresh_session_when_claude_resume_is_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+    runtime = get_agent_runtime()
+    stored = AgentSessionState(
+        conversation_id="agent-runtime-conv-stale-claude-session",
+        agent_session_id="stale-claude-session",
+        turn_count=1,
+        last_tool_trace=[
+            {
+                "event": "tool_result",
+                "tool_name": "execute_readonly_sql",
+                "status": "success",
+                "result": {"rows": [{"level": "P6", "metric_value": 2}]},
+            }
+        ],
+    )
+    runtime._store.save(stored)
+
+    class _MissingResumeThenFreshSDKClient:
+        def __init__(self, *, options):  # type: ignore[no-untyped-def]
+            self.options = options
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            if self.options.resume == "stale-claude-session":
+                raise RuntimeError("No conversation found with session ID: stale-claude-session")
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+            return False
+
+        async def query(self, prompt: str, session_id: str = "default") -> None:
+            _ = (prompt, session_id)
+
+        async def receive_response(self):  # type: ignore[no-untyped-def]
+            final_answer = {
+                "chart_type": "funnel",
+                "title": "职级分布",
+                "x_key": "level",
+                "y_key": "metric_value",
+                "series_key": None,
+                "metric_name": "headcount",
+                "rows": [{"level": "P6", "metric_value": 2}],
+                "conclusion": "已基于保留的上下文恢复回答。",
+                "scope": "NTN中心",
+                "anomalies": "none",
+            }
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id="fresh-claude-session",
+                result=json.dumps(final_answer, ensure_ascii=False),
+                structured_output=final_answer,
+            )
+
+    runtime._sdk_client_factory = _MissingResumeThenFreshSDKClient
+    result = runtime.run_turn(
+        AgentRequest(
+            conversation_id="agent-runtime-conv-stale-claude-session",
+            request_id="agent-runtime-req-stale-claude-session",
+            user_id="alice",
+            project_id="north",
+            dataset_table="employees_wide",
+            message="请用漏斗图输出NTN中心所有人员的职级分布",
+            role="viewer",
+            department="HR",
+            clearance=1,
+            preferred_chart_type="funnel",
+        )
+    )
+
+    assert result.final_status == "completed"
+    assert result.agent_session_id == "fresh-claude-session"
+    assert result.spec["chart_type"] == "funnel"
+    assert result.ai_state["turn_count"] == 2
+
+
 def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
     monkeypatch, tmp_path: Path
 ) -> None:

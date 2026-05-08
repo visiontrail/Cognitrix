@@ -105,6 +105,28 @@ def test_sdk_options_target_deepseek_anthropic_gateway(monkeypatch, tmp_path) ->
     assert options.env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-chat"
     assert options.env["API_TIMEOUT_MS"] == "600000"
     assert options.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert options.session_id is None
+    assert options.resume is None
+
+    session.turn_count = 1
+    resumed_options = runtime._build_sdk_options(
+        request=request,
+        session=session,
+        system_text="system",
+        run_context=run_context,
+    )
+    assert resumed_options.session_id is None
+    assert resumed_options.resume == "session-deepseek"
+
+    fresh_options = runtime._build_sdk_options(
+        request=request,
+        session=session,
+        system_text="system",
+        run_context=run_context,
+        force_fresh_session=True,
+    )
+    assert fresh_options.session_id is None
+    assert fresh_options.resume is None
     clear_agent_runtime_cache()
     get_settings.cache_clear()
 

@@ -91,7 +91,7 @@ export function PortalPageClient({ initialPageId }: { initialPageId?: string }) 
   }, [pageId]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f7f4eb] text-[#2f332f]">
+    <div className="flex h-screen min-h-0 overflow-hidden bg-[#f7f4eb] text-[#2f332f]">
       <PortalWorkspaceSidebar
         workspaces={workspaces}
         activePageId={pageId}
@@ -99,7 +99,7 @@ export function PortalPageClient({ initialPageId }: { initialPageId?: string }) 
         onOpenDesigner={openDesigner}
         onOpenChat={openChat}
       />
-      <main className="relative flex min-w-0 flex-1">
+      <main className="relative flex min-h-0 min-w-0 flex-1">
         {workspaces.length === 0 && !workspaceError ? (
           <div className="flex flex-1 items-center justify-center text-sm text-[#777166]">
             {t("portal.emptyList")}

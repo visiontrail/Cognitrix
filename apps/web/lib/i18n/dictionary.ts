@@ -452,7 +452,14 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "portal.chatOpenAriaLabel": "Open portal chat",
     "portal.chatCloseAriaLabel": "Close chat",
     "portal.loadingChart": "Loading chart...",
-    "portal.chatDone": "Done."
+    "portal.chatDone": "Done.",
+    "portal.chatHistory": "Chat History",
+    "portal.chatNoHistory": "No previous chats",
+    "portal.chatDeleteSession": "Delete conversation",
+    "portal.chatSessionDefault": "New conversation",
+    "portal.chatBackToPortal": "Back to workspace",
+    "portal.chatContextChart": "Focused on chart:",
+    "portal.chatContextPage": "Analyzing workspace"
   },
   "zh-CN": {
     "app.loadingWorkspaces": "正在加载工作空间...",
@@ -883,6 +890,13 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "portal.chatOpenAriaLabel": "打开对话",
     "portal.chatCloseAriaLabel": "关闭对话",
     "portal.loadingChart": "图表加载中...",
-    "portal.chatDone": "完成。"
+    "portal.chatDone": "完成。",
+    "portal.chatHistory": "对话历史",
+    "portal.chatNoHistory": "暂无历史对话",
+    "portal.chatDeleteSession": "删除对话",
+    "portal.chatSessionDefault": "新对话",
+    "portal.chatBackToPortal": "返回工作空间",
+    "portal.chatContextChart": "当前关注图表：",
+    "portal.chatContextPage": "分析工作空间"
   }
 };

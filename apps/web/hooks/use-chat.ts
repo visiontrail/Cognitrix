@@ -102,7 +102,7 @@ export function useDeleteSession() {
 }
 
 export function useSendMessage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const appendMessage = useChatStore((s) => s.appendMessage);
   const touchSession = useChatStore((s) => s.touchSession);
   const addAsset = useAssetStore((s) => s.addAsset);
@@ -177,6 +177,7 @@ export function useSendMessage() {
           workspaceId,
           signal: abortController.signal,
           t,
+          responseLocale: locale,
         });
       } finally {
         if (activeChatControllers.get(sessionId) === abortController) {
@@ -337,6 +338,7 @@ async function streamAssistantResponse({
   workspaceId,
   signal,
   t,
+  responseLocale,
 }: {
   sessionId: string;
   content: string;
@@ -344,6 +346,7 @@ async function streamAssistantResponse({
   workspaceId: string;
   signal?: AbortSignal;
   t: TranslateFn;
+  responseLocale: string;
 }): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
   const messageId = `msg-${generateId()}`;
   const traceStartedAt = Date.now();
@@ -395,6 +398,7 @@ async function streamAssistantResponse({
         dataset_table: DEFAULT_DATASET_TABLE,
         message: aiMessage,
         preferred_chart_type: preferredChartType ?? null,
+        response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),
       }),

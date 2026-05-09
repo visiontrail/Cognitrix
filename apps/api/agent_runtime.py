@@ -328,6 +328,7 @@ class AgentRequest:
     clearance: int
     workspace_id: str | None = None
     preferred_chart_type: str | None = None
+    response_locale: str | None = None
 
 
 @dataclass(slots=True)
@@ -577,6 +578,7 @@ class AgentRuntime:
 
         tool_trace: list[dict[str, Any]] = []
         events: list[tuple[str, dict[str, Any]]] = []
+        response_locale = _normalize_response_locale(request.response_locale, request.message)
         system_text = self._build_system_text(request=request, session=session)
         run_context = SDKRunContext(
             request=request,
@@ -602,6 +604,7 @@ class AgentRuntime:
                     "agent_session_id": session.agent_session_id,
                     "dataset_table": request.dataset_table,
                     "message": request.message,
+                    "response_locale": response_locale,
                     "runtime_backend": SDK_RUNTIME_BACKEND,
                     "sdk_tools": list(SDK_ALLOWED_TOOL_NAMES),
                 },
@@ -650,10 +653,15 @@ class AgentRuntime:
                     self._flush_pending_sdk_tool_results(run_context)
                     if _has_tool_observation(tool_trace):
                         recovered = _recover_final_answer_from_tool_trace(
-                            tool_trace=tool_trace, request_message=request.message
+                            tool_trace=tool_trace,
+                            request_message=request.message,
+                            locale=response_locale,
                         )
                         final_answer = recovered if recovered is not None else _recover_failed_final_answer_from_tool_trace(
-                            tool_trace=tool_trace, request_message=request.message, sdk_error=str(retry_exc),
+                            tool_trace=tool_trace,
+                            request_message=request.message,
+                            sdk_error=str(retry_exc),
+                            locale=response_locale,
                         )
                     else:
                         raise AgentRuntimeError(
@@ -663,10 +671,15 @@ class AgentRuntime:
                         ) from retry_exc
             elif _has_tool_observation(tool_trace):
                 recovered = _recover_final_answer_from_tool_trace(
-                    tool_trace=tool_trace, request_message=request.message
+                    tool_trace=tool_trace,
+                    request_message=request.message,
+                    locale=response_locale,
                 )
                 final_answer = recovered if recovered is not None else _recover_failed_final_answer_from_tool_trace(
-                    tool_trace=tool_trace, request_message=request.message, sdk_error=str(exc),
+                    tool_trace=tool_trace,
+                    request_message=request.message,
+                    sdk_error=str(exc),
+                    locale=response_locale,
                 )
             else:
                 raise AgentRuntimeError(
@@ -686,6 +699,7 @@ class AgentRuntime:
                     tool_trace=tool_trace,
                     request_message=request.message,
                     sdk_error="; ".join(str(item) for item in details),
+                    locale=response_locale,
                 )
             else:
                 raise AgentRuntimeError(
@@ -704,9 +718,15 @@ class AgentRuntime:
         has_prior_grounding = _has_grounding_tool_observation(session.last_tool_trace)
         if final_answer is not None and (has_current_observation or has_prior_grounding):
             if has_current_observation and not has_current_grounding and not has_prior_grounding:
-                final_answer = _empty_rows_final_answer(final_answer)
+                final_answer = _empty_rows_final_answer(final_answer, locale=response_locale)
+            final_answer = _repair_answer_locale_if_needed(
+                answer=final_answer,
+                locale=response_locale,
+                tool_trace=tool_trace,
+                request_message=request.message,
+            )
             spec = self._spec_from_final_answer(final_answer, request=request)
-            final_text = _compose_final_text(final_answer)
+            final_text = _compose_final_text(final_answer, locale=response_locale)
             result_payload = final_answer
         else:
             spec = self._empty_spec(request=request)
@@ -714,24 +734,34 @@ class AgentRuntime:
                 recovered_answer = _recover_final_answer_from_tool_trace(
                     tool_trace=tool_trace,
                     request_message=request.message,
+                    locale=response_locale,
                 )
                 if recovered_answer is not None:
                     spec = self._spec_from_final_answer(recovered_answer, request=request)
-                    final_text = _compose_final_text(recovered_answer)
+                    final_text = _compose_final_text(recovered_answer, locale=response_locale)
                     result_payload = recovered_answer
                 else:
-                    final_text = "Agent collected tool observations but did not return a usable structured answer."
+                    final_text = _localized_text(
+                        response_locale,
+                        en="Agent collected tool observations but did not return a usable structured answer.",
+                        zh="Agent 已收集工具观测结果，但未返回可用的结构化答案。",
+                    )
                     result_payload = {"rows": [], "conclusion": "", "anomalies": "final_answer_parse_failed"}
             elif has_current_observation:
                 recovered_answer = _recover_failed_final_answer_from_tool_trace(
                     tool_trace=tool_trace,
                     request_message=request.message,
+                    locale=response_locale,
                 )
                 spec = self._spec_from_final_answer(recovered_answer, request=request)
-                final_text = _compose_final_text(recovered_answer)
+                final_text = _compose_final_text(recovered_answer, locale=response_locale)
                 result_payload = recovered_answer
             else:
-                final_text = "Agent stopped to avoid ungrounded output because no BI tool observation was produced."
+                final_text = _localized_text(
+                    response_locale,
+                    en="Agent stopped to avoid ungrounded output because no BI tool observation was produced.",
+                    zh="Agent 已停止，以避免在没有 BI 工具观测结果的情况下输出未验证内容。",
+                )
                 result_payload = {"rows": [], "conclusion": "", "anomalies": "no_tool_observation"}
 
         return self._finalize_turn(
@@ -1459,6 +1489,18 @@ class AgentRuntime:
                 f"Previous turn result is available for context: {prior_summary}"
             )
 
+        locale = _normalize_response_locale(request.response_locale, request.message)
+        language_name = "English" if locale == "en-US" else "Simplified Chinese"
+        parts.append(
+            "## Response language\n"
+            f"The user interface selected locale is `{locale}`. "
+            f"Write every user-visible natural-language field in {language_name}: "
+            "`title`, `conclusion`, `scope`, and `anomalies`, plus any prose you emit. "
+            "Do not follow the language of previous turns, examples, table names, column names, "
+            "or stored data values when choosing answer language. Keep JSON keys, column names, "
+            "metric names, chart_type, and raw data values unchanged."
+        )
+
         return "\n\n".join(parts)
 
     # Chart types rendered via frontend fallback option builders (no backend config.option needed)
@@ -1563,10 +1605,11 @@ class AgentRuntime:
         return lower_catalog.get(chart_type.lower())
 
     def _empty_spec(self, *, request: AgentRequest) -> dict[str, Any]:
+        locale = _normalize_response_locale(request.response_locale, request.message)
         return {
             "engine": "recharts",
             "chart_type": "empty",
-            "title": "No data",
+            "title": _localized_text(locale, en="No data", zh="无数据"),
             "data": [],
             "config": {},
             "route": {
@@ -1828,14 +1871,105 @@ def _has_tool_observation(tool_trace: list[dict[str, Any]]) -> bool:
     return any(item.get("event") == "tool_result" for item in tool_trace)
 
 
-def _empty_rows_final_answer(answer: dict[str, Any]) -> dict[str, Any]:
+def _normalize_response_locale(locale: str | None, message: str | None = None) -> str:
+    raw = str(locale or "").strip().lower().replace("_", "-")
+    if raw.startswith("zh"):
+        return "zh-CN"
+    if raw.startswith("en"):
+        return "en-US"
+    if message and any("\u4e00" <= char <= "\u9fff" for char in message):
+        return "zh-CN"
+    return "en-US"
+
+
+def _localized_text(locale: str, *, en: str, zh: str) -> str:
+    return zh if _normalize_response_locale(locale) == "zh-CN" else en
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _repair_answer_locale_if_needed(
+    *,
+    answer: dict[str, Any],
+    locale: str,
+    tool_trace: list[dict[str, Any]],
+    request_message: str,
+) -> dict[str, Any]:
+    normalized_locale = _normalize_response_locale(locale)
+    text_fields = ("title", "conclusion", "scope", "anomalies")
+    field_values = {
+        key: str(answer.get(key) or "")
+        for key in text_fields
+        if answer.get(key) not in (None, "")
+    }
+    if not field_values:
+        return answer
+
+    if normalized_locale == "en-US":
+        needs_repair = any(_contains_cjk(value) for value in field_values.values())
+    else:
+        needs_repair = not any(_contains_cjk(value) for value in field_values.values())
+    if not needs_repair:
+        return answer
+
+    recovered = _recover_final_answer_from_tool_trace(
+        tool_trace=tool_trace,
+        request_message=request_message,
+        locale=normalized_locale,
+    )
+    fallback = recovered or {
+        "title": _localized_text(normalized_locale, en="Analysis result", zh="分析结果"),
+        "conclusion": _localized_text(
+            normalized_locale,
+            en="The analysis completed based on the available BI tool results.",
+            zh="已基于可用的 BI 工具结果完成分析。",
+        ),
+        "scope": _localized_text(
+            normalized_locale,
+            en=f"User question: {request_message}",
+            zh=f"用户问题: {request_message}",
+        ),
+        "anomalies": None,
+    }
+
+    repaired = dict(answer)
+    for key in text_fields:
+        fallback_value = fallback.get(key)
+        if fallback_value not in (None, ""):
+            repaired[key] = fallback_value
+    return repaired
+
+
+def _empty_rows_final_answer(answer: dict[str, Any], *, locale: str = "en-US") -> dict[str, Any]:
     normalized = dict(answer)
     normalized["rows"] = []
     normalized.setdefault("chart_type", "table")
-    normalized.setdefault("title", "分析未完成")
-    normalized.setdefault("conclusion", "本次分析未能返回可展示数据。")
-    normalized.setdefault("scope", "未生成数据结果。")
-    normalized.setdefault("anomalies", "工具执行未成功，已按工具返回的错误信息生成说明。")
+    normalized.setdefault(
+        "title",
+        _localized_text(locale, en="Analysis incomplete", zh="分析未完成"),
+    )
+    normalized.setdefault(
+        "conclusion",
+        _localized_text(
+            locale,
+            en="This analysis did not return displayable data.",
+            zh="本次分析未能返回可展示数据。",
+        ),
+    )
+    normalized.setdefault(
+        "scope",
+        _localized_text(locale, en="No result data was generated.", zh="未生成数据结果。"),
+    )
+    normalized.setdefault(
+        "anomalies",
+        _localized_text(
+            locale,
+            en="Tool execution did not complete successfully; the explanation was generated from the tool error.",
+            zh="工具执行未成功，已按工具返回的错误信息生成说明。",
+        ),
+    )
     return normalized
 
 
@@ -1844,6 +1978,7 @@ def _recover_failed_final_answer_from_tool_trace(
     tool_trace: list[dict[str, Any]],
     request_message: str,
     sdk_error: str | None = None,
+    locale: str = "en-US",
 ) -> dict[str, Any]:
     failed_results = [
         item
@@ -1864,9 +1999,21 @@ def _recover_failed_final_answer_from_tool_trace(
     message = str(error.get("message") or sdk_error or "Tool execution failed")
 
     if code == "NO_DATASET_TABLES":
-        conclusion = "当前会话没有可用数据表，因此无法完成这次分析。请先上传数据集，或确认当前用户和项目下已有数据。"
+        conclusion = _localized_text(
+            locale,
+            en=(
+                "No dataset tables are available in the current session, so this analysis "
+                "cannot be completed. Upload a dataset first, or confirm that data exists "
+                "for the current user and project."
+            ),
+            zh="当前会话没有可用数据表，因此无法完成这次分析。请先上传数据集，或确认当前用户和项目下已有数据。",
+        )
     else:
-        conclusion = f"本次分析在调用 {tool_name} 时未能完成：{message}"
+        conclusion = _localized_text(
+            locale,
+            en=f"This analysis could not be completed while calling {tool_name}: {message}",
+            zh=f"本次分析在调用 {tool_name} 时未能完成：{message}",
+        )
 
     anomalies = f"{code}: {message}"
     if sdk_error:
@@ -1874,14 +2021,14 @@ def _recover_failed_final_answer_from_tool_trace(
 
     return {
         "chart_type": "table",
-        "title": "分析未完成",
+        "title": _localized_text(locale, en="Analysis incomplete", zh="分析未完成"),
         "x_key": None,
         "y_key": None,
         "series_key": None,
         "metric_name": None,
         "rows": [],
         "conclusion": conclusion,
-        "scope": f"用户问题: {request_message}",
+        "scope": _localized_text(locale, en=f"User question: {request_message}", zh=f"用户问题: {request_message}"),
         "anomalies": anomalies,
     }
 
@@ -1898,6 +2045,7 @@ def _recover_final_answer_from_tool_trace(
     *,
     tool_trace: list[dict[str, Any]],
     request_message: str,
+    locale: str = "en-US",
 ) -> dict[str, Any] | None:
     successful_results = [
         item
@@ -1913,6 +2061,7 @@ def _recover_final_answer_from_tool_trace(
         successful_results=successful_results,
         request_message=request_message,
         require_non_empty_rows=True,
+        locale=locale,
     )
     if non_empty is not None:
         return non_empty
@@ -1921,6 +2070,7 @@ def _recover_final_answer_from_tool_trace(
         successful_results=successful_results,
         request_message=request_message,
         require_non_empty_rows=False,
+        locale=locale,
     )
 
 
@@ -1929,6 +2079,7 @@ def _recover_final_answer_from_results(
     successful_results: list[dict[str, Any]],
     request_message: str,
     require_non_empty_rows: bool,
+    locale: str = "en-US",
 ) -> dict[str, Any] | None:
     for tool_name in TOOL_RESULT_RECOVERY_PRIORITY:
         for item in reversed(successful_results):
@@ -1958,6 +2109,7 @@ def _recover_final_answer_from_results(
                     tool_name=current_tool,
                     result=result,
                     request_message=request_message,
+                    locale=locale,
                 ),
                 "x_key": dimension_key or "dimension",
                 "y_key": metric_key or "metric_value",
@@ -1968,9 +2120,14 @@ def _recover_final_answer_from_results(
                     rows=rows,
                     dimension_key=dimension_key,
                     metric_key=metric_key,
+                    locale=locale,
                 ),
-                "scope": _scope_from_tool_result(tool_name=current_tool, result=result),
-                "anomalies": "agent_auto_composed_from_tool_result",
+                "scope": _scope_from_tool_result(tool_name=current_tool, result=result, locale=locale),
+                "anomalies": _localized_text(
+                    locale,
+                    en="Auto-composed from successful tool results.",
+                    zh="已基于成功工具结果自动生成。",
+                ),
             }
     return None
 
@@ -2022,32 +2179,50 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _title_from_tool_result(*, tool_name: str, result: dict[str, Any], request_message: str) -> str:
+def _title_from_tool_result(
+    *,
+    tool_name: str,
+    result: dict[str, Any],
+    request_message: str,
+    locale: str = "en-US",
+) -> str:
     if tool_name == "execute_readonly_sql":
-        return "SQL 查询结果"
+        return _localized_text(locale, en="SQL query result", zh="SQL 查询结果")
     if tool_name == "run_semantic_query":
         metric = str(result.get("metric") or "").strip()
-        return f"{metric} 查询结果" if metric else "语义查询结果"
+        if metric:
+            return _localized_text(locale, en=f"{metric} query result", zh=f"{metric} 查询结果")
+        return _localized_text(locale, en="Semantic query result", zh="语义查询结果")
     if tool_name == "get_distinct_values":
-        field = str(result.get("field") or "字段").strip() or "字段"
-        return f"{field} 值分布"
+        field = str(result.get("field") or "").strip()
+        if _normalize_response_locale(locale) == "zh-CN":
+            return f"{field or '字段'} 值分布"
+        return f"{field or 'Field'} value distribution"
     if tool_name == "sample_rows":
         table = str(result.get("table") or "").strip()
-        return f"{table} 样本记录" if table else "样本记录"
+        if table:
+            return _localized_text(locale, en=f"{table} sample rows", zh=f"{table} 样本记录")
+        return _localized_text(locale, en="Sample rows", zh="样本记录")
     if tool_name == "describe_table":
         table = str(result.get("table") or "").strip()
-        return f"{table} 表结构与样本" if table else "表结构与样本"
+        if table:
+            return _localized_text(locale, en=f"{table} schema and sample", zh=f"{table} 表结构与样本")
+        return _localized_text(locale, en="Schema and sample", zh="表结构与样本")
     if tool_name == "list_tables":
-        return "可用数据表"
+        return _localized_text(locale, en="Available tables", zh="可用数据表")
     trimmed = request_message.strip()
-    return trimmed[:60] if trimmed else "查询结果"
+    return trimmed[:60] if trimmed else _localized_text(locale, en="Query result", zh="查询结果")
 
 
-def _scope_from_tool_result(*, tool_name: str, result: dict[str, Any]) -> str:
+def _scope_from_tool_result(*, tool_name: str, result: dict[str, Any], locale: str = "en-US") -> str:
     row_count = result.get("row_count")
     if isinstance(row_count, int):
-        return f"来源工具: {tool_name}，返回 {row_count} 行。"
-    return f"来源工具: {tool_name}。"
+        return _localized_text(
+            locale,
+            en=f"Source tool: {tool_name}; returned {row_count} rows.",
+            zh=f"来源工具: {tool_name}，返回 {row_count} 行。",
+        )
+    return _localized_text(locale, en=f"Source tool: {tool_name}.", zh=f"来源工具: {tool_name}。")
 
 
 def _conclusion_from_tool_rows(
@@ -2055,29 +2230,57 @@ def _conclusion_from_tool_rows(
     rows: list[dict[str, Any]],
     dimension_key: str | None,
     metric_key: str | None,
+    locale: str = "en-US",
 ) -> str:
     if not rows:
-        return "已基于成功工具结果自动生成答案，但当前结果为空。"
+        return _localized_text(
+            locale,
+            en="The answer was generated from successful tool results, but the current result is empty.",
+            zh="已基于成功工具结果自动生成答案，但当前结果为空。",
+        )
 
     if dimension_key and metric_key:
         ranked = [row for row in rows if _is_number(row.get(metric_key))]
         if ranked:
             top_row = max(ranked, key=lambda row: float(row.get(metric_key) or 0))
-            return (
-                "已基于成功工具结果自动生成答案。"
-                f" {dimension_key}={top_row.get(dimension_key)} 的 {metric_key} 最高，为 {top_row.get(metric_key)}。"
+            return _localized_text(
+                locale,
+                en=(
+                    "The answer was generated from successful tool results. "
+                    f"{dimension_key}={top_row.get(dimension_key)} has the highest {metric_key}: "
+                    f"{top_row.get(metric_key)}."
+                ),
+                zh=(
+                    "已基于成功工具结果自动生成答案。"
+                    f" {dimension_key}={top_row.get(dimension_key)} 的 {metric_key} 最高，为 {top_row.get(metric_key)}。"
+                ),
             )
-        return f"已基于成功工具结果自动生成答案，共返回 {len(rows)} 行。"
+        return _localized_text(
+            locale,
+            en=f"The answer was generated from successful tool results with {len(rows)} rows returned.",
+            zh=f"已基于成功工具结果自动生成答案，共返回 {len(rows)} 行。",
+        )
 
     if metric_key:
         numeric_values = [float(row.get(metric_key) or 0) for row in rows if _is_number(row.get(metric_key))]
         if numeric_values:
-            return (
-                "已基于成功工具结果自动生成答案。"
-                f" 共返回 {len(rows)} 行，{metric_key} 合计 {round(sum(numeric_values), 2)}。"
+            return _localized_text(
+                locale,
+                en=(
+                    "The answer was generated from successful tool results. "
+                    f"{len(rows)} rows returned; {metric_key} totals {round(sum(numeric_values), 2)}."
+                ),
+                zh=(
+                    "已基于成功工具结果自动生成答案。"
+                    f" 共返回 {len(rows)} 行，{metric_key} 合计 {round(sum(numeric_values), 2)}。"
+                ),
             )
 
-    return f"已基于成功工具结果自动生成答案，共返回 {len(rows)} 行。"
+    return _localized_text(
+        locale,
+        en=f"The answer was generated from successful tool results with {len(rows)} rows returned.",
+        zh=f"已基于成功工具结果自动生成答案，共返回 {len(rows)} 行。",
+    )
 
 
 
@@ -2087,7 +2290,7 @@ def _conclusion_from_tool_rows(
 # ---------------------------------------------------------------------------
 
 
-def _compose_final_text(answer: dict[str, Any]) -> str:
+def _compose_final_text(answer: dict[str, Any], *, locale: str = "en-US") -> str:
     title = str(answer.get("title") or "Result")
     rows = list(answer.get("rows") or [])
     conclusion = str(answer.get("conclusion") or "")
@@ -2095,24 +2298,42 @@ def _compose_final_text(answer: dict[str, Any]) -> str:
     anomalies = str(answer.get("anomalies") or "")
 
     if not rows:
-        parts = [f"{title} 没有返回可展示数据。"]
+        parts = [
+            _localized_text(
+                locale,
+                en=f"{title} returned no displayable data.",
+                zh=f"{title} 没有返回可展示数据。",
+            )
+        ]
         if conclusion:
-            parts.append(f"结论: {conclusion}")
+            parts.append(_localized_text(locale, en=f"Conclusion: {conclusion}", zh=f"结论: {conclusion}"))
         if scope:
-            parts.append(f"口径: {scope}")
+            parts.append(_localized_text(locale, en=f"Scope: {scope}", zh=f"口径: {scope}"))
         if anomalies:
-            parts.append(f"异常说明: {anomalies}")
+            parts.append(_localized_text(locale, en=f"Notes: {anomalies}", zh=f"异常说明: {anomalies}"))
         else:
-            parts.append("可能原因: 过滤条件、权限范围或源数据分布导致结果为空。")
+            parts.append(
+                _localized_text(
+                    locale,
+                    en="Possible reason: filters, permission scope, or source data distribution produced an empty result.",
+                    zh="可能原因: 过滤条件、权限范围或源数据分布导致结果为空。",
+                )
+            )
         return " ".join(parts)
 
-    parts = [f"{title} 已生成，共 {len(rows)} 行。"]
+    parts = [
+        _localized_text(
+            locale,
+            en=f"{title} has been generated with {len(rows)} rows.",
+            zh=f"{title} 已生成，共 {len(rows)} 行。",
+        )
+    ]
     if conclusion:
-        parts.append(f"结论: {conclusion}")
+        parts.append(_localized_text(locale, en=f"Conclusion: {conclusion}", zh=f"结论: {conclusion}"))
     if scope:
-        parts.append(f"口径: {scope}")
+        parts.append(_localized_text(locale, en=f"Scope: {scope}", zh=f"口径: {scope}"))
     if anomalies:
-        parts.append(f"异常说明: {anomalies}")
+        parts.append(_localized_text(locale, en=f"Notes: {anomalies}", zh=f"异常说明: {anomalies}"))
     return " ".join(parts)
 
 

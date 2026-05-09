@@ -224,6 +224,72 @@ def test_agent_runtime_casts_string_hire_dates_before_extracting_year(
     assert 'TRY_CAST("hire_date" AS DATE)' in str(result.ai_state["latest_result"]["sql"])
 
 
+def test_agent_runtime_passes_selected_response_locale_to_sdk_prompt(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"employee_id": "E-001", "rank_job_level": "L3"},
+                {"employee_id": "E-002", "rank_job_level": "L4"},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        seen_system_prompts: list[str] = []
+
+        def scenario(prompt: str, options) -> dict[str, object]:  # type: ignore[no-untyped-def]
+            _ = prompt
+            seen_system_prompts.append(str(options.system_prompt))
+            rows = [{"rank_job_level": "L3", "headcount": 1}, {"rank_job_level": "L4", "headcount": 1}]
+            return {
+                "tool_calls": [
+                    {
+                        "name": "get_distinct_values",
+                        "arguments": {"table": dataset_table, "field": "rank_job_level"},
+                        "result": {"field": "rank_job_level", "values": rows, "row_count": 2},
+                    }
+                ],
+                "final_answer": {
+                    "chart_type": "bar",
+                    "title": "各职级人数分布",
+                    "x_key": "rank_job_level",
+                    "y_key": "headcount",
+                    "series_key": None,
+                    "metric_name": "headcount",
+                    "rows": rows,
+                    "conclusion": "L3 和 L4 各有 1 人。",
+                    "scope": "当前数据集全部记录。",
+                    "anomalies": None,
+                },
+            }
+
+        install_scripted_sdk_client(runtime, scenario)
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-locale",
+                request_id="agent-runtime-req-locale",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="Please use #bar to summarize @rank_job_level",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                response_locale="en-US",
+            )
+        )
+
+    assert seen_system_prompts
+    assert "selected locale is `en-US`" in seen_system_prompts[0]
+    assert "Write every user-visible natural-language field in English" in seen_system_prompts[0]
+    assert "rank_job_level value distribution has been generated" in result.final_text
+    assert "Conclusion:" in result.final_text
+    assert "口径:" not in result.final_text
+    assert result.spec["title"] == "rank_job_level value distribution"
+
+
 def test_agent_runtime_builds_salary_distribution_with_bucketed_sql(
     monkeypatch, tmp_path: Path
 ) -> None:

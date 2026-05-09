@@ -5,15 +5,15 @@ import json
 _FINAL_ANSWER_EXAMPLE = json.dumps(
     {
         "chart_type": "bar",
-        "title": "各部门平均年龄",
+        "title": "Average Age by Department",
         "x_key": "department",
         "y_key": "avg_age",
         "series_key": None,
         "name_key": None,
         "metric_name": "avg_age",
         "rows": [{"department": "Engineering", "avg_age": 32}, {"department": "HR", "avg_age": 35}],
-        "conclusion": "Engineering 部门平均年龄最低，为 32 岁。",
-        "scope": "全员，不含离职人员",
+        "conclusion": "Engineering has the lowest average age at 32.",
+        "scope": "All employees, excluding terminated employees.",
         "anomalies": None,
     },
     ensure_ascii=False,
@@ -117,7 +117,7 @@ def build_agent_system_prompt() -> str:
         "- `metric_name`: short internal metric name (e.g. 'headcount', 'avg_salary').\n"
         "- `rows`: the full data array — each object must use the same column names as "
         "x_key / y_key / series_key.\n"
-        "- `conclusion`: 1–2 sentence insight from the data, in the user's language.\n"
+        "- `conclusion`: 1–2 sentence insight from the data, in the selected response language.\n"
         "- `scope`: what the query covers (filters, time range, population).\n"
         "- `anomalies`: empty result reason or data oddity, or null if none.\n"
         "\n"

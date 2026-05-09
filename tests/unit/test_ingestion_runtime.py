@@ -194,3 +194,216 @@ def test_recover_proposal_from_completed_tool_trace_without_structured_output() 
     assert recovered.proposal.target_table == "employee_roster"
     assert recovered.proposal.diff_preview.predicted_update_count == 30
     assert recovered.human_approval.mechanism == "frontend_approval_card"
+
+
+def test_normalize_raw_plan_output_injects_defaults_for_catalog_setup() -> None:
+    raw: dict = {
+        "status": "awaiting_catalog_setup",
+        "suggested_catalog_seed": {
+            "table_name": "employees",
+            "human_label": "Employees",
+            "business_type": "INVALID",
+            "write_mode": "INVALID",
+            "time_grain": "INVALID",
+        },
+    }
+    WriteIngestionAgentRuntime._normalize_raw_plan_output(raw)  # noqa: SLF001
+    seed = raw["suggested_catalog_seed"]
+    assert seed["business_type"] == "other"
+    assert seed["write_mode"] == "new_table"
+    assert seed["time_grain"] == "none"
+
+
+def test_inject_agent_guess_fills_missing_guess() -> None:
+    raw: dict = {"status": "awaiting_catalog_setup"}
+    tool_trace: list = []
+    WriteIngestionAgentRuntime._inject_agent_guess_if_missing(raw, tool_trace=tool_trace)  # noqa: SLF001
+    assert raw["agent_guess"]["business_type"] == "other"
+    assert raw["agent_guess"]["confidence"] == 0.5
+
+
+def test_inject_agent_guess_repairs_invalid_business_type() -> None:
+    raw: dict = {"agent_guess": {"business_type": "WRONG", "confidence": 0.9}}
+    WriteIngestionAgentRuntime._inject_agent_guess_if_missing(raw, tool_trace=[])  # noqa: SLF001
+    assert raw["agent_guess"]["business_type"] == "other"
+    assert raw["agent_guess"]["confidence"] == 0.9
+
+
+def test_recover_catalog_setup_from_tool_trace_when_describe_returns_not_found() -> None:
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "file_name": "employees.xlsx",
+                "column_summary": {"all_columns": ["Employee ID", "Name", "Department"]},
+            },
+        },
+        {
+            "tool_name": "get_workspace_catalog",
+            "result": {"entries": []},
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "result": {
+                "found": False,
+                "table_name": "employees",
+                "message": "No catalog entry exists.",
+            },
+        },
+    ]
+    recovered = runtime._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.status == "awaiting_catalog_setup"
+    assert recovered.suggested_catalog_seed is not None
+    assert recovered.suggested_catalog_seed.table_name == "employees"
+    assert recovered.human_approval.stage == "catalog_setup"
+    assert recovered.human_approval.mechanism == "catalog_setup_card"
+
+
+def test_recover_catalog_setup_from_empty_catalog_without_describe() -> None:
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "file_name": "hr_data.xlsx",
+                "column_summary": {"all_columns": ["Name", "Role"]},
+            },
+        },
+        {
+            "tool_name": "get_workspace_catalog",
+            "result": {"entries": []},
+        },
+    ]
+    recovered = runtime._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.status == "awaiting_catalog_setup"
+    assert recovered.suggested_catalog_seed is not None
+    assert recovered.suggested_catalog_seed.table_name == "hr_data"
+
+
+def test_recover_catalog_setup_returns_none_when_catalog_has_entries() -> None:
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "get_workspace_catalog",
+            "result": {"entries": [{"table_name": "employees"}]},
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "result": {"found": True, "table_name": "employees"},
+        },
+    ]
+    recovered = runtime._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+    assert recovered is None
+
+
+def test_recover_catalog_setup_from_tool_trace_when_awaiting_user_approval_with_no_proposal() -> None:
+    """Agent returns awaiting_user_approval + proposal=null (empty-catalog first-upload case).
+    The post-run recovery must synthesise an awaiting_catalog_setup output."""
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "file_name": "workforce_2024.xlsx",
+                "column_summary": {"all_columns": ["Employee ID", "Name", "Department"]},
+            },
+        },
+        {
+            "tool_name": "get_workspace_catalog",
+            "result": {"count": 0, "entries": []},
+        },
+        {
+            "tool_name": "list_existing_tables",
+            "result": {"workspace_tables": [], "count": 0},
+        },
+    ]
+    # Simulates the agent returning valid structured output that passes model_validate but
+    # has status=awaiting_user_approval with proposal=None.
+    recovered = runtime._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.status == "awaiting_catalog_setup"
+    assert recovered.suggested_catalog_seed is not None
+    assert recovered.suggested_catalog_seed.table_name == "workforce_2024"
+    assert recovered.human_approval.stage == "catalog_setup"
+    assert recovered.human_approval.mechanism == "catalog_setup_card"
+
+
+def test_post_run_recovery_prefers_proposal_when_catalog_is_populated() -> None:
+    """After setup/confirm the catalog is no longer empty, so _recover_catalog_setup_from_tool_trace
+    returns None.  The post-run recovery must fall back to _recover_proposal_from_tool_trace
+    when generate_write_sql_draft appears in the trace (second-pass / setup-confirm scenario)."""
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "file_name": "hr_workforce_upload_sample.xlsx",
+                "column_summary": {"all_columns": ["员工编号", "姓名", "部门"]},
+            },
+        },
+        {
+            "tool_name": "get_workspace_catalog",
+            "result": {"entries": [{"table_name": "employee_roster", "business_type": "roster"}]},
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "result": {
+                "found": True,
+                "table_name": "employee_roster",
+                "business_type": "roster",
+                "match_columns": ["employee_id"],
+                "time_grain": "none",
+            },
+        },
+        {
+            "tool_name": "build_diff_preview",
+            "result": {
+                "predicted_insert_count": 0,
+                "predicted_update_count": 30,
+                "predicted_conflict_count": 0,
+            },
+        },
+        {
+            "tool_name": "generate_write_sql_draft",
+            "arguments": {
+                "target_table": "employee_roster",
+                "action_mode": "update_existing",
+                "match_columns": ["employee_id"],
+            },
+            "result": {"sql_draft": "MERGE INTO employee_roster ..."},
+        },
+    ]
+
+    # _recover_catalog_setup_from_tool_trace must return None (catalog populated + table found)
+    assert runtime._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace) is None  # noqa: SLF001
+
+    # _recover_proposal_from_tool_trace must succeed and produce an approval proposal
+    recovered = runtime._recover_proposal_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+    assert recovered is not None
+    assert recovered.status == "awaiting_user_approval"
+    assert recovered.proposal is not None
+    assert recovered.proposal.recommended_action == "update_existing"
+    assert recovered.proposal.target_table == "employee_roster"
+
+
+def test_normalize_raw_plan_output_injects_diff_preview_for_proposal() -> None:
+    raw: dict = {
+        "status": "awaiting_user_approval",
+        "proposal": {
+            "business_type": "roster",
+            "confidence": 0.8,
+            "recommended_action": "update_existing",
+        },
+    }
+    WriteIngestionAgentRuntime._normalize_raw_plan_output(raw)  # noqa: SLF001
+    assert raw["proposal"]["diff_preview"] == {
+        "predicted_insert_count": 0,
+        "predicted_update_count": 0,
+        "predicted_conflict_count": 0,
+    }

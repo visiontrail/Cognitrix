@@ -171,6 +171,59 @@ INGESTION_AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
         "read_only": True,
     },
+    {
+        "name": "create_catalog_entry",
+        "description": (
+            "Create a new catalog entry for a table that does not yet exist in the workspace. "
+            "Call this when get_workspace_catalog returns no matching entry for the upload. "
+            "Infer table_name, human_label, business_type, write_mode, and primary/match columns "
+            "from the upload columns and content. After this succeeds, call describe_table_schema "
+            "to verify, then build_diff_preview and generate_write_sql_draft to complete the proposal."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "workspace_id": {"type": "string"},
+                "table_name": {
+                    "type": "string",
+                    "description": "SQL-safe snake_case identifier for the target table",
+                },
+                "human_label": {
+                    "type": "string",
+                    "description": "Human-readable display name for the table",
+                },
+                "business_type": {
+                    "type": "string",
+                    "enum": ["roster", "project_progress", "attendance", "other"],
+                },
+                "write_mode": {
+                    "type": "string",
+                    "enum": ["new_table", "update_existing", "time_partitioned_new_table"],
+                },
+                "time_grain": {
+                    "type": "string",
+                    "enum": ["none", "month", "quarter", "year"],
+                    "description": "Required only when write_mode is time_partitioned_new_table",
+                },
+                "primary_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Column names that uniquely identify each row",
+                },
+                "match_columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Columns used to match staging rows to target rows for MERGE",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Natural-language purpose of this table",
+                },
+            },
+            "required": ["workspace_id", "table_name", "human_label", "business_type", "write_mode"],
+        },
+        "read_only": False,
+    },
 ]
 INGESTION_SDK_TOOL_NAMES = tuple(str(item["name"]) for item in INGESTION_AGENT_TOOL_DEFINITIONS)
 INGESTION_SDK_ALLOWED_TOOL_NAMES = tuple(
@@ -180,11 +233,14 @@ INGESTION_AGENT_PROPOSAL_TOOL_SEQUENCE = [
     "inspect_upload",
     "get_workspace_catalog",
     "list_existing_tables",
+    # create_catalog_entry is optional — only needed when no catalog entry exists
+    "create_catalog_entry",
     "describe_table_schema",
     "build_diff_preview",
     "generate_write_sql_draft",
 ]
-MIN_INGESTION_AGENT_MAX_TURNS = len(INGESTION_AGENT_PROPOSAL_TOOL_SEQUENCE) + 2
+# +3: one extra turn for create_catalog_entry, one for the final answer, one safety margin
+MIN_INGESTION_AGENT_MAX_TURNS = len(INGESTION_AGENT_PROPOSAL_TOOL_SEQUENCE) + 3
 INGESTION_EXECUTION_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_execution_context",
@@ -345,18 +401,13 @@ Use the provided tools to inspect the upload, workspace catalog, existing target
 proposed diff. Then return structured JSON describing your decision.
 
 Allowed decisions:
-- awaiting_catalog_setup: no suitable catalog entry exists for this upload (either the
-  catalog is empty, or describe_table_schema returned {found: false} for the candidate
-  table name). Provide setup_questions and suggested_catalog_seed. The user should only
-  need to confirm the table's business-facing label and natural-language purpose. Include
-  table_name, human_label, and description in suggested_catalog_seed. You may include
-  business_type, write_mode, or time_grain as internal hints, but do not require the user
-  to choose primary keys, match columns, or any technical schema fields. Leave primary_keys
-  and match_columns empty unless you are highly confident and the UI does not need to ask.
-- awaiting_user_approval: you have found a matching catalog target and can produce a
-  concrete write proposal. Include proposal with business_type, confidence,
-  recommended_action, candidate_actions, target_table, match_columns, column_mapping,
-  diff_preview, risks, explanation, and sql_draft.
+- awaiting_catalog_setup: fallback only — use this when create_catalog_entry fails or
+  when you cannot determine enough schema information to create a catalog entry. Provide
+  setup_questions and suggested_catalog_seed.
+- awaiting_user_approval: you have a catalog entry (either pre-existing or just created
+  via create_catalog_entry) and can produce a concrete write proposal. Include proposal
+  with business_type, confidence, recommended_action, candidate_actions, target_table,
+  match_columns, column_mapping, diff_preview, risks, explanation, and sql_draft.
 
 If catalog entries only contain business-purpose descriptions and no schema hints, use the
 upload itself to infer the likely keys, match columns, and write mode.
@@ -367,15 +418,25 @@ to identify which Chinese header corresponds to which target column (e.g., "工�
 Include ALL upload columns in column_mapping even if only guessed.
 
 Tool order for a NEW table (no catalog entry yet):
-inspect_upload → get_workspace_catalog → list_existing_tables → return awaiting_catalog_setup.
-You may optionally call describe_table_schema to confirm {found: false} before deciding.
+1. inspect_upload — learn file name, columns, and sample data
+2. get_workspace_catalog — check for existing catalog entries
+3. list_existing_tables — check for existing tables
+4. create_catalog_entry — infer table_name, human_label, business_type, write_mode,
+   primary_keys, and match_columns from the upload content. Use snake_case for table_name.
+   For HR employee uploads: business_type=roster, infer an employee-id column as primary_key.
+   For attendance records: business_type=attendance.
+   For project data: business_type=project_progress.
+5. describe_table_schema — verify the entry was created (should return {found: true})
+6. build_diff_preview — estimate the write impact
+7. generate_write_sql_draft — draft the SQL
+8. Return awaiting_user_approval with the full proposal.
 
-Tool order for an existing-table proposal:
+Tool order for an EXISTING table (catalog entry already present):
 inspect_upload → get_workspace_catalog → list_existing_tables → describe_table_schema →
-build_diff_preview → generate_write_sql_draft → return structured output.
+build_diff_preview → generate_write_sql_draft → return awaiting_user_approval.
 
-If describe_table_schema returns {found: false}, immediately return awaiting_catalog_setup;
-do not attempt build_diff_preview or generate_write_sql_draft.
+If describe_table_schema returns {found: false} after create_catalog_entry, return
+awaiting_catalog_setup as a fallback.
 
 Do not execute writes. Do not ask the user any questions. Human approval is handled by
 the application after you return. Return ONLY valid JSON matching the required schema.
@@ -648,6 +709,18 @@ class WriteIngestionAgentRuntime:
                 conversation_id=normalized_conversation_id,
                 message=message,
             )
+            # Post-run recovery: the agent sometimes returns awaiting_user_approval with no
+            # proposal when the workspace catalog is empty (first upload scenario).  Detect
+            # this and synthesise an awaiting_catalog_setup output so the UI shows the
+            # catalog-setup card instead of a 502 error.
+            if agent_output.status != "awaiting_catalog_setup" and agent_output.proposal is None:
+                recovered = self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)
+                if recovered is not None:
+                    logger.warning(
+                        "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=missing_proposal_empty_catalog",
+                        normalized_job_id,
+                    )
+                    agent_output = recovered
             agent_guess = agent_output.agent_guess.model_dump(mode="json")
             analysis_audit = {
                 "agent_planning": {
@@ -953,7 +1026,10 @@ class WriteIngestionAgentRuntime:
                         )
                     except IngestionPlanningError as exc:
                         if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
-                            recovered = self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                            recovered = (
+                                self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                                or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace_snapshot)
+                            )
                             if recovered is not None:
                                 logger.warning(
                                     "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=%s",
@@ -966,6 +1042,28 @@ class WriteIngestionAgentRuntime:
                                 raise
                         else:
                             raise
+
+                    # Post-run recovery: the agent sometimes completes all tools but returns
+                    # no structured output.  Try recovering a proposal first (catalog already
+                    # populated), then fall back to requesting catalog setup (empty catalog /
+                    # first-upload scenario).
+                    if agent_output.status != "awaiting_catalog_setup" and agent_output.proposal is None:
+                        recovered = (
+                            self._recover_proposal_from_tool_trace(tool_trace=tool_trace)
+                            or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)
+                        )
+                        if recovered is not None:
+                            reason = (
+                                "missing_proposal_tool_trace_recovered"
+                                if recovered.status != "awaiting_catalog_setup"
+                                else "missing_proposal_empty_catalog"
+                            )
+                            logger.warning(
+                                "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=%s",
+                                normalized_job_id,
+                                reason,
+                            )
+                            agent_output = recovered
 
                     agent_guess = agent_output.agent_guess.model_dump(mode="json")
                     analysis_audit = {
@@ -2414,7 +2512,10 @@ class WriteIngestionAgentRuntime:
             return anyio.run(runner)
         except IngestionPlanningError as exc:
             if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
-                recovered = self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                recovered = (
+                    self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                    or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace_snapshot)
+                )
                 if recovered is not None:
                     logger.warning(
                         "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=%s",
@@ -2529,10 +2630,18 @@ class WriteIngestionAgentRuntime:
                 message="Write Ingestion Agent did not return structured output",
                 status_code=502,
             )
+        self._normalize_raw_plan_output(raw_output)
         self._inject_human_approval_if_missing(raw_output)
+        self._inject_agent_guess_if_missing(raw_output, tool_trace=tool_trace)
         try:
             output = IngestionAgentPlanOutput.model_validate(raw_output)
         except Exception as exc:
+            logger.warning(
+                "ingestion_agent_output_invalid job_id=%s raw_keys=%s validation_error=%s",
+                job_id,
+                list(raw_output.keys()) if isinstance(raw_output, dict) else type(raw_output).__name__,
+                str(exc),
+            )
             raise IngestionPlanningError(
                 code="AGENT_STRUCTURED_OUTPUT_INVALID",
                 message="Write Ingestion Agent returned invalid structured output",
@@ -2570,6 +2679,102 @@ class WriteIngestionAgentRuntime:
                 "options": list(DEFAULT_ACTION_OPTIONS),
                 "recommended_option": recommended,
             }
+
+    @staticmethod
+    def _inject_agent_guess_if_missing(
+        raw_output: dict[str, Any],
+        *,
+        tool_trace: list[dict[str, Any]],
+    ) -> None:
+        _VALID_BUSINESS_TYPES = {"roster", "project_progress", "attendance", "other"}
+        existing = raw_output.get("agent_guess")
+        if isinstance(existing, dict):
+            bt = str(existing.get("business_type") or "").strip()
+            if bt not in _VALID_BUSINESS_TYPES:
+                existing["business_type"] = "other"
+            raw_conf = existing.get("confidence")
+            try:
+                conf = float(raw_conf)  # type: ignore[arg-type]
+                if not (0.0 <= conf <= 1.0):
+                    raise ValueError
+            except (TypeError, ValueError):
+                existing["confidence"] = 0.5
+            return
+
+        inferred_type = "other"
+        for item in reversed(tool_trace):
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            bt = str(result.get("business_type") or "").strip()
+            if bt in _VALID_BUSINESS_TYPES:
+                inferred_type = bt
+                break
+        raw_output["agent_guess"] = {
+            "business_type": inferred_type,
+            "confidence": 0.5,
+            "reasoning": "Inferred from upload structure; agent did not provide an explicit guess.",
+        }
+
+    @staticmethod
+    def _normalize_raw_plan_output(raw_output: dict[str, Any]) -> None:
+        """Coerce obvious field-level issues before Pydantic validation."""
+        _VALID_STATUSES = {"awaiting_catalog_setup", "awaiting_user_approval"}
+        _VALID_BUSINESS_TYPES = {"roster", "project_progress", "attendance", "other"}
+        _VALID_ACTIONS = {"update_existing", "time_partitioned_new_table", "new_table", "cancel"}
+        _VALID_TIME_GRAINS = {"none", "month", "quarter", "year"}
+        _VALID_WRITE_MODES = {"update_existing", "time_partitioned_new_table", "new_table"}
+
+        # Normalize status
+        status = str(raw_output.get("status") or "").strip()
+        if status not in _VALID_STATUSES:
+            # Heuristic: if there's a suggested_catalog_seed or setup_questions, treat as setup
+            if raw_output.get("suggested_catalog_seed") or raw_output.get("setup_questions"):
+                raw_output["status"] = "awaiting_catalog_setup"
+            else:
+                raw_output["status"] = "awaiting_user_approval"
+
+        # Normalize suggested_catalog_seed if present
+        seed = raw_output.get("suggested_catalog_seed")
+        if isinstance(seed, dict):
+            bt = str(seed.get("business_type") or "other").strip()
+            if bt not in _VALID_BUSINESS_TYPES:
+                seed["business_type"] = "other"
+            wm = str(seed.get("write_mode") or "new_table").strip()
+            if wm not in _VALID_WRITE_MODES:
+                seed["write_mode"] = "new_table"
+            tg = str(seed.get("time_grain") or "none").strip()
+            if tg not in _VALID_TIME_GRAINS:
+                seed["time_grain"] = "none"
+            if not seed.get("table_name"):
+                seed["table_name"] = "uploaded_table"
+            if not seed.get("human_label"):
+                seed["human_label"] = str(seed["table_name"]).replace("_", " ").title()
+
+        # Normalize proposal if present
+        proposal = raw_output.get("proposal")
+        if isinstance(proposal, dict):
+            bt = str(proposal.get("business_type") or "other").strip()
+            if bt not in _VALID_BUSINESS_TYPES:
+                proposal["business_type"] = "other"
+            ra = str(proposal.get("recommended_action") or "update_existing").strip()
+            if ra not in _VALID_ACTIONS:
+                proposal["recommended_action"] = "update_existing"
+            tg = str(proposal.get("time_grain") or "none").strip()
+            if tg not in _VALID_TIME_GRAINS:
+                proposal["time_grain"] = "none"
+            # diff_preview is required in IngestionProposalPayload; inject zeros if missing
+            if not isinstance(proposal.get("diff_preview"), dict):
+                proposal["diff_preview"] = {
+                    "predicted_insert_count": 0,
+                    "predicted_update_count": 0,
+                    "predicted_conflict_count": 0,
+                }
+            raw_conf = proposal.get("confidence")
+            try:
+                conf = float(raw_conf)  # type: ignore[arg-type]
+                if not (0.0 <= conf <= 1.0):
+                    raise ValueError
+            except (TypeError, ValueError):
+                proposal["confidence"] = 0.5
 
     def _build_ingestion_sdk_options(
         self,
@@ -2809,6 +3014,12 @@ class WriteIngestionAgentRuntime:
                     if str(item).strip()
                 ],
             )
+        if tool_name == "create_catalog_entry":
+            return self._tool_create_catalog_entry(
+                conn=conn,
+                job_id=job_id,
+                arguments=arguments,
+            )
         raise IngestionPlanningError(
             code="INGESTION_TOOL_NOT_ALLOWED",
             message=f"Unsupported ingestion tool: {tool_name}",
@@ -2836,10 +3047,11 @@ class WriteIngestionAgentRuntime:
                     "inspect_upload",
                     "get_workspace_catalog",
                     "list_existing_tables",
-                    "IF no catalog entry exists → return awaiting_catalog_setup immediately",
-                    "describe_table_schema only when a matching catalog table is identified; if it returns {found:false} → return awaiting_catalog_setup",
+                    "IF no catalog entry exists → call create_catalog_entry to create one (infer schema from upload columns)",
+                    "describe_table_schema — verify the catalog entry exists; if {found:false} after create_catalog_entry → return awaiting_catalog_setup",
                     "build_diff_preview only when describe_table_schema returned {found:true}",
                     "generate_write_sql_draft only when describe_table_schema returned {found:true}",
+                    "return awaiting_user_approval with complete proposal",
                 ],
                 "available_proposal_actions": DEFAULT_ACTION_OPTIONS,
             },
@@ -3198,6 +3410,97 @@ class WriteIngestionAgentRuntime:
                     "agent_guess": agent_guess_payload,
                     "proposal": proposal_payload,
                     "human_approval": human_approval_payload,
+                }
+            )
+        except Exception:
+            return None
+
+    def _recover_catalog_setup_from_tool_trace(
+        self,
+        *,
+        tool_trace: list[dict[str, Any]],
+    ) -> IngestionAgentPlanOutput | None:
+        """Synthesise an awaiting_catalog_setup output when the tool trace shows
+        describe_table_schema returned {found: false} (no catalog entry exists yet)
+        or the workspace catalog was empty and no proposal tools were used."""
+        schema_result = self._latest_tool_result(tool_trace, "describe_table_schema")
+        catalog_result = self._latest_tool_result(tool_trace, "get_workspace_catalog")
+
+        # Condition: the table was not found, OR the catalog has no entries at all
+        table_not_found = schema_result.get("found") is False
+        catalog_empty = not list(catalog_result.get("entries") or [])
+        if not (table_not_found or catalog_empty):
+            return None
+
+        upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
+        column_summary = (
+            upload_info.get("column_summary")
+            if isinstance(upload_info.get("column_summary"), dict)
+            else {}
+        )
+        raw_columns = (
+            column_summary.get("all_columns")
+            if isinstance(column_summary.get("all_columns"), list)
+            else []
+        )
+        upload_columns = [str(item).strip() for item in raw_columns if str(item).strip()]
+
+        # Derive a table name from the upload file name or the schema hint
+        file_name = str(upload_info.get("file_name") or "").strip()
+        hint_table = str(schema_result.get("table_name") or "").strip().lower()
+        if hint_table and SAFE_IDENTIFIER_RE.match(hint_table):
+            table_name = hint_table
+        elif file_name:
+            base = Path(file_name).stem
+            table_name = self._normalize_identifier(base) or "uploaded_table"
+        else:
+            table_name = "uploaded_table"
+
+        human_label = table_name.replace("_", " ").title()
+        description = (
+            f"Table for uploads containing: {', '.join(upload_columns[:8])}."
+            if upload_columns
+            else "New table from uploaded file."
+        )
+
+        try:
+            return IngestionAgentPlanOutput.model_validate(
+                {
+                    "status": "awaiting_catalog_setup",
+                    "agent_guess": {
+                        "business_type": "other",
+                        "confidence": 0.5,
+                        "reasoning": (
+                            "No catalog entry found for this upload. "
+                            "Recovered from tool trace to request catalog setup."
+                        ),
+                    },
+                    "setup_questions": [
+                        {
+                            "question_id": "description",
+                            "title": "What is this table used for?",
+                            "options": [],
+                        }
+                    ],
+                    "suggested_catalog_seed": {
+                        "business_type": "other",
+                        "table_name": table_name,
+                        "human_label": human_label,
+                        "write_mode": "new_table",
+                        "time_grain": "none",
+                        "primary_keys": [],
+                        "match_columns": [],
+                        "is_active_target": True,
+                        "description": description,
+                    },
+                    "human_approval": {
+                        "required": True,
+                        "mechanism": "catalog_setup_card",
+                        "stage": "catalog_setup",
+                        "question": "Please confirm the table definition before proceeding.",
+                        "options": list(CATALOG_SETUP_APPROVAL_OPTIONS),
+                        "recommended_option": "confirm_catalog_setup",
+                    },
                 }
             )
         except Exception:
@@ -5000,8 +5303,7 @@ class WriteIngestionAgentRuntime:
                 "table_name": normalized_table,
                 "message": (
                     "No catalog entry exists for this table. "
-                    "The workspace has no defined intent for it yet. "
-                    "Use awaiting_catalog_setup to propose creating a new table."
+                    "Call create_catalog_entry to create one, then call describe_table_schema again to verify."
                 ),
             }
         target_catalog = self._serialize_catalog_entry(row)
@@ -5015,6 +5317,135 @@ class WriteIngestionAgentRuntime:
             "match_columns": list(target_catalog["match_columns"]),
             "write_mode": target_catalog["write_mode"],
             "time_grain": target_catalog["time_grain"],
+        }
+
+    def _tool_create_catalog_entry(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        job_id: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a catalog entry on behalf of the planning agent.
+
+        The agent calls this when the workspace has no matching catalog entry for the
+        upload. The method validates the inputs, delegates to
+        ``_upsert_catalog_entry_from_setup``, and commits immediately so that the
+        subsequent ``describe_table_schema`` call can see the new entry.
+        """
+        workspace_id = str(arguments.get("workspace_id", "")).strip()
+        if not workspace_id:
+            # Fall back to the job's workspace_id
+            row = conn.execute(
+                "SELECT workspace_id, created_by, upload_id FROM ingestion_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise IngestionPlanningError(
+                    code="INGESTION_JOB_NOT_FOUND",
+                    message="Ingestion job not found",
+                    status_code=404,
+                )
+            workspace_id = str(row["workspace_id"])
+            requested_by = str(row["created_by"])
+            upload_id = str(row["upload_id"])
+        else:
+            row = conn.execute(
+                "SELECT created_by, upload_id FROM ingestion_jobs WHERE id = ? AND workspace_id = ?",
+                (job_id, workspace_id),
+            ).fetchone()
+            if row is None:
+                raise IngestionPlanningError(
+                    code="INGESTION_JOB_NOT_FOUND",
+                    message="Ingestion job not found for the given workspace",
+                    status_code=404,
+                )
+            requested_by = str(row["created_by"])
+            upload_id = str(row["upload_id"])
+
+        table_name = str(arguments.get("table_name", "")).strip().lower()
+        if not table_name:
+            raise IngestionPlanningError(
+                code="CATALOG_TABLE_NAME_INVALID",
+                message="table_name is required",
+                status_code=422,
+            )
+        normalized_name = self._normalize_identifier(table_name)
+        if not normalized_name or not SAFE_IDENTIFIER_RE.match(normalized_name):
+            raise IngestionPlanningError(
+                code="CATALOG_TABLE_NAME_INVALID",
+                message=f"table_name '{table_name}' is not a valid SQL identifier",
+                status_code=422,
+            )
+        table_name = normalized_name
+
+        business_type = str(arguments.get("business_type", "other")).strip()
+        if business_type not in {"roster", "project_progress", "attendance", "other"}:
+            business_type = "other"
+
+        write_mode = str(arguments.get("write_mode", "new_table")).strip()
+        if write_mode not in {"new_table", "update_existing", "time_partitioned_new_table"}:
+            write_mode = "new_table"
+
+        time_grain = str(arguments.get("time_grain", "none")).strip()
+        if time_grain not in {"none", "month", "quarter", "year"}:
+            time_grain = "none"
+
+        human_label = str(arguments.get("human_label", "")).strip()
+        if not human_label:
+            human_label = table_name.replace("_", " ").title()
+
+        description = str(arguments.get("description", "")).strip()
+
+        raw_primary_keys = arguments.get("primary_keys") or []
+        primary_keys = [str(k).strip().lower() for k in raw_primary_keys if str(k).strip()]
+
+        raw_match_columns = arguments.get("match_columns") or []
+        match_columns = [str(c).strip().lower() for c in raw_match_columns if str(c).strip()]
+
+        setup_seed = IngestionCatalogSetupSeed(
+            business_type=business_type,  # type: ignore[arg-type]
+            table_name=table_name,
+            human_label=human_label,
+            write_mode=write_mode,  # type: ignore[arg-type]
+            time_grain=time_grain,  # type: ignore[arg-type]
+            primary_keys=primary_keys,
+            match_columns=match_columns,
+            is_active_target=True,
+            description=description,
+        )
+
+        upload_info = self._tool_inspect_upload(conn=conn, upload_id=upload_id)
+        catalog_entry = self._upsert_catalog_entry_from_setup(
+            conn=conn,
+            workspace_id=workspace_id,
+            requested_by=requested_by,
+            setup_seed=setup_seed,
+            upload_info=upload_info,
+        )
+        conn.commit()
+        logger.info(
+            "ingestion_catalog_entry_created job_id=%s workspace_id=%s table_name=%s business_type=%s write_mode=%s",
+            job_id,
+            workspace_id,
+            table_name,
+            business_type,
+            write_mode,
+        )
+        return {
+            "created": True,
+            "catalog_entry_id": catalog_entry["id"],
+            "table_name": catalog_entry["table_name"],
+            "human_label": catalog_entry["human_label"],
+            "business_type": catalog_entry["business_type"],
+            "write_mode": catalog_entry["write_mode"],
+            "time_grain": catalog_entry["time_grain"],
+            "primary_keys": catalog_entry["primary_keys"],
+            "match_columns": catalog_entry["match_columns"],
+            "message": (
+                f"Catalog entry created for table '{table_name}'. "
+                "Now call describe_table_schema to get the full schema contract."
+            ),
         }
 
     def _tool_request_human_approval(

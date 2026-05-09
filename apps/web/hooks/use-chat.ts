@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useChatStore, type PendingIngestionApproval } from "@/stores/chat-store";
+import { useChatStore, type PendingIngestionApproval, type PendingIngestionSetup } from "@/stores/chat-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -31,6 +31,7 @@ import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/c
 import type { ChatMessage, ChatSession } from "@/types/chat";
 import type {
   IngestionApprovalResult,
+  IngestionCatalogSetupSeed,
   IngestionExecuteResult,
   IngestionPlanAwaitingApproval,
   IngestionPlanResult,
@@ -132,6 +133,7 @@ export function useSendMessage() {
         const pendingApproval = useChatStore.getState().pendingIngestionBySession[sessionId];
         if (attachment) {
           useChatStore.getState().clearPendingIngestionApproval(sessionId);
+          useChatStore.getState().clearPendingIngestionSetup(sessionId);
           return await runIngestionConversationResponse({
             sessionId,
             workspaceId,
@@ -690,30 +692,7 @@ async function runIngestionConversationResponse({
       throw new Error(planErrorMessage ?? t("chat.requestFailed"));
     }
 
-    let plan = mapPlanLikePayload(planPayload);
-    let autoSetupApplied = false;
-    let setupTableName: string | null = null;
-
-    if (plan?.status === "awaiting_catalog_setup") {
-      autoSetupApplied = true;
-      setupTableName = plan.suggestedCatalogSeed.tableName;
-
-      const { decisionPayload: setupPayload, hasError: setupHasError } = await consumeIngestionStreamIntoTrace(
-        streamIngestionSetupConfirm({
-          workspaceId,
-          jobId: upload.jobId,
-          conversationId: sessionId,
-          message: content,
-          setup: plan.suggestedCatalogSeed,
-          signal,
-        }),
-        messageId,
-      );
-      traceHasError = traceHasError || setupHasError;
-      if (setupPayload) {
-        plan = mapPlanLikePayload(setupPayload);
-      }
-    }
+    const plan = mapPlanLikePayload(planPayload);
 
     store.endTrace(messageId, traceHasError ? "error" : "final");
 
@@ -722,7 +701,9 @@ async function runIngestionConversationResponse({
     const toolCallCount = traceSteps.filter((s) => s.kind === "tool").length;
     const durationMs = trace ? (trace.endedAt ?? Date.now()) - trace.startedAt : 0;
 
-    if (plan?.status === "awaiting_user_approval") {
+    if (plan?.status === "awaiting_catalog_setup") {
+      useChatStore.getState().setPendingIngestionSetup(sessionId, { upload, plan });
+    } else if (plan?.status === "awaiting_user_approval") {
       useChatStore.getState().setPendingIngestionApproval(sessionId, { upload, plan });
     }
 
@@ -733,8 +714,6 @@ async function runIngestionConversationResponse({
       content: buildIngestionSummaryMessage({
         upload,
         plan,
-        autoSetupApplied,
-        setupTableName,
         approvalResult: null,
         executionResult: null,
         t,
@@ -881,8 +860,6 @@ async function runIngestionApprovalResponse({
       content: buildIngestionSummaryMessage({
         upload: pending.upload,
         plan,
-        autoSetupApplied: false,
-        setupTableName: null,
         approvalResult,
         executionResult,
         t,
@@ -907,6 +884,195 @@ async function runIngestionApprovalResponse({
     removePlaceholder();
     throw err;
   }
+}
+
+async function runIngestionSetupConfirmResponse({
+  sessionId,
+  workspaceId,
+  pending,
+  seed,
+  signal,
+  t,
+}: {
+  sessionId: string;
+  workspaceId: string;
+  pending: PendingIngestionSetup;
+  seed: IngestionCatalogSetupSeed;
+  signal?: AbortSignal;
+  t: TranslateFn;
+}): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
+  const messageId = `msg-${generateId()}`;
+  const traceStartedAt = Date.now();
+  const store = useChatStore.getState();
+  store.startTrace(messageId, traceStartedAt);
+
+  const placeholder: ChatMessage = {
+    id: messageId,
+    sessionId,
+    role: "assistant",
+    content: "",
+    timestamp: new Date().toISOString(),
+  };
+  store.appendMessage(sessionId, placeholder);
+
+  const removePlaceholder = () => {
+    useChatStore.setState((s) => ({
+      messagesBySession: {
+        ...s.messagesBySession,
+        [sessionId]: (s.messagesBySession[sessionId] ?? []).filter((m) => m.id !== messageId),
+      },
+    }));
+  };
+
+  let traceHasError = false;
+
+  try {
+    const { decisionPayload, hasError } = await consumeIngestionStreamIntoTrace(
+      streamIngestionSetupConfirm({
+        workspaceId,
+        jobId: pending.upload.jobId,
+        conversationId: sessionId,
+        message: undefined,
+        setup: seed,
+        signal,
+      }),
+      messageId,
+    );
+    traceHasError = hasError;
+
+    useChatStore.getState().clearPendingIngestionSetup(sessionId);
+
+    const plan = decisionPayload ? mapPlanLikePayload(decisionPayload) : null;
+
+    store.endTrace(messageId, traceHasError ? "error" : "final");
+
+    const trace = useChatStore.getState().traceByMessageId[messageId];
+    const traceSteps = trace?.steps ?? [];
+    const toolCallCount = traceSteps.filter((s) => s.kind === "tool").length;
+    const durationMs = trace ? (trace.endedAt ?? Date.now()) - trace.startedAt : 0;
+
+    if (plan?.status === "awaiting_catalog_setup") {
+      useChatStore.getState().setPendingIngestionSetup(sessionId, { upload: pending.upload, plan });
+    } else if (plan?.status === "awaiting_user_approval") {
+      useChatStore.getState().setPendingIngestionApproval(sessionId, { upload: pending.upload, plan });
+    }
+
+    if (!plan) {
+      const errorMessage: ChatMessage = {
+        id: messageId,
+        sessionId,
+        role: "assistant",
+        content: t("chat.requestFailed"),
+        timestamp: new Date().toISOString(),
+      };
+      return { assistantMessage: errorMessage, chartAsset: undefined, preAppended: true };
+    }
+
+    const assistantMessage: ChatMessage = {
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      content: buildIngestionSummaryMessage({
+        upload: pending.upload,
+        plan,
+        approvalResult: null,
+        executionResult: null,
+        t,
+      }),
+      timestamp: new Date().toISOString(),
+      traceSummary:
+        traceSteps.length > 0
+          ? { stepCount: toolCallCount, durationMs, status: traceHasError ? "error" : "ok" }
+          : undefined,
+    };
+    return { assistantMessage, chartAsset: undefined, preAppended: true };
+  } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
+    store.endTrace(messageId, "error");
+    removePlaceholder();
+    throw err;
+  }
+}
+
+export function useConfirmIngestionSetup() {
+  const { t } = useI18n();
+  const appendMessage = useChatStore((s) => s.appendMessage);
+  const touchSession = useChatStore((s) => s.touchSession);
+  const setSessionSending = useUIStore((s) => s.setSessionSending);
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      seed,
+    }: {
+      sessionId: string;
+      seed: IngestionCatalogSetupSeed;
+    }) => {
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (!workspaceId) {
+        throw new Error(t("chat.toast.noWorkspace"));
+      }
+      const pending = useChatStore.getState().pendingIngestionSetupBySession[sessionId];
+      if (!pending) {
+        throw new Error("No pending setup found");
+      }
+      const abortController = new AbortController();
+      activeChatControllers.set(sessionId, abortController);
+      try {
+        return await runIngestionSetupConfirmResponse({
+          sessionId,
+          workspaceId,
+          pending,
+          seed,
+          signal: abortController.signal,
+          t,
+        });
+      } finally {
+        if (activeChatControllers.get(sessionId) === abortController) {
+          activeChatControllers.delete(sessionId);
+        }
+        setSessionSending(sessionId, false);
+      }
+    },
+    onMutate: ({ sessionId }) => {
+      setSessionSending(sessionId, true);
+    },
+    onSuccess: ({ assistantMessage, chartAsset, preAppended }, { sessionId }) => {
+      if (preAppended) {
+        useChatStore.getState().replaceMessage(sessionId, assistantMessage.id, assistantMessage);
+      } else {
+        appendMessage(sessionId, assistantMessage);
+      }
+      touchSession(sessionId, {
+        lastMessage: assistantMessage.content,
+        messageDelta: 1,
+      });
+    },
+    onError: (error, { sessionId }) => {
+      const errorMessage: ChatMessage = {
+        id: `msg-${generateId()}`,
+        sessionId,
+        role: "assistant",
+        content: error instanceof Error ? error.message : t("chat.requestFailed"),
+        timestamp: new Date().toISOString(),
+      };
+      appendMessage(sessionId, errorMessage);
+      touchSession(sessionId, {
+        lastMessage: errorMessage.content,
+        messageDelta: 1,
+      });
+    },
+    onSettled: (_data, _error, { sessionId }) => {
+      setSessionSending(sessionId, false);
+    },
+  });
 }
 
 function createLocalSession(title?: string): ChatSession {
@@ -985,16 +1151,12 @@ function formatUserMessageContent({
 function buildIngestionSummaryMessage({
   upload,
   plan,
-  autoSetupApplied,
-  setupTableName,
   approvalResult,
   executionResult,
   t,
 }: {
   upload: IngestionUploadResult;
   plan: IngestionPlanResult;
-  autoSetupApplied: boolean;
-  setupTableName: string | null;
   approvalResult: IngestionApprovalResult | null;
   executionResult: IngestionExecuteResult | null;
   t: TranslateFn;
@@ -1011,28 +1173,10 @@ function buildIngestionSummaryMessage({
   ];
 
   if (plan.status === "awaiting_catalog_setup") {
-    if (autoSetupApplied) {
-      lines.push(
-        t("chat.ingestion.autoSetupApplied", {
-          tableName: setupTableName ?? t("ingestion.lifecycle.targetNotSet"),
-        })
-      );
-    }
-    lines.push(
-      t("chat.ingestion.setupStillRequired", {
-        businessType: plan.agentGuess.businessType,
-      })
-    );
+    lines.push(t("chat.ingestion.setupRequired"));
     return lines.join("\n");
   }
 
-  if (autoSetupApplied) {
-    lines.push(
-      t("chat.ingestion.autoSetupApplied", {
-        tableName: setupTableName ?? t("ingestion.lifecycle.targetNotSet"),
-      })
-    );
-  }
   lines.push(...buildAwaitingApprovalSummary(plan, approvalResult, executionResult, t));
   return lines.join("\n");
 }

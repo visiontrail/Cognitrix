@@ -373,15 +373,71 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
 
       const decisionPayload = await consumeIngestionStream(gen);
 
-      if (decisionPayload) {
-        const plan = mapPlanLikePayload(decisionPayload);
+      if (!decisionPayload) {
+        if (errorState === null) {
+          handleFailure("setup", new Error("No decision received from setup agent"));
+        }
+        return;
+      }
+
+      const plan = mapPlanLikePayload(decisionPayload);
+
+      // After catalog setup is confirmed and re-planning returns a proposal,
+      // auto-approve with the recommended action and auto-execute so the user
+      // only needs to click "Confirm & Import" once.
+      if (plan.status === "awaiting_user_approval") {
+        const approvalPlan = plan as IngestionPlanAwaitingApproval;
+        await autoApproveAndExecute(approvalPlan);
+      } else {
         applyPlanPayload(plan);
-      } else if (errorState === null) {
-        handleFailure("setup", new Error("No decision received from setup agent"));
       }
     } catch (error) {
       finalizeTrace(true);
       handleFailure("setup", error);
+    }
+  }
+
+  async function autoApproveAndExecute(plan: IngestionPlanAwaitingApproval) {
+    if (!uploadResult) return;
+    clearLifecycleError();
+    try {
+      setPhase("approving");
+      const recommendedAction = plan.proposal.recommendedAction;
+      const timeGrain =
+        recommendedAction === "time_partitioned_new_table" ? plan.proposal.timeGrain : undefined;
+      const approved = await approveIngestionProposal({
+        workspaceId,
+        jobId: uploadResult.jobId,
+        proposalId: plan.proposalId,
+        approvedAction: recommendedAction,
+        userOverrides: timeGrain && timeGrain !== "none" ? { timeGrain } : undefined,
+      });
+      setApprovedResult(approved);
+      if (approved.status === "cancelled") {
+        setPhase("cancelled");
+        return;
+      }
+      setPhase("executing");
+      setAgentTrace(null);
+      startTrace();
+      const gen = streamIngestionExecute({
+        workspaceId,
+        jobId: uploadResult.jobId,
+        proposalId: plan.proposalId,
+      });
+      const execPayload = await consumeIngestionStream(gen);
+      if (execPayload) {
+        const execution = mapExecutePayload(execPayload);
+        setExecuteResult(execution);
+        setPhase("succeeded");
+      } else if (errorState === null) {
+        handleFailure("execute", new Error("No result received from execution agent"));
+      } else {
+        setPhase("failed");
+      }
+    } catch (error) {
+      finalizeTrace(true);
+      handleFailure("setup_execute", error);
     }
   }
 
@@ -641,19 +697,23 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
 
           {setupPayload ? (
             <div className="space-y-2" data-testid="ingestion-setup-flow">
-              <div className="rounded-comfortable border border-border-cream bg-amber-50 px-3 py-2 text-body-sm text-near-black">
-                {t("ingestion.lifecycle.setupRequired")}
-              </div>
+              <p className="text-body-sm text-stone-gray">{t("ingestion.lifecycle.setupRequired")}</p>
               <IngestionSetupCard
                 initialSeed={setupPayload.suggestedCatalogSeed}
                 setupQuestions={setupPayload.setupQuestions}
-                isSubmitting={phase === "planning"}
+                agentConfidence={setupPayload.agentGuess?.confidence}
+                isSubmitting={phase === "planning" || phase === "approving" || phase === "executing"}
                 onConfirm={handleSetupConfirm}
                 onCancel={() => {
                   setPhase("cancelled");
                   setSetupPayload(null);
                 }}
               />
+              {(phase === "approving" || phase === "executing") && (
+                <div className="rounded-comfortable border border-amber-200 bg-amber-50 px-3 py-2 text-body-sm text-amber-800">
+                  {t("ingestion.lifecycle.setupAutoApplied")}
+                </div>
+              )}
             </div>
           ) : null}
 

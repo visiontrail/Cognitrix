@@ -71,6 +71,10 @@ export function useWorkspaceCatalogDataPreview(
       return api.fetchWorkspaceCatalogDataPreview(workspaceId, catalogId, { limit, offset });
     },
     enabled: Boolean(workspaceId && catalogId),
+    retry: (failureCount, error) => {
+      if (error instanceof api.WorkspaceApiError && error.status === 404) return false;
+      return failureCount < 3;
+    },
   });
 }
 
@@ -115,6 +119,7 @@ export function useCreateWorkspace() {
 }
 
 export function useDeleteWorkspace() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const removeWorkspace = useWorkspaceStore((s) => s.removeWorkspace);
 
@@ -123,6 +128,14 @@ export function useDeleteWorkspace() {
     onSuccess: (_, workspaceId) => {
       removeWorkspace(workspaceId);
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      toast.success(t("workspace.toast.deleted"));
+    },
+    onError: (error) => {
+      if (error instanceof api.WorkspaceApiError && error.status === 403) {
+        toast.error(t("workspace.toast.deleteForbidden"));
+        return;
+      }
+      toast.error(t("workspace.toast.deleteFailed"));
     },
   });
 }

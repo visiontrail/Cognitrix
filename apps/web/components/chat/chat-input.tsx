@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { stopChatResponse, useSendMessage } from "@/hooks/use-chat";
+import { stopChatResponse, useConfirmIngestionSetup, useSendMessage } from "@/hooks/use-chat";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceColumns, type ColumnMentionItem } from "@/hooks/use-workspace-columns";
 import { cn } from "@/lib/utils";
@@ -16,16 +16,20 @@ import {
   type ChartTypeOption,
   type QueryChartType,
 } from "@/lib/charts/chart-type-options";
-import type { IngestionProposalAction, IngestionTimeGrain } from "@/types/ingestion";
+import type { IngestionCatalogSetupSeed, IngestionProposalAction, IngestionTimeGrain } from "@/types/ingestion";
+import { IngestionSetupCard } from "@/components/workspace/ingestion-setup-card";
 
 export function ChatInput({ sessionId }: { sessionId: string }) {
   const { locale, t } = useI18n();
   const composerText = useChatStore((s) => s.composerText);
   const setComposerText = useChatStore((s) => s.setComposerText);
   const pendingApproval = useChatStore((s) => s.pendingIngestionBySession[sessionId]);
+  const pendingSetup = useChatStore((s) => s.pendingIngestionSetupBySession[sessionId]);
+  const clearPendingSetup = useChatStore((s) => s.clearPendingIngestionSetup);
   const isSending = useUIStore((s) => Boolean(s.sendingBySession[sessionId]));
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const sendMessage = useSendMessage();
+  const confirmSetup = useConfirmIngestionSetup();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -41,7 +45,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
     [pendingApproval]
   );
-  const inputLockedByApproval = Boolean(pendingApproval) && !customApprovalInput;
+  const inputLockedByApproval = (Boolean(pendingApproval) || Boolean(pendingSetup)) && !customApprovalInput;
   const filteredChartOptions = useMemo(
     () => filterChartOptions(chartOptions, chartTrigger?.query ?? ""),
     [chartOptions, chartTrigger?.query]
@@ -53,7 +57,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const activeChartOption = filteredChartOptions[Math.min(activeChartIndex, filteredChartOptions.length - 1)] ?? null;
 
   useEffect(() => {
-    if (pendingApproval) {
+    if (pendingApproval || pendingSetup) {
       setSelectedFile(null);
       setChartTrigger(null);
       setColumnTrigger(null);
@@ -63,7 +67,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       return;
     }
     setCustomApprovalInput(false);
-  }, [pendingApproval]);
+  }, [pendingApproval, pendingSetup]);
 
   useEffect(() => {
     if (activeChartIndex >= filteredChartOptions.length) {
@@ -284,7 +288,18 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   return (
     <div className="border-t border-border-cream bg-ivory px-4 py-3 shrink-0">
       <div className="max-w-4xl mx-auto space-y-2">
-        {pendingApproval ? (
+        {pendingSetup ? (
+          <IngestionSetupCard
+            initialSeed={pendingSetup.plan.suggestedCatalogSeed}
+            setupQuestions={pendingSetup.plan.setupQuestions}
+            agentConfidence={pendingSetup.plan.agentGuess.confidence}
+            isSubmitting={isSending}
+            onConfirm={(seed: IngestionCatalogSetupSeed) => {
+              confirmSetup.mutate({ sessionId, seed });
+            }}
+            onCancel={() => clearPendingSetup(sessionId)}
+          />
+        ) : pendingApproval ? (
           <div className="rounded-comfortable border border-border-cream bg-amber-50 px-3 py-3">
             <p className="text-body-sm font-medium text-near-black">
               {pendingApproval.plan.humanApproval.question || t("chat.ingestion.approvalOptionsTitle")}
@@ -371,7 +386,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             size="icon-sm"
             className="h-[44px] w-[44px] shrink-0 self-center"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isSending || Boolean(pendingApproval)}
+            disabled={isSending || Boolean(pendingApproval) || Boolean(pendingSetup)}
             aria-label={t("chat.attachFile")}
           >
             <Paperclip className="h-4 w-4" />

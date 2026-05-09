@@ -17,6 +17,7 @@ const { mutate, stopChatResponseMock } = vi.hoisted(() => ({
 vi.mock("../../hooks/use-chat", () => ({
   useSendMessage: () => ({ mutate }),
   stopChatResponse: stopChatResponseMock,
+  useConfirmIngestionSetup: () => ({ mutate: vi.fn() }),
 }));
 
 vi.mock("../../hooks/use-workspace-columns", () => ({

@@ -16,8 +16,12 @@ export type ColumnMentionItem = {
 export function useWorkspaceColumns(workspaceId: string | null): ColumnMentionItem[] {
   const { data: catalog = [] } = useWorkspaceCatalog(workspaceId);
 
+  const readyEntries = catalog.filter(
+    (entry) => entry.primaryKeys.length > 0 || entry.matchColumns.length > 0
+  );
+
   const previews = useQueries({
-    queries: catalog.map((entry) => ({
+    queries: readyEntries.map((entry) => ({
       queryKey: ["workspace-catalog-data", workspaceId, entry.id, 1, 0],
       queryFn: async () => {
         if (!workspaceId) return null;
@@ -25,11 +29,15 @@ export function useWorkspaceColumns(workspaceId: string | null): ColumnMentionIt
       },
       enabled: Boolean(workspaceId && entry.id),
       staleTime: 5 * 60 * 1000,
+      retry: (failureCount: number, error: unknown) => {
+        if (error instanceof api.WorkspaceApiError && error.status === 404) return false;
+        return failureCount < 3;
+      },
     })),
   });
 
   return previews.flatMap((result, index) => {
-    const entry = catalog[index];
+    const entry = readyEntries[index];
     if (!result.data || !entry) return [];
     return result.data.columns.map((col) => ({
       id: `${entry.tableName}.${col.name}`,

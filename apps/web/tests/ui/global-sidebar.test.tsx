@@ -56,6 +56,7 @@ describe("GlobalSidebar", () => {
           createdAt: "2026-04-14T00:00:00.000Z",
           updatedAt: "2026-04-14T00:00:00.000Z",
           nodeCount: 3,
+          role: "owner",
         },
       ],
       activeWorkspaceId: "ws-1",
@@ -208,5 +209,25 @@ describe("GlobalSidebar", () => {
     await waitFor(() => {
       expect(useWorkspaceStore.getState().workspaces).toEqual([]);
     });
+  });
+
+  it("hides workspace delete action for non-owner members", () => {
+    useWorkspaceStore.setState({
+      workspaces: [
+        {
+          id: "ws-editor",
+          title: "Shared Workspace",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          nodeCount: 1,
+          role: "editor",
+        },
+      ],
+      activeWorkspaceId: "ws-editor",
+    });
+
+    renderWithProviders(<GlobalSidebar />);
+
+    expect(screen.queryByRole("button", { name: "Delete workspace: Shared Workspace" })).toBeNull();
   });
 });

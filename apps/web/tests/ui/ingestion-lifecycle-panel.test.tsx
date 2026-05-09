@@ -178,6 +178,16 @@ describe("IngestionLifecyclePanel", () => {
     createIngestionUpload.mockResolvedValue(sampleUploadResult());
     streamIngestionPlan.mockImplementation(() => makeStreamDecision(sampleCatalogSetupDecision()));
     streamIngestionSetupConfirm.mockImplementation(() => makeStreamDecision(sampleProposalDecision()));
+    approveIngestionProposal.mockResolvedValue({
+      status: "approved",
+      workspaceId: "ws-1",
+      jobId: "job-1",
+      proposalId: "proposal-1",
+      approvedAction: "update_existing",
+      targetTable: "employee_roster",
+      dryRunSummary: { approvedAction: "update_existing", targetTable: "employee_roster", timeGrain: "none", predictedInsertCount: 2, predictedUpdateCount: 1, predictedConflictCount: 0 },
+    });
+    streamIngestionExecute.mockImplementation(() => makeStreamDecision(sampleExecuteDecision()));
 
     render(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
 
@@ -191,8 +201,8 @@ describe("IngestionLifecyclePanel", () => {
     expect(await screen.findByTestId("ingestion-setup-flow")).toBeInTheDocument();
     expect(screen.getByText("Catalog setup is required before planning can continue.")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Apply Setup" }));
-    expect(await screen.findByTestId("ingestion-proposal-card")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm & Import" }));
+    expect(await screen.findByTestId("ingestion-receipt-card")).toBeInTheDocument();
     expect(streamIngestionSetupConfirm).toHaveBeenCalledTimes(1);
   });
 

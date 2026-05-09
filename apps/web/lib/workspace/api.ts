@@ -268,6 +268,7 @@ function mapWorkspace(
     createdAt: asString(value.created_at) || new Date().toISOString(),
     updatedAt: asString(value.updated_at) || new Date().toISOString(),
     nodeCount: countSnapshotNodes(snapshots[workspaceId]),
+    role: asOptionalString(value.role),
   };
 }
 

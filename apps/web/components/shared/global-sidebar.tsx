@@ -240,8 +240,12 @@ export function GlobalSidebar() {
                     title={ws.title}
                     subtitle={t("sidebar.itemCount", { count: ws.nodeCount })}
                     onClick={() => handleSelectWorkspace(ws.id)}
-                    onDelete={() => deleteWorkspace.mutate(ws.id)}
-                    deleteAriaLabel={t("sidebar.deleteWorkspace", { title: ws.title })}
+                    onDelete={canDeleteWorkspace(ws.role) ? () => deleteWorkspace.mutate(ws.id) : undefined}
+                    deleteAriaLabel={
+                      canDeleteWorkspace(ws.role)
+                        ? t("sidebar.deleteWorkspace", { title: ws.title })
+                        : undefined
+                    }
                   />
                 ))
               )}
@@ -384,8 +388,8 @@ function SidebarItem({
   title: string;
   subtitle: string;
   onClick: () => void;
-  onDelete: () => void;
-  deleteAriaLabel: string;
+  onDelete?: () => void;
+  deleteAriaLabel?: string;
   onRename?: (nextTitle: string) => void;
   renameAriaLabel?: string;
   renameInputAriaLabel?: string;
@@ -529,20 +533,26 @@ function SidebarItem({
                 <Pencil className="w-3.5 h-3.5" />
               </button>
             )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="opacity-100 p-1 rounded-subtle text-stone-gray hover:bg-error-crimson/10 hover:text-error-crimson focus-visible:text-error-crimson transition-colors"
-              aria-label={deleteAriaLabel}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            {onDelete && deleteAriaLabel && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="opacity-100 p-1 rounded-subtle text-stone-gray hover:bg-error-crimson/10 hover:text-error-crimson focus-visible:text-error-crimson transition-colors"
+                aria-label={deleteAriaLabel}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </>
         )}
       </div>
     </div>
   );
+}
+
+function canDeleteWorkspace(role: string | undefined): boolean {
+  return role === "owner" || role === "admin";
 }

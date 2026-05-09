@@ -146,3 +146,51 @@ def test_recover_agent_output_from_tool_trace_for_ask_user_question() -> None:
     assert output.human_approval.stage == "proposal_approval"
     assert output.proposal is not None
     assert output.proposal.recommended_action == "update_existing"
+
+
+def test_recover_proposal_from_completed_tool_trace_without_structured_output() -> None:
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "column_summary": {"all_columns": ["工号", "姓名"]},
+            },
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "result": {
+                "table_name": "employee_roster",
+                "business_type": "roster",
+                "match_columns": ["employee_id"],
+                "time_grain": "none",
+            },
+        },
+        {
+            "tool_name": "build_diff_preview",
+            "result": {
+                "predicted_insert_count": 0,
+                "predicted_update_count": 30,
+                "predicted_conflict_count": 0,
+            },
+        },
+        {
+            "tool_name": "generate_write_sql_draft",
+            "arguments": {
+                "target_table": "employee_roster",
+                "action_mode": "update_existing",
+                "match_columns": ["employee_id"],
+            },
+            "result": {"sql_draft": "MERGE INTO employee_roster ..."},
+        },
+    ]
+
+    recovered = runtime._recover_proposal_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.status == "awaiting_user_approval"
+    assert recovered.proposal is not None
+    assert recovered.proposal.recommended_action == "update_existing"
+    assert recovered.proposal.target_table == "employee_roster"
+    assert recovered.proposal.diff_preview.predicted_update_count == 30
+    assert recovered.human_approval.mechanism == "frontend_approval_card"

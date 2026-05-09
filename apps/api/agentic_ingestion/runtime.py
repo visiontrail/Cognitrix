@@ -67,6 +67,12 @@ INGESTION_APPROVAL_OPTION_VALUES = [
     *DEFAULT_ACTION_OPTIONS,
     *[item for item in CATALOG_SETUP_APPROVAL_OPTIONS if item not in DEFAULT_ACTION_OPTIONS],
 ]
+RECOVERABLE_PLANNING_OUTPUT_CODES = frozenset({
+    "AGENT_STRUCTURED_OUTPUT_MISSING",
+    "AGENT_STRUCTURED_OUTPUT_INVALID",
+    "AGENT_PROPOSAL_REQUIRED",
+    "INGESTION_AI_UNAVAILABLE",
+})
 INGESTION_SDK_MCP_SERVER_NAME = "ingestion"
 INGESTION_SDK_RUNTIME_BACKEND = "claude-agent-sdk"
 INGESTION_EXECUTION_SDK_MCP_SERVER_NAME = "ingestion_execute"
@@ -115,8 +121,9 @@ INGESTION_AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "describe_table_schema",
         "description": (
-            "Describe one catalog target. This may contain only business-purpose metadata "
-            "if schema has not been inferred yet."
+            "Describe one catalog target. Returns {found: false} if the table does not exist "
+            "in the catalog yet — treat that as confirmation a new table must be created. "
+            "This may contain only business-purpose metadata if schema has not been inferred yet."
         ),
         "parameters": {
             "type": "object",
@@ -338,13 +345,14 @@ Use the provided tools to inspect the upload, workspace catalog, existing target
 proposed diff. Then return structured JSON describing your decision.
 
 Allowed decisions:
-- awaiting_catalog_setup: the workspace catalog lacks a suitable table intent for this upload.
-  Provide setup_questions and suggested_catalog_seed. The user should only need to confirm
-  the table's business-facing label and natural-language purpose. Include table_name,
-  human_label, and description in suggested_catalog_seed. You may include business_type,
-  write_mode, or time_grain as internal hints, but do not require the user to choose
-  primary keys, match columns, or any technical schema fields. Leave primary_keys and
-  match_columns empty unless you are highly confident and the UI does not need to ask.
+- awaiting_catalog_setup: no suitable catalog entry exists for this upload (either the
+  catalog is empty, or describe_table_schema returned {found: false} for the candidate
+  table name). Provide setup_questions and suggested_catalog_seed. The user should only
+  need to confirm the table's business-facing label and natural-language purpose. Include
+  table_name, human_label, and description in suggested_catalog_seed. You may include
+  business_type, write_mode, or time_grain as internal hints, but do not require the user
+  to choose primary keys, match columns, or any technical schema fields. Leave primary_keys
+  and match_columns empty unless you are highly confident and the UI does not need to ask.
 - awaiting_user_approval: you have found a matching catalog target and can produce a
   concrete write proposal. Include proposal with business_type, confidence,
   recommended_action, candidate_actions, target_table, match_columns, column_mapping,
@@ -358,9 +366,16 @@ For Chinese headers, look at the catalog purpose, match_columns, and any known s
 to identify which Chinese header corresponds to which target column (e.g., "工号" → "employee_id").
 Include ALL upload columns in column_mapping even if only guessed.
 
+Tool order for a NEW table (no catalog entry yet):
+inspect_upload → get_workspace_catalog → list_existing_tables → return awaiting_catalog_setup.
+You may optionally call describe_table_schema to confirm {found: false} before deciding.
+
 Tool order for an existing-table proposal:
 inspect_upload → get_workspace_catalog → list_existing_tables → describe_table_schema →
 build_diff_preview → generate_write_sql_draft → return structured output.
+
+If describe_table_schema returns {found: false}, immediately return awaiting_catalog_setup;
+do not attempt build_diff_preview or generate_write_sql_draft.
 
 Do not execute writes. Do not ask the user any questions. Human approval is handled by
 the application after you return. Return ONLY valid JSON matching the required schema.
@@ -937,17 +952,16 @@ class WriteIngestionAgentRuntime:
                             event_queue=event_queue,
                         )
                     except IngestionPlanningError as exc:
-                        _OUTPUT_MISSING = frozenset({
-                            "AGENT_STRUCTURED_OUTPUT_MISSING",
-                            "AGENT_STRUCTURED_OUTPUT_INVALID",
-                            "AGENT_PROPOSAL_REQUIRED",
-                        })
-                        if exc.code in _OUTPUT_MISSING:
+                        if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
                             recovered = self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
                             if recovered is not None:
-                                agent_output_recovered, tool_trace_recovered = recovered
-                                agent_output = agent_output_recovered
-                                tool_trace = tool_trace_recovered
+                                logger.warning(
+                                    "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=%s",
+                                    normalized_job_id,
+                                    exc.code.lower(),
+                                )
+                                agent_output = recovered
+                                tool_trace = tool_trace_snapshot
                             else:
                                 raise
                         else:
@@ -2396,16 +2410,10 @@ class WriteIngestionAgentRuntime:
                 tool_trace_sink=tool_trace_snapshot,
             )
 
-        _OUTPUT_MISSING_CODES = frozenset({
-            "AGENT_STRUCTURED_OUTPUT_MISSING",
-            "AGENT_STRUCTURED_OUTPUT_INVALID",
-            "AGENT_PROPOSAL_REQUIRED",
-        })
-
         try:
             return anyio.run(runner)
         except IngestionPlanningError as exc:
-            if exc.code in _OUTPUT_MISSING_CODES:
+            if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
                 recovered = self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
                 if recovered is not None:
                     logger.warning(
@@ -2828,9 +2836,10 @@ class WriteIngestionAgentRuntime:
                     "inspect_upload",
                     "get_workspace_catalog",
                     "list_existing_tables",
-                    "describe_table_schema when a target table is considered",
-                    "build_diff_preview when producing a proposal",
-                    "generate_write_sql_draft when producing a proposal",
+                    "IF no catalog entry exists → return awaiting_catalog_setup immediately",
+                    "describe_table_schema only when a matching catalog table is identified; if it returns {found:false} → return awaiting_catalog_setup",
+                    "build_diff_preview only when describe_table_schema returned {found:true}",
+                    "generate_write_sql_draft only when describe_table_schema returned {found:true}",
                 ],
                 "available_proposal_actions": DEFAULT_ACTION_OPTIONS,
             },
@@ -4986,13 +4995,18 @@ class WriteIngestionAgentRuntime:
             (workspace_id, normalized_table),
         ).fetchone()
         if row is None:
-            raise IngestionPlanningError(
-                code="CATALOG_ENTRY_NOT_FOUND",
-                message="Catalog entry not found for table schema description",
-                status_code=404,
-            )
+            return {
+                "found": False,
+                "table_name": normalized_table,
+                "message": (
+                    "No catalog entry exists for this table. "
+                    "The workspace has no defined intent for it yet. "
+                    "Use awaiting_catalog_setup to propose creating a new table."
+                ),
+            }
         target_catalog = self._serialize_catalog_entry(row)
         return {
+            "found": True,
             "table_name": target_catalog["table_name"],
             "human_label": target_catalog["human_label"],
             "description": target_catalog["description"],

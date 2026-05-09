@@ -564,12 +564,13 @@ function buildMessageWithChartPreference({
 async function consumeIngestionStreamIntoTrace(
   stream: AsyncGenerator<IngestionSSEEvent>,
   messageId: string,
-): Promise<{ decisionPayload: Record<string, unknown> | null; hasError: boolean }> {
+): Promise<{ decisionPayload: Record<string, unknown> | null; hasError: boolean; errorMessage: string | null }> {
   const store = useChatStore.getState();
   let planningCount = 0;
   let toolCount = 0;
   let decisionPayload: Record<string, unknown> | null = null;
   let hasError = false;
+  let errorMessage: string | null = null;
 
   for await (const event of stream) {
     const payload = isRecord(event.data) ? event.data : {};
@@ -608,6 +609,7 @@ async function consumeIngestionStreamIntoTrace(
       decisionPayload = payload;
     } else if (event.event === "error") {
       hasError = true;
+      errorMessage = String(payload.message ?? "") || errorMessage;
       store.pushTraceStep(messageId, {
         kind: "error",
         id: `error-${Date.now()}`,
@@ -618,7 +620,7 @@ async function consumeIngestionStreamIntoTrace(
     }
   }
 
-  return { decisionPayload, hasError };
+  return { decisionPayload, hasError, errorMessage };
 }
 
 async function runIngestionConversationResponse({
@@ -679,13 +681,16 @@ async function runIngestionConversationResponse({
   let traceHasError = false;
 
   try {
-    const { decisionPayload: planPayload, hasError: planHasError } = await consumeIngestionStreamIntoTrace(
+    const { decisionPayload: planPayload, hasError: planHasError, errorMessage: planErrorMessage } = await consumeIngestionStreamIntoTrace(
       streamIngestionPlan({ workspaceId, jobId: upload.jobId, conversationId: sessionId, message: content, signal }),
       messageId,
     );
     traceHasError = planHasError;
+    if (!planPayload) {
+      throw new Error(planErrorMessage ?? t("chat.requestFailed"));
+    }
 
-    let plan = planPayload ? mapPlanLikePayload(planPayload) : null;
+    let plan = mapPlanLikePayload(planPayload);
     let autoSetupApplied = false;
     let setupTableName: string | null = null;
 
@@ -721,14 +726,13 @@ async function runIngestionConversationResponse({
       useChatStore.getState().setPendingIngestionApproval(sessionId, { upload, plan });
     }
 
-    const effectivePlan: IngestionPlanResult = plan ?? mapPlanLikePayload(null);
     const assistantMessage: ChatMessage = {
       id: messageId,
       sessionId,
       role: "assistant",
       content: buildIngestionSummaryMessage({
         upload,
-        plan: effectivePlan,
+        plan,
         autoSetupApplied,
         setupTableName,
         approvalResult: null,

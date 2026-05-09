@@ -460,17 +460,25 @@ class TableCatalogService:
             ai_timeout=settings.ai_timeout_seconds,
         )
 
+        resolved_table = table_name
         try:
             with dataset_service.session_manager.connection(
                 actor_user_id,
                 actor_project_id,
                 workspace_id=workspace_id,
-            ) as conn:
+            ) as duck_conn:
                 available_tables = {
                     str(row[0]).strip().lower(): str(row[0]).strip()
-                    for row in conn.execute("SHOW TABLES").fetchall()
+                    for row in duck_conn.execute("SHOW TABLES").fetchall()
                 }
-                resolved_table = available_tables.get(table_name.lower())
+                resolved_table = (
+                    available_tables.get(table_name.lower())
+                    or self._resolve_recent_execution_table(
+                        workspace_id=workspace_id,
+                        logical_table_name=table_name,
+                        available_tables=available_tables,
+                    )
+                )
                 if resolved_table is None:
                     raise TableCatalogError(
                         code="CATALOG_TABLE_DATA_NOT_FOUND",
@@ -478,9 +486,9 @@ class TableCatalogService:
                         status_code=404,
                     )
 
-                column_rows = conn.execute(f'PRAGMA table_info("{resolved_table}")').fetchall()
-                row_count = int(conn.execute(f'SELECT COUNT(*) FROM "{resolved_table}"').fetchone()[0])
-                cursor = conn.execute(
+                column_rows = duck_conn.execute(f'PRAGMA table_info("{resolved_table}")').fetchall()
+                row_count = int(duck_conn.execute(f'SELECT COUNT(*) FROM "{resolved_table}"').fetchone()[0])
+                cursor = duck_conn.execute(
                     f'SELECT * FROM "{resolved_table}" LIMIT {limit} OFFSET {offset}'
                 )
                 column_names = [str(column[0]) for column in (cursor.description or [])]
@@ -499,10 +507,10 @@ class TableCatalogService:
             label_row = sqlite_conn.execute(
                 """
                 SELECT proposal_json FROM ingestion_proposals
-                WHERE workspace_id = ? AND target_table = ?
+                WHERE workspace_id = ? AND (target_table = ? OR target_table = ?)
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (workspace_id, table_name),
+                (workspace_id, table_name, resolved_table),
             ).fetchone()
             if label_row is not None:
                 try:
@@ -531,7 +539,7 @@ class TableCatalogService:
 
         return {
             "entry": entry,
-            "table": table_name,
+            "table": resolved_table,
             "row_count": row_count,
             "limit": limit,
             "offset": offset,
@@ -539,6 +547,47 @@ class TableCatalogService:
             "columns": safe_columns,
             "rows": visible_rows,
         }
+
+    def _resolve_recent_execution_table(
+        self,
+        *,
+        workspace_id: str,
+        logical_table_name: str,
+        available_tables: dict[str, str],
+    ) -> str | None:
+        normalized_logical = logical_table_name.strip().lower()
+        if not normalized_logical:
+            return None
+
+        with self._lock, self._connect() as sqlite_conn:
+            rows = sqlite_conn.execute(
+                """
+                SELECT e.execution_receipt, p.proposal_json
+                FROM ingestion_executions AS e
+                JOIN ingestion_proposals AS p ON p.id = e.proposal_id
+                WHERE e.workspace_id = ? AND e.status = 'succeeded'
+                ORDER BY COALESCE(e.finished_at, e.started_at) DESC
+                LIMIT 25
+                """,
+                (workspace_id,),
+            ).fetchall()
+
+        for row in rows:
+            receipt = _decode_json_dict(row["execution_receipt"])
+            proposal = _decode_json_dict(row["proposal_json"])
+            receipt_target = str(receipt.get("target_table") or "").strip().lower()
+            proposal_target = str(proposal.get("target_table") or "").strip().lower()
+            if not receipt_target:
+                continue
+            if (
+                proposal_target == normalized_logical
+                or receipt_target == normalized_logical
+                or receipt_target.startswith(f"{normalized_logical}_")
+            ):
+                resolved = available_tables.get(receipt_target)
+                if resolved:
+                    return resolved
+        return None
 
     def _get_entry_row(self, *, workspace_id: str, catalog_id: str) -> sqlite3.Row:
         normalized_workspace_id = workspace_id.strip()
@@ -1042,6 +1091,24 @@ def _decode_json_list(value: Any) -> list[str]:
         return []
 
     return [str(item) for item in decoded]
+
+
+def _decode_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+
+    if not isinstance(value, str):
+        return {}
+
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(decoded, dict):
+        return {}
+
+    return decoded
 
 
 def _utc_now() -> str:

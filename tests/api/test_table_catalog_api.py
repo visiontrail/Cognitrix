@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 import duckdb
@@ -243,6 +245,135 @@ def test_table_catalog_data_preview_reads_workspace_duckdb(monkeypatch, tmp_path
                 "department": "R&D",
             }
         ]
+
+
+def test_table_catalog_data_preview_resolves_recent_execution_table(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
+
+        workspace_response = client.post(
+            "/workspaces",
+            json={"name": "Recent Execution Preview Catalog"},
+            headers=owner_headers,
+        )
+        assert workspace_response.status_code == 200
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        create_response = client.post(
+            f"/workspaces/{workspace_id}/catalog",
+            headers=owner_headers,
+            json={
+                "table_name": "employee_master",
+                "human_label": "Employee Master",
+                "description": "Stores employee master rows.",
+            },
+        )
+        assert create_response.status_code == 200
+        catalog_id = create_response.json()["entry"]["id"]
+
+        db_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE employee_master_202605 (
+                    employee_id VARCHAR,
+                    employee_name VARCHAR
+                )
+                """
+            )
+            conn.execute("INSERT INTO employee_master_202605 VALUES ('E001', 'Ava Chen')")
+        finally:
+            conn.close()
+
+        with sqlite3.connect(tmp_path / "workspace-state.db") as sqlite_conn:
+            sqlite_conn.execute("PRAGMA foreign_keys = ON")
+            sqlite_conn.execute(
+                """
+                INSERT INTO ingestion_uploads (
+                    id, workspace_id, uploaded_by, file_name, storage_path, size_bytes, file_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("upload-1", workspace_id, "alice", "employees.csv", "/tmp/employees.csv", 1, "hash-1"),
+            )
+            sqlite_conn.execute(
+                """
+                INSERT INTO ingestion_jobs (
+                    id, workspace_id, upload_id, created_by, status
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("job-1", workspace_id, "upload-1", "alice", "succeeded"),
+            )
+            sqlite_conn.execute(
+                """
+                INSERT INTO ingestion_proposals (
+                    id,
+                    job_id,
+                    workspace_id,
+                    proposal_version,
+                    proposal_json,
+                    recommended_action,
+                    target_table
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "proposal-1",
+                    "job-1",
+                    workspace_id,
+                    1,
+                    json.dumps({"target_table": "employee_master"}),
+                    "new_table",
+                    "employee_master",
+                ),
+            )
+            sqlite_conn.execute(
+                """
+                INSERT INTO ingestion_executions (
+                    id,
+                    job_id,
+                    proposal_id,
+                    workspace_id,
+                    executed_by,
+                    execution_mode,
+                    validated_sql,
+                    execution_receipt,
+                    status,
+                    finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    "execution-1",
+                    "job-1",
+                    "proposal-1",
+                    workspace_id,
+                    "alice",
+                    "execute",
+                    "",
+                    json.dumps({"target_table": "employee_master_202605"}),
+                    "succeeded",
+                ),
+            )
+
+        preview_response = client.get(
+            f"/workspaces/{workspace_id}/catalog/{catalog_id}/data",
+            headers=owner_headers,
+            params={"limit": 1, "offset": 0},
+        )
+        assert preview_response.status_code == 200
+        payload = preview_response.json()
+        assert payload["table"] == "employee_master_202605"
+        assert payload["row_count"] == 1
+        assert payload["rows"] == [{"employee_id": "E001", "employee_name": "Ava Chen"}]
 
 
 def test_table_catalog_create_generates_missing_table_name_with_ai(monkeypatch, tmp_path: Path) -> None:

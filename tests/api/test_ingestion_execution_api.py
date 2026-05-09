@@ -249,6 +249,7 @@ def test_execute_syncs_catalog_after_business_intent_import(monkeypatch, tmp_pat
             json={
                 "table_name": "employee_roster",
                 "human_label": "Employee Roster",
+                "business_type": "roster",
                 "description": "Stores employee master uploads.",
             },
         )
@@ -290,20 +291,39 @@ def test_execute_syncs_catalog_after_business_intent_import(monkeypatch, tmp_pat
             headers=owner_headers,
         )
 
-    assert execute_response.status_code == 200
+        assert execute_response.status_code == 200
+        execute_payload = execute_response.json()
+        assert execute_payload["receipt"]["inserted_rows"] > 0
+        assert execute_payload["receipt"]["affected_rows"] > 0
+
+        catalog_list_response = client.get(
+            f"/workspaces/{workspace_id}/catalog",
+            headers=owner_headers,
+        )
+        assert catalog_list_response.status_code == 200
+        catalog_entry = catalog_list_response.json()["entries"][0]
+        preview_response = client.get(
+            f"/workspaces/{workspace_id}/catalog/{catalog_entry['id']}/data",
+            headers=owner_headers,
+        )
+        assert preview_response.status_code == 200
+        preview_payload = preview_response.json()
+        assert preview_payload["row_count"] > 0
+        assert preview_payload["table"] == execute_payload["receipt"]["target_table"]
 
     db_path = tmp_path / "workspace-state.db"
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         catalog_row = conn.execute(
             """
-            SELECT business_type, write_mode, is_active_target
+            SELECT table_name, business_type, write_mode, is_active_target
             FROM table_catalog
-            WHERE workspace_id = ? AND table_name = ?
+            WHERE workspace_id = ? AND id = ?
             """,
-            (workspace_id, "employee_roster"),
+            (workspace_id, catalog_entry["id"]),
         ).fetchone()
         assert catalog_row is not None
+        assert str(catalog_row["table_name"]) == execute_payload["receipt"]["target_table"]
         assert str(catalog_row["business_type"]) == "roster"
         assert str(catalog_row["write_mode"]) == "new_table"
         assert int(catalog_row["is_active_target"]) == 1

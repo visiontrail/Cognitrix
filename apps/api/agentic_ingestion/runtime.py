@@ -4600,6 +4600,17 @@ class WriteIngestionAgentRuntime:
             conn=session.duckdb_conn,
             table_name=session.target_table,
         )
+        staging_row_count = self._duckdb_table_row_count(
+            conn=session.duckdb_conn,
+            table_name=session.staging_table,
+        )
+        inserted_rows = max(rows_after - rows_before, 0)
+        updated_rows = 0
+        if session.approved_action == "update_existing":
+            updated_rows = max(staging_row_count - inserted_rows, 0)
+        else:
+            inserted_rows = rows_after if not target_exists_before else inserted_rows
+        affected_rows = inserted_rows + updated_rows
         receipt = {
             "success": True,
             "workspace_id": session.workspace_id,
@@ -4616,10 +4627,10 @@ class WriteIngestionAgentRuntime:
             "predicted_update_count": int(session.dry_run_summary.get("predicted_update_count", 0)),
             "rows_before": rows_before,
             "rows_after": rows_after,
-            "staging_row_count": self._duckdb_table_row_count(
-                conn=session.duckdb_conn,
-                table_name=session.staging_table,
-            ),
+            "staging_row_count": staging_row_count,
+            "inserted_rows": inserted_rows,
+            "updated_rows": updated_rows,
+            "affected_rows": affected_rows,
             "target_exists_before": target_exists_before,
             "target_schema_after": self._duckdb_table_profile(
                 conn=session.duckdb_conn,
@@ -4979,10 +4990,36 @@ class WriteIngestionAgentRuntime:
             (workspace_id, table_name),
         ).fetchone()
         if row is None:
+            logical_table_name = (proposal_payload.target_table or "").strip().lower()
+            if logical_table_name and logical_table_name != table_name:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM table_catalog
+                    WHERE workspace_id = ? AND table_name = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (workspace_id, logical_table_name),
+                ).fetchone()
+        if row is None and proposal_payload.business_type != "other":
+            row = conn.execute(
+                """
+                SELECT *
+                FROM table_catalog
+                WHERE workspace_id = ? AND business_type = ? AND is_active_target = 1
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (workspace_id, proposal_payload.business_type),
+            ).fetchone()
+        if row is None:
             return
 
         catalog_id = str(row["id"])
         business_type = proposal_payload.business_type
+        if business_type == "other" and str(row["business_type"]) != "other":
+            business_type = str(row["business_type"])
         primary_keys = _decode_json_list(row["primary_keys"])
         match_columns = self._dedupe_preserve_order(list(proposal_payload.match_columns))
         if not primary_keys:
@@ -5010,6 +5047,7 @@ class WriteIngestionAgentRuntime:
             """
             UPDATE table_catalog
             SET
+                table_name = ?,
                 business_type = ?,
                 write_mode = ?,
                 time_grain = ?,
@@ -5021,6 +5059,7 @@ class WriteIngestionAgentRuntime:
             WHERE id = ? AND workspace_id = ?
             """,
             (
+                table_name,
                 business_type,
                 write_mode,
                 time_grain,

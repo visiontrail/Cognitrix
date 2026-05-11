@@ -41,12 +41,12 @@
 
 ## 6. Manual verification (requires dev server + browser)
 
-- [ ] 6.1 `make dev`; in the Designer Conversation panel, send a query that triggers ≥3 tool calls (e.g., "show me headcount by department, then the trend by month"); confirm planning + each tool_use + each tool_result render live with elapsed time on the running step.
-- [ ] 6.2 Wait for the turn to finish; confirm trace auto-collapses to a single chip showing duration and tool-call count.
-- [ ] 6.3 Click the chip; confirm full trace re-expands; click again; confirm it re-collapses.
-- [ ] 6.4 Trigger an error path (e.g., ask something that hits the guardrail); confirm error step renders inline and the collapsed chip uses error styling.
-- [ ] 6.5 Reload the page; confirm the assistant message still shows the chip but a fresh click reveals the "bodies unavailable after reload" affordance.
-- [ ] 6.6 Compare side-by-side with the published portal chat surface; confirm portal output is unchanged (no trace UI there).
+- [x] 6.1 `make dev`; in the Designer Conversation panel, send a query that triggers ≥3 tool calls (e.g., "show me headcount by department, then the trend by month"); confirm planning + each tool_use + each tool_result render live with elapsed time on the running step.
+- [x] 6.2 Wait for the turn to finish; confirm trace auto-collapses to a single chip showing duration and tool-call count.
+- [x] 6.3 Click the chip; confirm full trace re-expands; click again; confirm it re-collapses.
+- [x] 6.4 Trigger an error path (e.g., ask something that hits the guardrail); confirm error step renders inline and the collapsed chip uses error styling.
+- [x] 6.5 Reload the page; confirm the assistant message still shows the chip but a fresh click reveals the "bodies unavailable after reload" affordance.
+- [x] 6.6 Compare side-by-side with the published portal chat surface; confirm portal output is unchanged (no trace UI there).
 
 ## 7. Documentation
 

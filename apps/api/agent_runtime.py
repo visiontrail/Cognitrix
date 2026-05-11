@@ -2673,9 +2673,25 @@ def _echarts_pie_option(
 ) -> dict[str, Any]:
     data = [{"name": str(r.get(x_key, f"item-{i+1}")), "value": r.get(y_key, 0)} for i, r in enumerate(rows)]
     return {
-        "tooltip": {"trigger": "item"},
+        "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
         "legend": {"orient": "vertical", "left": "left"},
-        "series": [{"type": "pie", "radius": "60%", "data": data, "emphasis": {"itemStyle": {"shadowBlur": 10}}}],
+        "series": [{
+            "type": "pie",
+            "radius": "50%",
+            "data": data,
+            "label": {
+                "show": True,
+                "formatter": "{b}\n{d}%",
+            },
+            "labelLine": {"show": True},
+            "emphasis": {
+                "itemStyle": {
+                    "shadowBlur": 10,
+                    "shadowOffsetX": 0,
+                    "shadowColor": "rgba(0, 0, 0, 0.5)",
+                },
+            },
+        }],
     }
 
 

@@ -225,15 +225,28 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
   if (chartType === "pie") {
     return {
       title: { text: title, left: "center" },
-      tooltip: { trigger: "item" },
+      tooltip: { trigger: "item", formatter: "{b}: {c} ({d}%)" },
+      legend: { orient: "vertical", left: "left" },
       series: [
         {
           type: "pie",
-          radius: "65%",
+          radius: "50%",
           data: rows.map((row, index) => ({
             name: String(row[xKey] ?? `item-${index + 1}`),
             value: asNumber(row[yKey]),
           })),
+          label: {
+            show: true,
+            formatter: "{b}\n{d}%",
+          },
+          labelLine: { show: true },
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowColor: "rgba(0, 0, 0, 0.5)",
+            },
+          },
         },
       ],
     };

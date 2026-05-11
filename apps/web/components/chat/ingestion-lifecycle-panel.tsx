@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Upload, AlertTriangle, CheckCircle2, XCircle, Brain, ChevronDown, ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ import {
 import { IngestionSetupCard } from "@/components/workspace/ingestion-setup-card";
 import { AgentTraceStep } from "@/components/chat/agent-trace-step";
 import { useI18n } from "@/lib/i18n/context";
+import { refreshWorkspaceCatalog } from "@/lib/workspace/query-keys";
 import type { TraceStep } from "@/types/trace";
 
 type IngestionLifecyclePanelProps = {
@@ -189,6 +191,7 @@ function IngestionAgentTrace({ trace, onToggle }: IngestionAgentTraceProps) {
 
 export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: IngestionLifecyclePanelProps) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const [phase, setPhase] = useState<IngestionLifecyclePhase>("idle");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<IngestionUploadResult | null>(null);
@@ -430,6 +433,7 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
         const execution = mapExecutePayload(execPayload);
         setExecuteResult(execution);
         setPhase("succeeded");
+        refreshCatalogAfterSuccessfulExecution(execution);
       } else if (errorState === null) {
         handleFailure("execute", new Error("No result received from execution agent"));
       } else {
@@ -493,6 +497,7 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
         const execution = mapExecutePayload(decisionPayload);
         setExecuteResult(execution);
         setPhase("succeeded");
+        refreshCatalogAfterSuccessfulExecution(execution);
       } else if (errorState === null) {
         handleFailure("execute", new Error("No result received from execution agent"));
       } else {
@@ -571,6 +576,11 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
         finishedAt: String(receipt.finished_at ?? ""),
       },
     };
+  }
+
+  function refreshCatalogAfterSuccessfulExecution(execution: IngestionExecuteResult) {
+    if (!execution.receipt.success) return;
+    void refreshWorkspaceCatalog(queryClient, workspaceId);
   }
 
   function applyPlanPayload(plan: ReturnType<typeof mapPlanLikePayload>) {

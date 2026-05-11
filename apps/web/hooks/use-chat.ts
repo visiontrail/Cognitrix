@@ -16,6 +16,7 @@ import {
 } from "@/lib/chat/session-title";
 import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session";
 import { useI18n } from "@/lib/i18n/context";
+import { refreshWorkspaceCatalog } from "@/lib/workspace/query-keys";
 import {
   approveIngestionProposal,
   createIngestionUpload,
@@ -103,6 +104,7 @@ export function useDeleteSession() {
 
 export function useSendMessage() {
   const { t, locale } = useI18n();
+  const queryClient = useQueryClient();
   const appendMessage = useChatStore((s) => s.appendMessage);
   const touchSession = useChatStore((s) => s.touchSession);
   const addAsset = useAssetStore((s) => s.addAsset);
@@ -219,7 +221,7 @@ export function useSendMessage() {
       }
       return { sessionId };
     },
-    onSuccess: ({ assistantMessage, chartAsset, preAppended }, { sessionId }) => {
+    onSuccess: ({ assistantMessage, chartAsset, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
       if (preAppended) {
         useChatStore.getState().replaceMessage(sessionId, assistantMessage.id, assistantMessage);
       } else {
@@ -232,6 +234,9 @@ export function useSendMessage() {
         lastMessage: assistantMessage.content,
         messageDelta: 1,
       });
+      if (catalogRefreshWorkspaceId) {
+        void refreshWorkspaceCatalog(queryClient, catalogRefreshWorkspaceId);
+      }
     },
     onError: (error, { sessionId }) => {
       const errorMessage: ChatMessage = {
@@ -319,6 +324,12 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "gauge",
 ]);
 type TranslateFn = (key: string, params?: Record<string, string | number | null | undefined>) => string;
+type AssistantResponse = {
+  assistantMessage: ChatMessage;
+  chartAsset?: ChartAsset;
+  preAppended: boolean;
+  catalogRefreshWorkspaceId?: string;
+};
 const activeChatControllers = new Map<string, AbortController>();
 
 export function stopChatResponse(sessionId: string): boolean {
@@ -347,7 +358,7 @@ async function streamAssistantResponse({
   signal?: AbortSignal;
   t: TranslateFn;
   responseLocale: string;
-}): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
+}): Promise<AssistantResponse> {
   const messageId = `msg-${generateId()}`;
   const traceStartedAt = Date.now();
   const store = useChatStore.getState();
@@ -643,7 +654,7 @@ async function runIngestionConversationResponse({
   attachment: File;
   signal?: AbortSignal;
   t: TranslateFn;
-}): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
+}): Promise<AssistantResponse> {
   const messageId = `msg-${generateId()}`;
   const traceStartedAt = Date.now();
   const store = useChatStore.getState();
@@ -728,7 +739,11 @@ async function runIngestionConversationResponse({
           ? { stepCount: toolCallCount, durationMs, status: traceHasError ? "error" : "ok" }
           : undefined,
     };
-    return { assistantMessage, chartAsset: undefined, preAppended: true };
+    return {
+      assistantMessage,
+      chartAsset: undefined,
+      preAppended: true,
+    };
   } catch (err) {
     if (isAbortError(err)) {
       store.endTrace(messageId, "closed");
@@ -756,7 +771,7 @@ async function runIngestionApprovalResponse({
   approvedAction: IngestionProposalAction;
   signal?: AbortSignal;
   t: TranslateFn;
-}): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
+}): Promise<AssistantResponse> {
   const messageId = `msg-${generateId()}`;
   const traceStartedAt = Date.now();
   const store = useChatStore.getState();
@@ -874,7 +889,12 @@ async function runIngestionApprovalResponse({
           ? { stepCount: toolCallCount, durationMs, status: traceHasError ? "error" : "ok" }
           : undefined,
     };
-    return { assistantMessage, chartAsset: undefined, preAppended: true };
+    return {
+      assistantMessage,
+      chartAsset: undefined,
+      preAppended: true,
+      catalogRefreshWorkspaceId: executionResult?.receipt.success ? plan.workspaceId : undefined,
+    };
   } catch (err) {
     if (isAbortError(err)) {
       store.endTrace(messageId, "closed");
@@ -904,7 +924,7 @@ async function runIngestionSetupConfirmResponse({
   seed: IngestionCatalogSetupSeed;
   signal?: AbortSignal;
   t: TranslateFn;
-}): Promise<{ assistantMessage: ChatMessage; chartAsset?: ChartAsset; preAppended: boolean }> {
+}): Promise<AssistantResponse> {
   const messageId = `msg-${generateId()}`;
   const traceStartedAt = Date.now();
   const store = useChatStore.getState();
@@ -989,7 +1009,13 @@ async function runIngestionSetupConfirmResponse({
           ? { stepCount: toolCallCount, durationMs, status: traceHasError ? "error" : "ok" }
           : undefined,
     };
-    return { assistantMessage, chartAsset: undefined, preAppended: true };
+    return {
+      assistantMessage,
+      chartAsset: undefined,
+      preAppended: true,
+      catalogRefreshWorkspaceId:
+        !traceHasError && plan.status !== "awaiting_catalog_setup" ? workspaceId : undefined,
+    };
   } catch (err) {
     if (isAbortError(err)) {
       store.endTrace(messageId, "closed");
@@ -1007,6 +1033,7 @@ async function runIngestionSetupConfirmResponse({
 
 export function useConfirmIngestionSetup() {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const appendMessage = useChatStore((s) => s.appendMessage);
   const touchSession = useChatStore((s) => s.touchSession);
   const setSessionSending = useUIStore((s) => s.setSessionSending);
@@ -1048,7 +1075,7 @@ export function useConfirmIngestionSetup() {
     onMutate: ({ sessionId }) => {
       setSessionSending(sessionId, true);
     },
-    onSuccess: ({ assistantMessage, chartAsset, preAppended }, { sessionId }) => {
+    onSuccess: ({ assistantMessage, chartAsset, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
       if (preAppended) {
         useChatStore.getState().replaceMessage(sessionId, assistantMessage.id, assistantMessage);
       } else {
@@ -1058,6 +1085,9 @@ export function useConfirmIngestionSetup() {
         lastMessage: assistantMessage.content,
         messageDelta: 1,
       });
+      if (catalogRefreshWorkspaceId) {
+        void refreshWorkspaceCatalog(queryClient, catalogRefreshWorkspaceId);
+      }
     },
     onError: (error, { sessionId }) => {
       const errorMessage: ChatMessage = {

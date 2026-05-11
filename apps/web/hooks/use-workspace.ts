@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useI18n } from "@/lib/i18n/context";
+import { refreshWorkspaceCatalog, workspaceCatalogQueryKey } from "@/lib/workspace/query-keys";
 import type { IngestionCatalogSetupSeed } from "@/types/ingestion";
 import type { WorkspaceSnapshot } from "@/types/workspace";
 import * as api from "@/lib/workspace/api";
@@ -48,7 +49,7 @@ export function useWorkspaceSnapshot(workspaceId: string | null) {
 
 export function useWorkspaceCatalog(workspaceId: string | null) {
   return useQuery({
-    queryKey: ["workspace-catalog", workspaceId],
+    queryKey: workspaceCatalogQueryKey(workspaceId),
     queryFn: async () => {
       if (!workspaceId) return [];
       return api.fetchWorkspaceCatalog(workspaceId);
@@ -84,8 +85,8 @@ export function useCreateWorkspaceCatalogFromSetup() {
   return useMutation({
     mutationFn: ({ workspaceId, seed }: { workspaceId: string; seed: IngestionCatalogSetupSeed }) =>
       api.createWorkspaceCatalogFromSetup(workspaceId, seed),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["workspace-catalog", variables.workspaceId] });
+    onSuccess: async (_, variables) => {
+      await refreshWorkspaceCatalog(queryClient, variables.workspaceId);
     },
   });
 }
@@ -96,8 +97,8 @@ export function useDeleteWorkspaceCatalogEntry() {
   return useMutation({
     mutationFn: ({ workspaceId, catalogId }: { workspaceId: string; catalogId: string }) =>
       api.deleteWorkspaceCatalogEntry(workspaceId, catalogId),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["workspace-catalog", variables.workspaceId] });
+    onSuccess: async (_, variables) => {
+      await refreshWorkspaceCatalog(queryClient, variables.workspaceId);
     },
   });
 }

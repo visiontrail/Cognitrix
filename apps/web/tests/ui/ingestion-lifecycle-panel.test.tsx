@@ -1,4 +1,5 @@
 import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -162,6 +163,20 @@ async function* makeStreamDecision(decisionData: Record<string, unknown>) {
   yield { event: "decision", data: decisionData };
 }
 
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return {
+    queryClient,
+    ...render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>),
+  };
+}
+
 describe("IngestionLifecyclePanel", () => {
   beforeEach(() => {
     createIngestionUpload.mockReset();
@@ -189,7 +204,7 @@ describe("IngestionLifecyclePanel", () => {
     });
     streamIngestionExecute.mockImplementation(() => makeStreamDecision(sampleExecuteDecision()));
 
-    render(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
+    renderWithQueryClient(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
 
     const file = new File(["demo"], "roster.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -231,7 +246,10 @@ describe("IngestionLifecyclePanel", () => {
     });
     streamIngestionExecute.mockImplementation(() => makeStreamDecision(sampleExecuteDecision()));
 
-    render(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
+    const { queryClient } = renderWithQueryClient(
+      <IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />
+    );
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
 
     const file = new File(["demo"], "roster.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -252,13 +270,14 @@ describe("IngestionLifecyclePanel", () => {
     await waitFor(() => {
       expect(approveIngestionProposal).toHaveBeenCalledTimes(1);
       expect(streamIngestionExecute).toHaveBeenCalledTimes(1);
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspace-catalog", "ws-1"] });
     });
   });
 
   it("shows interpretable error state when upload fails", async () => {
     createIngestionUpload.mockRejectedValue(new Error("upload_failed_500"));
 
-    render(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
+    renderWithQueryClient(<IngestionLifecyclePanel workspaceId="ws-1" workspaceTitle="Ops Workspace" />);
 
     const file = new File(["demo"], "roster.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

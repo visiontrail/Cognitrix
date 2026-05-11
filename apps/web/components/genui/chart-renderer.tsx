@@ -162,7 +162,7 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
     return null;
   }
 
-  const categories = rows.map((row, index) => truncateLabel(String(row[xKey] ?? `item-${index + 1}`)));
+  const categories = rows.map((row, index) => String(row[xKey] ?? `item-${index + 1}`));
   const values = rows.map((row) => asNumber(row[yKey]));
 
   if (chartType === "treemap") {
@@ -263,7 +263,7 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
         title: { text: title, left: "center" },
         tooltip: { trigger: "axis" },
         grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
-        xAxis: { type: "category", data: categories, axisLabel: buildAxisLabel(categories) },
+        xAxis: { type: "category", data: categories, axisLabel: { interval: 0, rotate: 30 } },
         yAxis: { type: "value" },
         series: [{ type: "bar", stack: "total", data: values }],
       };
@@ -276,7 +276,7 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
     const matrix = new Map<string, Map<string, number>>();
 
     for (const row of rows) {
-      const category = truncateLabel(String(row[xKey] ?? ""));
+      const category = String(row[xKey] ?? "");
       const seriesName = String(row[seriesKey] ?? "");
       if (!categorySet.has(category)) {
         categorySet.add(category);
@@ -296,7 +296,7 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
       tooltip: { trigger: "axis" },
       legend: { top: 28 },
       grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
-      xAxis: { type: "category", data: categoryOrder, axisLabel: buildAxisLabel(categoryOrder) },
+      xAxis: { type: "category", data: categoryOrder, axisLabel: { interval: 0, rotate: 30 } },
       yAxis: { type: "value" },
       series: seriesOrder.map((seriesName) => ({
         type: "bar",
@@ -312,7 +312,7 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
     title: { text: title, left: "center" },
     tooltip: { trigger: "axis" },
     grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
-    xAxis: { type: "category", data: categories, axisLabel: buildAxisLabel(categories) },
+    xAxis: { type: "category", data: categories, axisLabel: { interval: 0, rotate: 30 } },
     yAxis: { type: "value" },
     series: [
       {
@@ -369,17 +369,3 @@ function asNumber(value: unknown): number {
   return 0;
 }
 
-function truncateLabel(label: string, maxLen = 14): string {
-  return label.length <= maxLen ? label : label.slice(0, maxLen - 1) + "…";
-}
-
-function buildAxisLabel(categories: string[]): Record<string, unknown> {
-  const count = categories.length;
-  const maxLen = Math.max(0, ...categories.map((c) => c.length));
-  if (count <= 5 && maxLen <= 8) {
-    return { interval: 0 };
-  }
-  const rotate = count <= 10 || maxLen <= 6 ? 30 : 45;
-  const width = rotate === 30 ? 90 : 70;
-  return { interval: 0, rotate, overflow: "truncate", width };
-}

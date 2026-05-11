@@ -2438,7 +2438,7 @@ def _echarts_cartesian_option(
             "tooltip": {"trigger": "axis"},
             "legend": {},
             "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
-            "xAxis": {"type": "category", "data": categories_set},
+            "xAxis": {"type": "category", "data": categories_set, "axisLabel": {"interval": 0, "rotate": 30}},
             "yAxis": {"type": "value"},
             "series": series_list,
         }
@@ -2458,7 +2458,7 @@ def _echarts_cartesian_option(
     return {
         "tooltip": {"trigger": "axis"},
         "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
-        "xAxis": {"type": "category", "data": categories},
+        "xAxis": {"type": "category", "data": categories, "axisLabel": {"interval": 0, "rotate": 30}},
         "yAxis": {"type": "value"},
         "series": [s_single],
     }
@@ -2630,7 +2630,7 @@ def _echarts_boxplot_option(
             data.append([v, v, v, v, v])
     return {
         "tooltip": {"trigger": "item"},
-        "xAxis": {"type": "category", "data": categories},
+        "xAxis": {"type": "category", "data": categories, "axisLabel": {"interval": 0, "rotate": 30}},
         "yAxis": {"type": "value"},
         "series": [{"type": "boxplot", "data": data}],
     }

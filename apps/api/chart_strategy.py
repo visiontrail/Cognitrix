@@ -100,15 +100,12 @@ class ChartStrategyRouter:
             }
             return base
 
-        categories = [
-            self._truncate_label(str(item.get(x_key, f"item-{index + 1}")))
-            for index, item in enumerate(normalized_rows)
-        ]
+        categories = [str(item.get(x_key, f"item-{index + 1}")) for index, item in enumerate(normalized_rows)]
         values = [item.get("metric_value", 0) for item in normalized_rows]
         option = {
             "tooltip": {"trigger": "axis"},
             "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
-            "xAxis": {"type": "category", "data": categories, "axisLabel": self._build_axis_label(categories)},
+            "xAxis": {"type": "category", "data": categories, "axisLabel": {"interval": 0, "rotate": 30}},
             "yAxis": {"type": "value"},
             "series": [
                 {
@@ -191,19 +188,3 @@ class ChartStrategyRouter:
         # Ensure frontend can always render an empty state without null checks.
         return [], (group_by[0] if group_by else "label")
 
-    @staticmethod
-    def _truncate_label(label: str, max_len: int = 14) -> str:
-        if len(label) <= max_len:
-            return label
-        return label[: max_len - 1] + "…"
-
-    @staticmethod
-    def _build_axis_label(categories: list[str]) -> dict:
-        count = len(categories)
-        max_len = max((len(c) for c in categories), default=0)
-        if count <= 5 and max_len <= 8:
-            return {"interval": 0}
-        # Fewer / shorter labels: gentle 30° tilt; many / long labels: steeper 45°
-        rotate = 30 if (count <= 10 or max_len <= 6) else 45
-        width = 90 if rotate == 30 else 70
-        return {"interval": 0, "rotate": rotate, "overflow": "truncate", "width": width}

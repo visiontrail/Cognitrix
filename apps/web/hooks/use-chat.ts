@@ -42,13 +42,34 @@ import type {
 } from "@/types/ingestion";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+export const chatSessionsQueryKey = (workspaceId: string | null | undefined) => ["chat-sessions", workspaceId ?? null] as const;
+export const chatMessagesQueryKey = (workspaceId: string | null | undefined, sessionId: string | null | undefined) =>
+  ["chat-messages", workspaceId ?? null, sessionId ?? null] as const;
+
+function getActiveWorkspaceIdOrThrow(t: TranslateFn): string {
+  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!workspaceId) {
+    throw new Error(t("chat.toast.noWorkspace"));
+  }
+  return workspaceId;
+}
+
+function assertSessionInCurrentScope(sessionId: string, t: TranslateFn): void {
+  if (!useChatStore.getState().hasSessionInCurrentScope(sessionId)) {
+    throw new Error(t("chat.requestFailed"));
+  }
+}
 
 export function useChatSessions() {
   const setSessions = useChatStore((s) => s.setSessions);
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   return useQuery({
-    queryKey: ["chat-sessions"],
+    queryKey: chatSessionsQueryKey(workspaceId),
     queryFn: async () => {
+      if (!workspaceId) {
+        return [];
+      }
       const sessions = useChatStore.getState().sessions;
       setSessions(sessions);
       return sessions;
@@ -58,33 +79,39 @@ export function useChatSessions() {
 
 export function useChatMessages(sessionId: string | null) {
   const setMessages = useChatStore((s) => s.setMessages);
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   return useQuery({
-    queryKey: ["chat-messages", sessionId],
+    queryKey: chatMessagesQueryKey(workspaceId, sessionId),
     queryFn: async () => {
-      if (!sessionId) {
+      if (!workspaceId || !sessionId) {
         return EMPTY_MESSAGES;
       }
       const messages = useChatStore.getState().messagesBySession[sessionId] ?? EMPTY_MESSAGES;
       setMessages(sessionId, messages);
       return messages;
     },
-    enabled: !!sessionId,
+    enabled: Boolean(workspaceId && sessionId),
     staleTime: Infinity,
   });
 }
 
 export function useCreateSession() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const addSession = useChatStore((s) => s.addSession);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   return useMutation({
-    mutationFn: async (title?: string) => createLocalSession(title),
+    mutationFn: async (title?: string) => {
+      getActiveWorkspaceIdOrThrow(t);
+      return createLocalSession(title);
+    },
     onSuccess: (session) => {
       addSession(session);
       setActiveSession(session.id);
-      queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
     },
   });
 }
@@ -92,12 +119,13 @@ export function useCreateSession() {
 export function useDeleteSession() {
   const queryClient = useQueryClient();
   const removeSession = useChatStore((s) => s.removeSession);
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
   return useMutation({
     mutationFn: async (_sessionId: string) => undefined,
     onSuccess: (_, sessionId) => {
       removeSession(sessionId);
-      queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
     },
   });
 }
@@ -124,10 +152,8 @@ export function useSendMessage() {
       approvedAction?: IngestionProposalAction;
       preferredChartType?: QueryChartType;
     }) => {
-      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (!workspaceId) {
-        throw new Error(t("chat.toast.noWorkspace"));
-      }
+      const workspaceId = getActiveWorkspaceIdOrThrow(t);
+      assertSessionInCurrentScope(sessionId, t);
       const abortController = new AbortController();
       activeChatControllers.set(sessionId, abortController);
       try {
@@ -189,6 +215,12 @@ export function useSendMessage() {
       }
     },
     onMutate: ({ sessionId, content, attachment }) => {
+      try {
+        getActiveWorkspaceIdOrThrow(t);
+        assertSessionInCurrentScope(sessionId, t);
+      } catch {
+        return { sessionId, optimistic: false };
+      }
       setSessionSending(sessionId, true);
       const normalizedContent = formatUserMessageContent({
         content,
@@ -219,7 +251,7 @@ export function useSendMessage() {
           })
           .catch(() => undefined);
       }
-      return { sessionId };
+      return { sessionId, optimistic: true };
     },
     onSuccess: ({ assistantMessage, chartAsset, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
       if (preAppended) {
@@ -234,11 +266,17 @@ export function useSendMessage() {
         lastMessage: assistantMessage.content,
         messageDelta: 1,
       });
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
       if (catalogRefreshWorkspaceId) {
         void refreshWorkspaceCatalog(queryClient, catalogRefreshWorkspaceId);
       }
     },
     onError: (error, { sessionId }) => {
+      if (!useChatStore.getState().hasSessionInCurrentScope(sessionId)) {
+        return;
+      }
       const errorMessage: ChatMessage = {
         id: `msg-${generateId()}`,
         sessionId,
@@ -251,6 +289,9 @@ export function useSendMessage() {
         lastMessage: errorMessage.content,
         messageDelta: 1,
       });
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
     },
     onSettled: (_data, _error, { sessionId }) => {
       setSessionSending(sessionId, false);
@@ -1046,10 +1087,8 @@ export function useConfirmIngestionSetup() {
       sessionId: string;
       seed: IngestionCatalogSetupSeed;
     }) => {
-      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (!workspaceId) {
-        throw new Error(t("chat.toast.noWorkspace"));
-      }
+      const workspaceId = getActiveWorkspaceIdOrThrow(t);
+      assertSessionInCurrentScope(sessionId, t);
       const pending = useChatStore.getState().pendingIngestionSetupBySession[sessionId];
       if (!pending) {
         throw new Error("No pending setup found");
@@ -1073,6 +1112,12 @@ export function useConfirmIngestionSetup() {
       }
     },
     onMutate: ({ sessionId }) => {
+      try {
+        getActiveWorkspaceIdOrThrow(t);
+        assertSessionInCurrentScope(sessionId, t);
+      } catch {
+        return { sessionId, optimistic: false };
+      }
       setSessionSending(sessionId, true);
     },
     onSuccess: ({ assistantMessage, chartAsset, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
@@ -1085,11 +1130,17 @@ export function useConfirmIngestionSetup() {
         lastMessage: assistantMessage.content,
         messageDelta: 1,
       });
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
       if (catalogRefreshWorkspaceId) {
         void refreshWorkspaceCatalog(queryClient, catalogRefreshWorkspaceId);
       }
     },
     onError: (error, { sessionId }) => {
+      if (!useChatStore.getState().hasSessionInCurrentScope(sessionId)) {
+        return;
+      }
       const errorMessage: ChatMessage = {
         id: `msg-${generateId()}`,
         sessionId,
@@ -1102,6 +1153,9 @@ export function useConfirmIngestionSetup() {
         lastMessage: errorMessage.content,
         messageDelta: 1,
       });
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
     },
     onSettled: (_data, _error, { sessionId }) => {
       setSessionSending(sessionId, false);

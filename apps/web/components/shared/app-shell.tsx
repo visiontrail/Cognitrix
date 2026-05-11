@@ -23,7 +23,7 @@ const SPLIT_KEYBOARD_STEP = 0.02;
 export function AppShell() {
   const { t } = useI18n();
   const { user } = useSession();
-  const initChatForUser = useChatStore((s) => s.initForUser);
+  const initChatForWorkspace = useChatStore((s) => s.initForWorkspace);
   const initAssetsForUser = useAssetStore((s) => s.initForUser);
   const activePanel = useUIStore((s) => s.activePanel);
   const chatSidebarOpen = useUIStore((s) => s.chatSidebarOpen);
@@ -37,17 +37,17 @@ export function AppShell() {
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const [isResizingSplit, setIsResizingSplit] = useState(false);
 
-  useEffect(() => {
-    if (user?.id) {
-      initChatForUser(user.id);
-      initAssetsForUser(user.id);
-    }
-  }, [user?.id, initChatForUser, initAssetsForUser]);
-
   useChatSessions();
   const workspaceListQuery = useWorkspaceList();
   const createWorkspace = useCreateWorkspace();
   useChartAssets();
+
+  useEffect(() => {
+    if (user?.id) {
+      initChatForWorkspace(user.id, activeWorkspaceId);
+      initAssetsForUser(user.id);
+    }
+  }, [activeWorkspaceId, user?.id, initChatForWorkspace, initAssetsForUser]);
 
   useEffect(() => {
     if (appMode !== "designer") {

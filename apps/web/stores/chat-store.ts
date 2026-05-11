@@ -4,8 +4,10 @@ import type { ChatSession, ChatMessage } from "@/types/chat";
 import type { MessageTrace, TraceStep } from "@/types/trace";
 import type { IngestionPlanAwaitingApproval, IngestionPlanAwaitingSetup, IngestionUploadResult } from "@/types/ingestion";
 import {
+  chatStorageKeyForWorkspace,
   chatStorageKeyForUser,
-  traceStorageKeyForUser,
+  legacyChatMigrationStorageKeyForUser,
+  traceStorageKeyForWorkspace,
   safeLoadFromStorage,
   safeSaveToStorage,
 } from "@/lib/chat/session-storage";
@@ -62,20 +64,29 @@ type ChatState = {
   setTraceState: (messageId: string, state: MessageTrace["state"]) => void;
 
   getActiveMessages: () => ChatMessage[];
+  hasSessionInCurrentScope: (sessionId: string) => boolean;
+  initForWorkspace: (userId: string, workspaceId: string | null) => void;
   initForUser: (userId: string) => void;
   clearForUser: () => void;
 };
 
 type PersistedChatState = {
-  version: 1;
+  version: 1 | 2;
   sessions: ChatSession[];
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
 };
 
-// Tracks the active user ID at module level — not in Zustand state to avoid re-renders.
+type LegacyMigrationMarker = {
+  version: 1;
+  consideredAt: string;
+  workspaceId: string;
+};
+
+// Tracks the active scope at module level, not in Zustand state to avoid re-renders.
 let _currentUserId: string | null = null;
-let _initializedUserId: string | null = null;
+let _currentWorkspaceId: string | null = null;
+let _initializedScopeKey: string | null = null;
 
 function normalizeSession(session: ChatSession): ChatSession {
   return {
@@ -101,8 +112,7 @@ function stripResultFromTrace(trace: MessageTrace): MessageTrace {
   };
 }
 
-function loadPersistedChatState(userId: string): PersistedChatState | null {
-  const state = safeLoadFromStorage<Partial<PersistedChatState>>(chatStorageKeyForUser(userId));
+function normalizePersistedChatState(state: Partial<PersistedChatState> | null): PersistedChatState | null {
   if (!state || !Array.isArray(state.sessions)) {
     return null;
   }
@@ -116,7 +126,7 @@ function loadPersistedChatState(userId: string): PersistedChatState | null {
       : sessions[0]?.id ?? null;
 
   return {
-    version: 1,
+    version: 2,
     sessions,
     activeSessionId,
     messagesBySession: Object.fromEntries(
@@ -125,26 +135,79 @@ function loadPersistedChatState(userId: string): PersistedChatState | null {
   };
 }
 
-function loadPersistedTrace(userId: string): Record<string, MessageTrace> {
-  const raw = safeLoadFromStorage<Record<string, MessageTrace>>(traceStorageKeyForUser(userId));
+function hasLegacyMigrationMarker(userId: string): boolean {
+  const marker = safeLoadFromStorage<Partial<LegacyMigrationMarker>>(legacyChatMigrationStorageKeyForUser(userId));
+  return marker?.version === 1 && typeof marker.consideredAt === "string";
+}
+
+function markLegacyMigrationConsidered(userId: string, workspaceId: string): void {
+  safeSaveToStorage<LegacyMigrationMarker>(legacyChatMigrationStorageKeyForUser(userId), {
+    version: 1,
+    consideredAt: new Date().toISOString(),
+    workspaceId,
+  });
+}
+
+function loadPersistedChatState(userId: string, workspaceId: string): PersistedChatState | null {
+  const workspaceKey = chatStorageKeyForWorkspace(userId, workspaceId);
+  const workspaceState = normalizePersistedChatState(
+    safeLoadFromStorage<Partial<PersistedChatState>>(workspaceKey)
+  );
+  if (workspaceState) {
+    return workspaceState;
+  }
+
+  if (hasLegacyMigrationMarker(userId)) {
+    return null;
+  }
+
+  markLegacyMigrationConsidered(userId, workspaceId);
+  const legacyState = normalizePersistedChatState(
+    safeLoadFromStorage<Partial<PersistedChatState>>(chatStorageKeyForUser(userId))
+  );
+  if (!legacyState) {
+    return null;
+  }
+
+  safeSaveToStorage<PersistedChatState>(workspaceKey, {
+    ...legacyState,
+    version: 2,
+  });
+  return legacyState;
+}
+
+function loadPersistedTrace(userId: string, workspaceId: string): Record<string, MessageTrace> {
+  const raw = safeLoadFromStorage<Record<string, MessageTrace>>(traceStorageKeyForWorkspace(userId, workspaceId));
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   return raw;
 }
 
+function pruneTraceByMessages(
+  traceByMessageId: Record<string, MessageTrace>,
+  messagesBySession: Record<string, ChatMessage[]>
+): Record<string, MessageTrace> {
+  const messageIds = new Set(
+    Object.values(messagesBySession)
+      .flat()
+      .map((message) => message.id)
+  );
+  return Object.fromEntries(Object.entries(traceByMessageId).filter(([messageId]) => messageIds.has(messageId)));
+}
+
 function persistTrace(traceByMessageId: Record<string, MessageTrace>): void {
-  if (!_currentUserId) return;
+  if (!_currentUserId || !_currentWorkspaceId) return;
   const toSave = Object.fromEntries(
     Object.entries(traceByMessageId)
       .filter(([, trace]) => trace.state !== "live")
       .map(([id, trace]) => [id, stripResultFromTrace(trace)])
   );
-  safeSaveToStorage(traceStorageKeyForUser(_currentUserId), toSave);
+  safeSaveToStorage(traceStorageKeyForWorkspace(_currentUserId, _currentWorkspaceId), toSave);
 }
 
 function persistChatState(state: Pick<ChatState, "sessions" | "activeSessionId" | "messagesBySession">): void {
-  if (!_currentUserId) return;
-  safeSaveToStorage<PersistedChatState>(chatStorageKeyForUser(_currentUserId), {
-    version: 1,
+  if (!_currentUserId || !_currentWorkspaceId) return;
+  safeSaveToStorage<PersistedChatState>(chatStorageKeyForWorkspace(_currentUserId, _currentWorkspaceId), {
+    version: 2,
     sessions: state.sessions,
     activeSessionId: state.activeSessionId,
     messagesBySession: state.messagesBySession,
@@ -242,9 +305,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setActiveSession: (sessionId) =>
     set((state) => {
-      const nextState = { ...state, activeSessionId: sessionId };
+      const activeSessionId = sessionId && state.sessions.some((session) => session.id === sessionId)
+        ? sessionId
+        : null;
+      const nextState = { ...state, activeSessionId };
       persistChatState(nextState);
-      return { activeSessionId: sessionId };
+      return { activeSessionId };
     }),
 
   setMessages: (sessionId, messages) =>
@@ -473,28 +539,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return messagesBySession[activeSessionId] ?? [];
   },
 
-  initForUser: (userId: string) => {
-    if (_initializedUserId === userId) return;
+  hasSessionInCurrentScope: (sessionId: string) => get().sessions.some((session) => session.id === sessionId),
+
+  initForWorkspace: (userId: string, workspaceId: string | null) => {
+    const scopeKey = `${userId}:${workspaceId ?? ""}`;
+    if (_initializedScopeKey === scopeKey) return;
     _currentUserId = userId;
-    _initializedUserId = userId;
-    const persisted = loadPersistedChatState(userId);
-    const traceByMessageId = loadPersistedTrace(userId);
+    _currentWorkspaceId = workspaceId;
+    _initializedScopeKey = scopeKey;
+
+    if (!workspaceId) {
+      set({
+        sessions: [],
+        activeSessionId: null,
+        messagesBySession: {},
+        pendingIngestionBySession: {},
+        pendingIngestionSetupBySession: {},
+        traceByMessageId: {},
+      });
+      return;
+    }
+
+    const persisted = loadPersistedChatState(userId, workspaceId);
+    const messagesBySession = persisted?.messagesBySession ?? {};
+    const traceByMessageId = pruneTraceByMessages(loadPersistedTrace(userId, workspaceId), messagesBySession);
     set({
       sessions: persisted?.sessions ?? [],
       activeSessionId: persisted?.activeSessionId ?? null,
-      messagesBySession: persisted?.messagesBySession ?? {},
+      messagesBySession,
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
       traceByMessageId,
     });
   },
 
+  initForUser: (userId: string) => {
+    get().initForWorkspace(userId, null);
+  },
+
   clearForUser: () => {
-    if (_currentUserId) {
-      safeSaveToStorage(traceStorageKeyForUser(_currentUserId), {});
+    if (_currentUserId && _currentWorkspaceId) {
+      safeSaveToStorage(traceStorageKeyForWorkspace(_currentUserId, _currentWorkspaceId), {});
     }
     _currentUserId = null;
-    _initializedUserId = null;
+    _currentWorkspaceId = null;
+    _initializedScopeKey = null;
     set({
       sessions: [],
       activeSessionId: null,

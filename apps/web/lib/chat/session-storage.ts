@@ -8,12 +8,24 @@ export function chatStorageKeyForUser(userId: string): string {
   return `cognitrix:chat:v1:${userId}`;
 }
 
+export function chatStorageKeyForWorkspace(userId: string, workspaceId: string): string {
+  return `cognitrix:chat:v2:${userId}:${workspaceId}`;
+}
+
 export function assetStorageKeyForUser(userId: string): string {
   return `cognitrix:chart-assets:v1:${userId}`;
 }
 
 export function traceStorageKeyForUser(userId: string): string {
   return `cognitrix:chat-trace:v1:${userId}`;
+}
+
+export function traceStorageKeyForWorkspace(userId: string, workspaceId: string): string {
+  return `cognitrix:chat-trace:v2:${userId}:${workspaceId}`;
+}
+
+export function legacyChatMigrationStorageKeyForUser(userId: string): string {
+  return `cognitrix:chat:v1-migration:${userId}`;
 }
 
 export function safeLoadFromStorage<T>(key: string): T | null {

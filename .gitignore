@@ -20,3 +20,4 @@ infra/docker/.docker-data/
 
 .DS_Store
 logs/dev-local/*
+sample_data/project_management_nonstructure.xlsx

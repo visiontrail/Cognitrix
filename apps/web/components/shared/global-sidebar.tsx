@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   MessageSquare,
   LayoutDashboard,
@@ -37,7 +38,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore, type AppMode } from "@/stores/ui-store";
-import { useCreateSession, useDeleteSession } from "@/hooks/use-chat";
+import { chatSessionsQueryKey, useCreateSession, useDeleteSession } from "@/hooks/use-chat";
 import { useCreateWorkspace, useDeleteWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ import { clearInMemoryToken } from "@/lib/auth/session";
 
 export function GlobalSidebar() {
   const { t, locale, setLocale } = useI18n();
+  const queryClient = useQueryClient();
   const { user } = useSession();
   const appMode = useUIStore((s) => s.appMode);
   const setAppMode = useUIStore((s) => s.setAppMode);
@@ -104,6 +106,11 @@ export function GlobalSidebar() {
   const handleSelectWorkspace = (workspaceId: string) => {
     setActiveWorkspace(workspaceId);
     if (activePanel === "chat") setActivePanel("both");
+  };
+
+  const handleRenameSession = (sessionId: string, nextTitle: string) => {
+    renameSession(sessionId, nextTitle);
+    queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(activeWorkspaceId) });
   };
 
   return (
@@ -169,7 +176,7 @@ export function GlobalSidebar() {
                   size="icon-sm"
                   aria-label={t("sidebar.action.newConversation")}
                   onClick={handleNewChat}
-                  disabled={createSession.isPending}
+                  disabled={createSession.isPending || !activeWorkspaceId}
                   className="h-6 w-6 rounded-subtle border border-ring-warm bg-ivory text-near-black shadow-ring-warm hover:bg-warm-sand hover:text-near-black"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -193,7 +200,7 @@ export function GlobalSidebar() {
                     onClick={() => handleSelectSession(session.id)}
                     onDelete={() => deleteSession.mutate(session.id)}
                     deleteAriaLabel={t("sidebar.deleteConversation", { title: session.title })}
-                    onRename={(nextTitle) => renameSession(session.id, nextTitle)}
+                    onRename={(nextTitle) => handleRenameSession(session.id, nextTitle)}
                     renameAriaLabel={t("sidebar.renameConversation", { title: session.title })}
                     renameInputAriaLabel={t("sidebar.renameConversationInput")}
                     renameSaveAriaLabel={t("sidebar.renameConversationSave")}

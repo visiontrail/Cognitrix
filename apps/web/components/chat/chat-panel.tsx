@@ -66,7 +66,7 @@ export function ChatPanel() {
             variant="secondary"
             size="sm"
             onClick={() => createSession.mutate(undefined)}
-            disabled={createSession.isPending}
+            disabled={createSession.isPending || !activeWorkspaceId}
           >
             <MessageSquarePlus className="w-4 h-4" />
             {t("chat.newChat")}

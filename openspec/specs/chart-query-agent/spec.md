@@ -49,7 +49,7 @@ When a chat message is sent with a `chart_id` field, the system SHALL prepend a 
 - **THEN** subsequent messages are sent without `chart_id`
 
 ### Requirement: Agent responses streamed as SSE to the portal chat window
-The portal chat endpoint `POST /portal/pages/{page_id}/chat` SHALL stream events using the same SSE event types as the existing query runtime: `planning`, `tool_use`, `tool_result`, `final`, `error`.
+The portal chat endpoint `POST /portal/pages/{page_id}/chat` SHALL stream events using the same SSE event types as the existing query runtime: `planning`, `tool_use`, `tool_result`, `final`, `error`. Every `tool_use` and `tool_result` payload SHALL include a `step_id` (string, stable across the matching call/result pair) and `started_at` (epoch seconds set at tool-call time); each `tool_result` SHALL additionally include `completed_at` (epoch seconds). These correlation fields are required so any consuming UI (Designer or portal) can pair tool calls to their results without relying on event ordering.
 
 #### Scenario: Streaming response received
 - **WHEN** the `ChartQueryAgent` processes a turn
@@ -58,6 +58,12 @@ The portal chat endpoint `POST /portal/pages/{page_id}/chat` SHALL stream events
 #### Scenario: Error event on agent failure
 - **WHEN** the `ChartQueryAgent` encounters an unrecoverable error
 - **THEN** an `error` SSE event is emitted and the chat window displays a user-facing error message
+
+#### Scenario: Tool events carry step correlation metadata
+- **WHEN** the `ChartQueryAgent` issues a tool call
+- **THEN** the `tool_use` payload contains a non-empty `step_id` and a numeric `started_at`
+- **AND WHEN** the matching `tool_result` arrives
+- **THEN** it carries the same `step_id`, the original `started_at`, and a `completed_at` greater than or equal to `started_at`
 
 ### Requirement: Agent guardrails apply to snapshot queries
 The `ChartQueryAgent` SHALL apply the same SQL-read-only validation (`SQLReadOnlyValidator`) to any SQL executed against the snapshot DuckDB. Write operations (INSERT, UPDATE, DELETE, DROP, CREATE) MUST be rejected.
@@ -69,4 +75,3 @@ The `ChartQueryAgent` SHALL apply the same SQL-read-only validation (`SQLReadOnl
 #### Scenario: Write SQL rejected
 - **WHEN** the agent attempts a mutating SQL statement
 - **THEN** `SQLReadOnlyValidator` raises a validation error, the query is not executed, and an `error` event is emitted
-

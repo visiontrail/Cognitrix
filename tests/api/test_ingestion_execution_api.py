@@ -169,14 +169,14 @@ def test_ingestion_approve_and_execute_persist_receipt(monkeypatch, tmp_path: Pa
                 "workspace_id": workspace_id,
                 "job_id": job_id,
                 "proposal_id": proposal_id,
-                "approved_action": "update_existing",
+                "approved_action": "new_table",
             },
             headers=owner_headers,
         )
         assert approve_response.status_code == 200
         approve_payload = approve_response.json()
         assert approve_payload["status"] == "approved"
-        assert approve_payload["target_table"] == "employee_roster"
+        assert approve_payload["target_table"].startswith("employee_roster_")
         assert approve_payload["dry_run_summary"]["predicted_affected_rows"] >= 0
 
         execute_response = client.post(
@@ -194,7 +194,7 @@ def test_ingestion_approve_and_execute_persist_receipt(monkeypatch, tmp_path: Pa
     assert execute_payload["status"] == "succeeded"
     assert execute_payload["execution_id"]
     assert execute_payload["receipt"]["success"] is True
-    assert execute_payload["receipt"]["target_table"] == "employee_roster"
+    assert execute_payload["receipt"]["target_table"].startswith("employee_roster_")
 
     db_path = tmp_path / "workspace-state.db"
     with sqlite3.connect(db_path) as conn:
@@ -216,7 +216,7 @@ def test_ingestion_approve_and_execute_persist_receipt(monkeypatch, tmp_path: Pa
         ).fetchone()
         assert execution_row is not None
         assert str(execution_row["status"]) == "succeeded"
-        assert str(execution_row["execution_mode"]) == "update_existing"
+        assert str(execution_row["execution_mode"]) == "new_table"
 
         event_rows = conn.execute(
             "SELECT event_type FROM ingestion_events WHERE job_id = ?",
@@ -230,7 +230,8 @@ def test_ingestion_approve_and_execute_persist_receipt(monkeypatch, tmp_path: Pa
     assert duckdb_path.exists()
     conn = duckdb.connect(str(duckdb_path))
     try:
-        count = int(conn.execute("SELECT COUNT(*) FROM employee_roster").fetchone()[0])
+        target_table = execute_payload["receipt"]["target_table"]
+        count = int(conn.execute(f"SELECT COUNT(*) FROM {target_table}").fetchone()[0])
     finally:
         conn.close()
     assert count > 0

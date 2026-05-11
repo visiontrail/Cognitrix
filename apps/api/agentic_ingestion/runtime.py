@@ -96,7 +96,10 @@ INGESTION_AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "list_existing_tables",
-        "description": "List writable table names known for the workspace.",
+        "description": (
+            "List physical DuckDB tables for the workspace. Also returns catalog_tables "
+            "separately so the agent can distinguish persisted data from business intents."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -138,17 +141,26 @@ INGESTION_AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "build_diff_preview",
         "description": (
-            "Build a bounded dry preview for the proposed action using the upload row counts "
-            "and proposed match columns. This estimates inserts, updates, and conflicts."
+            "Build a bounded dry preview for the proposed action by inspecting the real "
+            "workspace DuckDB target table and the uploaded workbook. This returns computed "
+            "insert/update/conflict counts and the candidate actions that are valid for the "
+            "current physical table state."
         ),
         "parameters": {
             "type": "object",
             "properties": {
+                "workspace_id": {"type": "string"},
                 "upload_id": {"type": "string"},
+                "target_table": {"type": "string"},
                 "match_columns": {"type": "array", "items": {"type": "string"}},
                 "action_mode": {"type": "string", "enum": DEFAULT_ACTION_OPTIONS},
+                "column_mapping": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Optional original upload header to target column mapping.",
+                },
             },
-            "required": ["upload_id", "action_mode"],
+            "required": ["workspace_id", "upload_id", "target_table", "action_mode"],
         },
         "read_only": True,
     },
@@ -427,7 +439,7 @@ Tool order for a NEW table (no catalog entry yet):
    For attendance records: business_type=attendance.
    For project data: business_type=project_progress.
 5. describe_table_schema — verify the entry was created (should return {found: true})
-6. build_diff_preview — estimate the write impact
+6. build_diff_preview — compute the write impact from the real target table state
 7. generate_write_sql_draft — draft the SQL
 8. Return awaiting_user_approval with the full proposal.
 
@@ -437,6 +449,11 @@ build_diff_preview → generate_write_sql_draft → return awaiting_user_approva
 
 If describe_table_schema returns {found: false} after create_catalog_entry, return
 awaiting_catalog_setup as a fallback.
+
+Candidate actions and impact counts must come from build_diff_preview. Do not invent
+insert/update/conflict counts. Do not offer update_existing unless build_diff_preview
+returns it in candidate_actions. The human_approval options must exactly match the
+proposal candidate_actions.
 
 Do not execute writes. Do not ask the user any questions. Human approval is handled by
 the application after you return. Return ONLY valid JSON matching the required schema.
@@ -721,6 +738,11 @@ class WriteIngestionAgentRuntime:
                         normalized_job_id,
                     )
                     agent_output = recovered
+            agent_output = self._reconcile_plan_output_with_tool_trace(
+                conn=conn,
+                agent_output=agent_output,
+                tool_trace=tool_trace,
+            )
             agent_guess = agent_output.agent_guess.model_dump(mode="json")
             analysis_audit = {
                 "agent_planning": {
@@ -1065,6 +1087,11 @@ class WriteIngestionAgentRuntime:
                             )
                             agent_output = recovered
 
+                    agent_output = self._reconcile_plan_output_with_tool_trace(
+                        conn=conn,
+                        agent_output=agent_output,
+                        tool_trace=tool_trace,
+                    )
                     agent_guess = agent_output.agent_guess.model_dump(mode="json")
                     analysis_audit = {
                         "agent_planning": {
@@ -1389,11 +1416,29 @@ class WriteIngestionAgentRuntime:
                 approved_action=normalized_action,
                 overrides=user_overrides,
             )
+            upload_info = self._tool_inspect_upload(conn=conn, upload_id=str(job["upload_id"]))
+            preview_override = self._tool_build_diff_preview(
+                conn=conn,
+                workspace_id=normalized_workspace_id,
+                upload_info=upload_info,
+                target_table=target_table,
+                match_columns=list(proposal_payload.match_columns),
+                action_mode=normalized_action,
+                column_mapping=dict(proposal_payload.column_mapping),
+            )
+            computed_candidates = self._valid_action_list(preview_override.get("candidate_actions"))
+            if computed_candidates and normalized_action not in computed_candidates:
+                raise IngestionPlanningError(
+                    code="APPROVED_ACTION_NOT_AVAILABLE",
+                    message="approved_action is not available for the current physical target table state",
+                    status_code=422,
+                )
             dry_run_summary = self._build_dry_run_summary(
                 proposal_payload=proposal_payload,
                 approved_action=normalized_action,
                 target_table=target_table,
                 time_grain=time_grain,
+                preview_override=preview_override,
             )
             logger.info(
                 "ingestion_approval_bound workspace_id=%s job_id=%s proposal_id=%s approved_action=%s target_table=%s time_grain=%s match_columns=%s dry_run_summary=%s",
@@ -2993,14 +3038,24 @@ class WriteIngestionAgentRuntime:
                 conn=conn,
                 upload_id=str(arguments.get("upload_id", "")),
             )
+            raw_mapping = arguments.get("column_mapping")
+            column_mapping = {
+                str(key): str(value)
+                for key, value in raw_mapping.items()
+                if str(key).strip() and str(value).strip()
+            } if isinstance(raw_mapping, dict) else None
             return self._tool_build_diff_preview(
+                conn=conn,
+                workspace_id=str(arguments.get("workspace_id", "")),
                 upload_info=upload_info,
+                target_table=str(arguments.get("target_table", "")),
                 match_columns=[
                     str(item).strip().lower()
                     for item in arguments.get("match_columns", [])
                     if str(item).strip()
                 ],
                 action_mode=str(arguments.get("action_mode", "")),
+                column_mapping=column_mapping,
             )
         if tool_name == "generate_write_sql_draft":
             return self._tool_generate_write_sql_draft(
@@ -3049,9 +3104,9 @@ class WriteIngestionAgentRuntime:
                     "list_existing_tables",
                     "IF no catalog entry exists → call create_catalog_entry to create one (infer schema from upload columns)",
                     "describe_table_schema — verify the catalog entry exists; if {found:false} after create_catalog_entry → return awaiting_catalog_setup",
-                    "build_diff_preview only when describe_table_schema returned {found:true}",
+                    "build_diff_preview only when describe_table_schema returned {found:true}; pass workspace_id, upload_id, target_table, action_mode, match_columns, and the inferred column_mapping",
                     "generate_write_sql_draft only when describe_table_schema returned {found:true}",
-                    "return awaiting_user_approval with complete proposal",
+                    "return awaiting_user_approval with complete proposal; proposal.candidate_actions and human_approval.options must match build_diff_preview.candidate_actions",
                 ],
                 "available_proposal_actions": DEFAULT_ACTION_OPTIONS,
             },
@@ -3163,6 +3218,151 @@ class WriteIngestionAgentRuntime:
                 status_code=502,
             )
         return proposal
+
+    def _reconcile_plan_output_with_tool_trace(
+        self,
+        *,
+        conn: sqlite3.Connection | None = None,
+        agent_output: IngestionAgentPlanOutput,
+        tool_trace: list[dict[str, Any]],
+    ) -> IngestionAgentPlanOutput:
+        if agent_output.proposal is None:
+            return agent_output
+
+        output_payload = agent_output.model_dump(mode="json")
+        proposal = output_payload.get("proposal")
+        if not isinstance(proposal, dict):
+            return agent_output
+
+        diff_result = self._latest_tool_result(tool_trace, "build_diff_preview")
+        recomputed_diff = self._recompute_diff_preview_from_proposal(
+            conn=conn,
+            proposal=proposal,
+            tool_trace=tool_trace,
+        )
+        if recomputed_diff:
+            diff_result = recomputed_diff
+        if diff_result:
+            proposal["diff_preview"] = {
+                "predicted_insert_count": self._as_non_negative_int(
+                    diff_result.get("predicted_insert_count")
+                ),
+                "predicted_update_count": self._as_non_negative_int(
+                    diff_result.get("predicted_update_count")
+                ),
+                "predicted_conflict_count": self._as_non_negative_int(
+                    diff_result.get("predicted_conflict_count")
+                ),
+            }
+
+        candidate_actions = self._valid_action_list(diff_result.get("candidate_actions"))
+        if not candidate_actions:
+            candidate_actions = self._valid_action_list(proposal.get("candidate_actions"))
+
+        if not candidate_actions:
+            target_table = str(proposal.get("target_table") or "").strip().lower()
+            physical_tables = {
+                str(item).strip().lower()
+                for item in self._latest_tool_result(tool_trace, "list_existing_tables").get("workspace_tables", [])
+                if str(item).strip()
+            }
+            candidate_actions = self._candidate_actions_for_target_state(
+                target_exists=bool(target_table and target_table in physical_tables),
+                requested_action=str(proposal.get("recommended_action") or ""),
+            )
+
+        if "cancel" not in candidate_actions:
+            candidate_actions.append("cancel")
+
+        recommended_action = str(
+            diff_result.get("recommended_action") or proposal.get("recommended_action") or ""
+        ).strip()
+        if recommended_action not in candidate_actions:
+            recommended_action = next(
+                (item for item in candidate_actions if item != "cancel"),
+                "cancel",
+            )
+
+        proposal["candidate_actions"] = candidate_actions
+        proposal["recommended_action"] = recommended_action
+
+        human_approval = output_payload.get("human_approval")
+        if isinstance(human_approval, dict) and human_approval.get("stage") == "proposal_approval":
+            human_approval["options"] = list(candidate_actions)
+            human_approval["recommended_option"] = recommended_action
+
+        return IngestionAgentPlanOutput.model_validate(output_payload)
+
+    def _recompute_diff_preview_from_proposal(
+        self,
+        *,
+        conn: sqlite3.Connection | None,
+        proposal: dict[str, Any],
+        tool_trace: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if conn is None:
+            return {}
+        upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
+        if not upload_info:
+            return {}
+        target_table = str(proposal.get("target_table") or "").strip()
+        if not target_table:
+            return {}
+        workspace_id = ""
+        for tool_name in ("get_workspace_catalog", "list_existing_tables", "describe_table_schema"):
+            item = self._latest_tool_trace_item(tool_trace, names={tool_name})
+            arguments = item.get("arguments") if isinstance(item, dict) else {}
+            if isinstance(arguments, dict):
+                workspace_id = str(arguments.get("workspace_id") or "").strip()
+                if workspace_id:
+                    break
+        if not workspace_id:
+            return {}
+        raw_mapping = proposal.get("column_mapping")
+        column_mapping = {
+            str(key): str(value)
+            for key, value in raw_mapping.items()
+            if str(key).strip() and str(value).strip()
+        } if isinstance(raw_mapping, dict) else {}
+        try:
+            return self._tool_build_diff_preview(
+                conn=conn,
+                workspace_id=workspace_id,
+                upload_info=upload_info,
+                target_table=target_table,
+                match_columns=[
+                    str(item).strip().lower()
+                    for item in proposal.get("match_columns", [])
+                    if str(item).strip()
+                ],
+                action_mode=str(proposal.get("recommended_action") or ""),
+                column_mapping=column_mapping,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ingestion_diff_preview_recompute_failed target_table=%s error=%s",
+                target_table,
+                exc,
+            )
+            return {}
+
+    @staticmethod
+    def _valid_action_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result: list[str] = []
+        for item in value:
+            action = str(item).strip()
+            if action in DEFAULT_ACTION_OPTIONS and action not in result:
+                result.append(action)
+        return result
+
+    @staticmethod
+    def _as_non_negative_int(value: Any) -> int:
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _latest_tool_result(tool_trace: list[dict[str, Any]], tool_name: str) -> dict[str, Any]:
@@ -4129,8 +4329,9 @@ class WriteIngestionAgentRuntime:
         approved_action: str,
         target_table: str,
         time_grain: str,
+        preview_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        preview = proposal_payload.diff_preview.model_dump(mode="json")
+        preview = preview_override or proposal_payload.diff_preview.model_dump(mode="json")
         predicted_insert = int(preview.get("predicted_insert_count", 0))
         predicted_update = int(preview.get("predicted_update_count", 0))
         predicted_conflict = int(preview.get("predicted_conflict_count", 0))
@@ -5272,7 +5473,7 @@ class WriteIngestionAgentRuntime:
         conn: sqlite3.Connection,
         workspace_id: str,
     ) -> dict[str, Any]:
-        rows = conn.execute(
+        catalog_rows = conn.execute(
             """
             SELECT DISTINCT table_name
             FROM table_catalog
@@ -5281,8 +5482,40 @@ class WriteIngestionAgentRuntime:
             """,
             (workspace_id,),
         ).fetchall()
-        table_names = [str(row["table_name"]) for row in rows]
-        return {"workspace_tables": table_names, "count": len(table_names)}
+        catalog_tables = [str(row["table_name"]) for row in catalog_rows]
+
+        db_path = self._workspace_duckdb_path(workspace_id=workspace_id)
+        physical_tables: list[str] = []
+        if db_path.exists():
+            try:
+                duck_conn = duckdb.connect(str(db_path), read_only=True)
+                try:
+                    physical_tables = [
+                        str(row[0])
+                        for row in duck_conn.execute(
+                            """
+                            SELECT table_name
+                            FROM information_schema.tables
+                            WHERE table_schema = 'main'
+                            ORDER BY table_name ASC
+                            """
+                        ).fetchall()
+                    ]
+                finally:
+                    duck_conn.close()
+            except Exception as exc:
+                logger.warning(
+                    "ingestion_list_existing_tables_failed workspace_id=%s duckdb_path=%s error=%s",
+                    workspace_id,
+                    db_path,
+                    exc,
+                )
+        return {
+            "workspace_tables": physical_tables,
+            "count": len(physical_tables),
+            "catalog_tables": catalog_tables,
+            "catalog_count": len(catalog_tables),
+        }
 
     def _tool_inspect_upload(self, *, conn: sqlite3.Connection, upload_id: str) -> dict[str, Any]:
         row = conn.execute(
@@ -5318,6 +5551,53 @@ class WriteIngestionAgentRuntime:
             "sample_preview": _decode_json_list(row["sample_preview"]),
         }
 
+    def _physical_table_summary(self, *, workspace_id: str, table_name: str) -> dict[str, Any]:
+        normalized_table = table_name.strip().lower()
+        summary = {
+            "exists": False,
+            "row_count": 0,
+            "schema": {"table_name": normalized_table, "columns": []},
+        }
+        if not normalized_table or not SAFE_IDENTIFIER_RE.match(normalized_table):
+            return summary
+
+        db_path = self._workspace_duckdb_path(workspace_id=workspace_id)
+        if not db_path.exists():
+            return summary
+
+        try:
+            duck_conn = duckdb.connect(str(db_path), read_only=True)
+        except Exception as exc:
+            logger.warning(
+                "ingestion_physical_table_summary_connect_failed workspace_id=%s table=%s path=%s error=%s",
+                workspace_id,
+                normalized_table,
+                db_path,
+                exc,
+            )
+            return summary
+
+        try:
+            exists = self._duckdb_table_exists(conn=duck_conn, table_name=normalized_table)
+            if not exists:
+                return summary
+            return {
+                "exists": True,
+                "row_count": self._duckdb_table_row_count(conn=duck_conn, table_name=normalized_table),
+                "schema": self._duckdb_table_profile(conn=duck_conn, table_name=normalized_table),
+            }
+        except Exception as exc:
+            logger.warning(
+                "ingestion_physical_table_summary_failed workspace_id=%s table=%s path=%s error=%s",
+                workspace_id,
+                normalized_table,
+                db_path,
+                exc,
+            )
+            return summary
+        finally:
+            duck_conn.close()
+
     def _tool_describe_table_schema_by_name(
         self,
         *,
@@ -5336,10 +5616,14 @@ class WriteIngestionAgentRuntime:
             """,
             (workspace_id, normalized_table),
         ).fetchone()
+        physical = self._physical_table_summary(workspace_id=workspace_id, table_name=normalized_table)
         if row is None:
             return {
                 "found": False,
                 "table_name": normalized_table,
+                "physical_table_exists": physical["exists"],
+                "physical_row_count": physical["row_count"],
+                "physical_schema": physical["schema"],
                 "message": (
                     "No catalog entry exists for this table. "
                     "Call create_catalog_entry to create one, then call describe_table_schema again to verify."
@@ -5356,6 +5640,9 @@ class WriteIngestionAgentRuntime:
             "match_columns": list(target_catalog["match_columns"]),
             "write_mode": target_catalog["write_mode"],
             "time_grain": target_catalog["time_grain"],
+            "physical_table_exists": physical["exists"],
+            "physical_row_count": physical["row_count"],
+            "physical_schema": physical["schema"],
         }
 
     def _tool_create_catalog_entry(
@@ -5554,10 +5841,14 @@ class WriteIngestionAgentRuntime:
     def _tool_build_diff_preview(
         self,
         *,
+        conn: sqlite3.Connection | None = None,
+        workspace_id: str | None = None,
         upload_info: dict[str, Any],
+        target_table: str | None = None,
         match_columns: list[str],
         action_mode: str,
-    ) -> dict[str, int]:
+        column_mapping: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         normalized_action = action_mode.strip().lower()
         if normalized_action not in DEFAULT_ACTION_OPTIONS:
             raise IngestionPlanningError(
@@ -5567,34 +5858,209 @@ class WriteIngestionAgentRuntime:
             )
         sheets = upload_info["sheet_summary"].get("sheets", [])
         total_rows = sum(int(item.get("row_count", 0)) for item in sheets)
-        total_rows = max(total_rows, 1)
+        total_rows = max(total_rows, 0)
+        normalized_target = (target_table or "").strip().lower()
+        target_is_valid = bool(normalized_target and SAFE_IDENTIFIER_RE.match(normalized_target))
+        target_state = (
+            self._physical_table_summary(workspace_id=workspace_id or "", table_name=normalized_target)
+            if workspace_id and target_is_valid
+            else {"exists": False, "row_count": 0, "schema": {"table_name": normalized_target, "columns": []}}
+        )
+        target_exists = bool(target_state.get("exists"))
+
+        candidate_actions = self._candidate_actions_for_target_state(
+            target_exists=target_exists,
+            requested_action=normalized_action,
+        )
+        recommended_action = (
+            normalized_action
+            if normalized_action in candidate_actions and normalized_action != "cancel"
+            else candidate_actions[0]
+        )
+
+        base_payload: dict[str, Any] = {
+            "target_table": normalized_target or None,
+            "target_exists": target_exists,
+            "target_row_count": int(target_state.get("row_count") or 0),
+            "candidate_actions": candidate_actions,
+            "recommended_action": recommended_action,
+            "match_columns": self._dedupe_preserve_order(match_columns),
+            "computed_from": "duckdb_target_state",
+        }
         if normalized_action == "cancel":
             return {
+                **base_payload,
                 "predicted_insert_count": 0,
                 "predicted_update_count": 0,
                 "predicted_conflict_count": 0,
             }
         if normalized_action in {"new_table", "time_partitioned_new_table"}:
             return {
+                **base_payload,
                 "predicted_insert_count": total_rows,
                 "predicted_update_count": 0,
                 "predicted_conflict_count": 0,
             }
 
-        if not match_columns:
+        if normalized_action == "update_existing" and not target_exists:
             return {
+                **base_payload,
                 "predicted_insert_count": total_rows,
                 "predicted_update_count": 0,
-                "predicted_conflict_count": min(5, max(1, total_rows // 5)),
+                "predicted_conflict_count": 0,
+                "reason": "Target table does not exist in the workspace DuckDB; all uploaded rows would be inserted into a new physical table.",
             }
 
-        predicted_updates = int(total_rows * 0.6)
-        predicted_inserts = max(total_rows - predicted_updates, 0)
-        return {
-            "predicted_insert_count": predicted_inserts,
-            "predicted_update_count": predicted_updates,
-            "predicted_conflict_count": 0,
+        normalized_match_columns = [
+            column
+            for column in self._dedupe_preserve_order(match_columns)
+            if SAFE_IDENTIFIER_RE.match(column)
+        ]
+        if not normalized_match_columns:
+            return {
+                **base_payload,
+                "predicted_insert_count": total_rows,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+                "reason": "No valid match columns were provided; rows cannot be classified as updates.",
+            }
+
+        upload_path = Path(str(upload_info.get("storage_path") or ""))
+        if not upload_path.exists():
+            return {
+                **base_payload,
+                "predicted_insert_count": total_rows,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+                "reason": "Uploaded workbook is not available for row-level preview.",
+            }
+
+        try:
+            staging_dataframe, _raw_header_mapping = self._load_execution_dataframe_with_header_mapping(
+                upload_path=upload_path,
+                column_mapping=column_mapping,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ingestion_diff_preview_upload_load_failed upload_id=%s target_table=%s error=%s",
+                upload_info.get("upload_id"),
+                normalized_target,
+                exc,
+            )
+            return {
+                **base_payload,
+                "predicted_insert_count": total_rows,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+                "reason": "Uploaded workbook could not be loaded for row-level preview.",
+            }
+
+        staging_columns = {str(column).strip().lower() for column in staging_dataframe.columns}
+        target_columns = {
+            str(item.get("name", "")).strip().lower()
+            for item in target_state.get("schema", {}).get("columns", [])
+            if str(item.get("name", "")).strip()
         }
+        missing_in_staging = [column for column in normalized_match_columns if column not in staging_columns]
+        missing_in_target = [column for column in normalized_match_columns if column not in target_columns]
+        if missing_in_staging or missing_in_target:
+            return {
+                **base_payload,
+                "predicted_insert_count": int(len(staging_dataframe)),
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+                "missing_in_staging": missing_in_staging,
+                "missing_in_target": missing_in_target,
+                "reason": "Match columns are not present in both uploaded data and target table.",
+            }
+
+        db_path = self._workspace_duckdb_path(workspace_id=workspace_id or "")
+        preview_table = f"preview_{uuid.uuid4().hex[:12]}"
+        duck_conn: duckdb.DuckDBPyConnection | None = None
+        try:
+            duck_conn = duckdb.connect(str(db_path))
+            prepared = self._prepare_dataframe_for_staging(staging_dataframe)
+            duck_conn.register("ingestion_preview_df", prepared)
+            duck_conn.execute(f"CREATE OR REPLACE TEMP TABLE {preview_table} AS SELECT * FROM ingestion_preview_df")
+            duck_conn.unregister("ingestion_preview_df")
+
+            join_expr = " AND ".join([f"t.{column} = s.{column}" for column in normalized_match_columns])
+            update_count = int(
+                duck_conn.execute(
+                    f"SELECT COUNT(*) FROM {preview_table} AS s "
+                    f"WHERE EXISTS (SELECT 1 FROM {normalized_target} AS t WHERE {join_expr})"
+                ).fetchone()[0]
+            )
+            insert_count = int(
+                duck_conn.execute(
+                    f"SELECT COUNT(*) FROM {preview_table} AS s "
+                    f"WHERE NOT EXISTS (SELECT 1 FROM {normalized_target} AS t WHERE {join_expr})"
+                ).fetchone()[0]
+            )
+            group_expr = ", ".join(normalized_match_columns)
+            staging_duplicate_count = int(
+                duck_conn.execute(
+                    f"SELECT COALESCE(SUM(c), 0) FROM ("
+                    f"SELECT {group_expr}, COUNT(*) AS c FROM {preview_table} "
+                    f"GROUP BY {group_expr} HAVING COUNT(*) > 1"
+                    f") AS dup"
+                ).fetchone()[0]
+            )
+            target_duplicate_count = int(
+                duck_conn.execute(
+                    f"SELECT COALESCE(SUM(c), 0) FROM ("
+                    f"SELECT {group_expr}, COUNT(*) AS c FROM {normalized_target} "
+                    f"GROUP BY {group_expr} HAVING COUNT(*) > 1"
+                    f") AS dup"
+                ).fetchone()[0]
+            )
+            return {
+                **base_payload,
+                "predicted_insert_count": max(insert_count, 0),
+                "predicted_update_count": max(update_count, 0),
+                "predicted_conflict_count": max(staging_duplicate_count + target_duplicate_count, 0),
+                "staging_row_count": int(len(staging_dataframe)),
+                "staging_duplicate_key_count": max(staging_duplicate_count, 0),
+                "target_duplicate_key_count": max(target_duplicate_count, 0),
+                "match_columns": normalized_match_columns,
+            }
+        except Exception as exc:
+            try:
+                if duck_conn is not None:
+                    duck_conn.unregister("ingestion_preview_df")
+            except Exception:
+                pass
+            logger.warning(
+                "ingestion_diff_preview_compute_failed workspace_id=%s upload_id=%s target_table=%s error=%s",
+                workspace_id,
+                upload_info.get("upload_id"),
+                normalized_target,
+                exc,
+            )
+            return {
+                **base_payload,
+                "predicted_insert_count": int(len(staging_dataframe)),
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+                "reason": "Row-level preview failed; falling back to insert-only impact.",
+            }
+        finally:
+            if duck_conn is not None:
+                duck_conn.close()
+
+    @staticmethod
+    def _candidate_actions_for_target_state(
+        *,
+        target_exists: bool,
+        requested_action: str,
+    ) -> list[str]:
+        if target_exists:
+            ordered = ["update_existing", "time_partitioned_new_table", "new_table"]
+        else:
+            ordered = ["new_table", "time_partitioned_new_table"]
+        if requested_action in ordered:
+            ordered = [requested_action, *[item for item in ordered if item != requested_action]]
+        return [*ordered, "cancel"]
 
     def _tool_generate_write_sql_draft(
         self,

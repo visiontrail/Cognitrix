@@ -4,6 +4,8 @@ import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
+import duckdb
+import pandas as pd
 import pytest
 from claude_agent_sdk import ResultMessage
 
@@ -227,6 +229,75 @@ def test_inject_agent_guess_repairs_invalid_business_type() -> None:
     WriteIngestionAgentRuntime._inject_agent_guess_if_missing(raw, tool_trace=[])  # noqa: SLF001
     assert raw["agent_guess"]["business_type"] == "other"
     assert raw["agent_guess"]["confidence"] == 0.9
+
+
+def test_diff_preview_does_not_offer_update_without_physical_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _set_runtime_env(monkeypatch, tmp_path)
+    runtime = WriteIngestionAgentRuntime()
+
+    preview = runtime._tool_build_diff_preview(  # noqa: SLF001
+        workspace_id="workspace-empty",
+        upload_info={
+            "upload_id": "upload-empty-target",
+            "storage_path": str(tmp_path / "missing.xlsx"),
+            "sheet_summary": {"sheets": [{"row_count": 30}]},
+        },
+        target_table="employee_roster",
+        match_columns=["employee_id"],
+        action_mode="update_existing",
+        column_mapping={"Employee ID": "employee_id"},
+    )
+
+    assert preview["predicted_insert_count"] == 30
+    assert preview["predicted_update_count"] == 0
+    assert "update_existing" not in preview["candidate_actions"]
+    assert preview["recommended_action"] == "new_table"
+
+
+def test_diff_preview_counts_updates_from_real_target_table(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _set_runtime_env(monkeypatch, tmp_path)
+    runtime = WriteIngestionAgentRuntime()
+    workbook_path = tmp_path / "roster.xlsx"
+    pd.DataFrame(
+        [
+            {"Employee ID": "E-001", "Name": "Ava"},
+            {"Employee ID": "E-002", "Name": "Ben"},
+            {"Employee ID": "E-003", "Name": "Cara"},
+        ]
+    ).to_excel(workbook_path, index=False)
+
+    duckdb_path = runtime._workspace_duckdb_path(workspace_id="workspace-existing")  # noqa: SLF001
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    duck_conn = duckdb.connect(str(duckdb_path))
+    try:
+        duck_conn.execute("CREATE TABLE employee_roster (employee_id VARCHAR, name VARCHAR)")
+        duck_conn.execute("INSERT INTO employee_roster VALUES ('E-001', 'Old Ava'), ('E-009', 'Nia')")
+    finally:
+        duck_conn.close()
+
+    preview = runtime._tool_build_diff_preview(  # noqa: SLF001
+        workspace_id="workspace-existing",
+        upload_info={
+            "upload_id": "upload-existing-target",
+            "storage_path": str(workbook_path),
+            "sheet_summary": {"sheets": [{"row_count": 3}]},
+        },
+        target_table="employee_roster",
+        match_columns=["employee_id"],
+        action_mode="update_existing",
+        column_mapping={"Employee ID": "employee_id", "Name": "name"},
+    )
+
+    assert preview["predicted_insert_count"] == 2
+    assert preview["predicted_update_count"] == 1
+    assert preview["predicted_conflict_count"] == 0
+    assert preview["candidate_actions"][0] == "update_existing"
 
 
 def test_recover_catalog_setup_from_tool_trace_when_describe_returns_not_found() -> None:

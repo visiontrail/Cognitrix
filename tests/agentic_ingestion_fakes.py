@@ -163,16 +163,32 @@ def _mock_run_planning_agent_loop(
         first_column = _normalize_identifier(str(upload_columns[0])) if upload_columns else ""
         if first_column:
             match_columns = [first_column]
+    column_mapping = {
+        str(column): _normalize_identifier(str(column))
+        for column in upload_info["column_summary"].get("all_columns", [])
+        if str(column).strip()
+    }
     diff_preview = self._run_tool(  # noqa: SLF001
         conn=conn,
         job_id=job_id,
         trace=tool_trace,
         name="build_diff_preview",
-        arguments={"upload_id": upload_id, "match_columns": match_columns, "action_mode": action},
+        arguments={
+            "workspace_id": workspace_id,
+            "upload_id": upload_id,
+            "target_table": target["table_name"],
+            "match_columns": match_columns,
+            "action_mode": action,
+            "column_mapping": column_mapping,
+        },
         handler=lambda: self._tool_build_diff_preview(  # noqa: SLF001
+            conn=conn,
+            workspace_id=workspace_id,
             upload_info=upload_info,
+            target_table=str(target["table_name"]),
             match_columns=match_columns,
             action_mode=action,
+            column_mapping=column_mapping,
         ),
     )
     sql_draft = self._run_tool(  # noqa: SLF001
@@ -203,11 +219,7 @@ def _mock_run_planning_agent_loop(
         target_table=str(target["table_name"]),
         time_grain=str(schema["time_grain"]),
         match_columns=match_columns,
-        column_mapping={
-            str(column): _normalize_identifier(str(column))
-            for column in upload_info["column_summary"].get("all_columns", [])
-            if str(column).strip()
-        },
+        column_mapping=column_mapping,
         diff_preview=diff_preview,
         risks=[],
         explanation="Mock agent proposal generated through the ingestion tool surface.",

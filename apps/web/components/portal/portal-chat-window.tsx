@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   BotMessageSquare,
   ArrowUp,
@@ -381,13 +383,38 @@ export function PortalChatWindow({
                   )}
                   <div
                     className={cn(
-                      "max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                      "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
                       msg.role === "user"
-                        ? "rounded-br-sm bg-[#2f332f] text-white"
+                        ? "rounded-br-sm bg-[#2f332f] text-white whitespace-pre-wrap"
                         : "rounded-bl-sm border border-[#eee8dc] bg-[#f7f4eb] text-[#2f332f]",
                     )}
                   >
-                    {msg.text}
+                    {msg.role === "user" ? (
+                      msg.text
+                    ) : (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                          h1: ({ children }) => <h1 className="text-base font-semibold mb-2 mt-2 first:mt-0">{children}</h1>,
+                          h2: ({ children }) => <h2 className="text-sm font-semibold mb-1 mt-2 first:mt-0">{children}</h2>,
+                          h3: ({ children }) => <h3 className="text-sm font-semibold mb-1 mt-2 first:mt-0">{children}</h3>,
+                          ul: ({ children }) => <ul className="list-disc list-outside pl-4 mb-2 space-y-0.5">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal list-outside pl-4 mb-2 space-y-0.5">{children}</ol>,
+                          li: ({ children }) => <li>{children}</li>,
+                          code: ({ inline, children, ...props }: { inline?: boolean; children?: React.ReactNode }) =>
+                            inline ? (
+                              <code className="bg-[#eee8dc] text-[#996b35] rounded px-1 text-[0.8em] font-mono" {...props}>{children}</code>
+                            ) : (
+                              <code className="block bg-[#2f332f] text-white rounded px-3 py-2 text-[0.8em] font-mono overflow-x-auto my-2" {...props}>{children}</code>
+                            ),
+                          pre: ({ children }) => <>{children}</>,
+                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                        }}
+                      >
+                        {msg.text}
+                      </ReactMarkdown>
+                    )}
                   </div>
                 </div>
               ))}

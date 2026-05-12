@@ -80,6 +80,24 @@ def _upload_file_payload() -> list[tuple[str, tuple[str, bytes, str]]]:
     ]
 
 
+def _nonstructured_project_payload() -> list[tuple[str, tuple[str, bytes, str]]]:
+    sample_path = (
+        Path(__file__).resolve().parents[2]
+        / "sample_data"
+        / "project_management_nonstructure.xlsx"
+    )
+    return [
+        (
+            "files",
+            (
+                "project_management_nonstructure.xlsx",
+                sample_path.read_bytes(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        )
+    ]
+
+
 def test_ingestion_upload_creates_upload_and_job_records(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path, ingestion_enabled=True)
 
@@ -145,6 +163,42 @@ def test_ingestion_upload_creates_upload_and_job_records(monkeypatch, tmp_path: 
         assert str(job_row["upload_id"]) == payload["upload_id"]
         assert str(job_row["workspace_id"]) == workspace_id
         assert str(job_row["status"]) == "uploaded"
+
+
+def test_ingestion_upload_returns_structured_candidate_for_matrix_workbook(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _set_minimal_env(monkeypatch, tmp_path, ingestion_enabled=True)
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
+        workspace_response = client.post(
+            "/workspaces",
+            json={"name": "Matrix Workbook Workspace"},
+            headers=owner_headers,
+        )
+        assert workspace_response.status_code == 200
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        response = client.post(
+            "/ingestion/uploads",
+            data={"workspace_id": workspace_id},
+            headers=owner_headers,
+            files=_nonstructured_project_payload(),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    candidates = payload["structured_candidates"]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["kind"] == "project_assignment_matrix"
+    assert candidate["stats"]["project_count"] == 20
+    assert candidate["stats"]["assignment_count"] == 111
+    assert candidate["recommended_catalog_seed"]["table_name"] == "project_assignments"
+    assert "rows" not in candidate["primary_table"]
+    assert candidate["primary_table"]["sample_rows"][0]["source_cell"] == "D8"
 
 
 def test_ingestion_upload_ignores_disabled_feature_flag(monkeypatch, tmp_path: Path) -> None:

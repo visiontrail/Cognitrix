@@ -43,6 +43,7 @@ from .models import (
     IngestionExecutionAgentOutput,
     IngestionProposalPayload,
 )
+from .nonstructured_excel import load_primary_structured_dataframe
 from .routing import RouteDecision, select_agent_route
 
 logger = logging.getLogger("cognitrix.ingestion")
@@ -423,6 +424,13 @@ Allowed decisions:
 
 If catalog entries only contain business-purpose descriptions and no schema hints, use the
 upload itself to infer the likely keys, match columns, and write mode.
+
+If inspect_upload returns sheet_summary.structured_candidates, treat it as a pre-parsed
+human-readable workbook candidate. Prefer its recommended_catalog_seed, primary table,
+candidate table samples, and column names over raw Excel headers such as "Unnamed: 1" or
+duplicated year labels. For project_assignment_matrix candidates, the analysis-ready table
+is project_assignments: one row per non-empty person/project assignment cell, with project
+metadata denormalized into each row.
 
 column_mapping must map every upload column header to its target column name.
 For Chinese headers, look at the catalog purpose, match_columns, and any known schema hints
@@ -3100,6 +3108,7 @@ class WriteIngestionAgentRuntime:
                 "user_message": message or "",
                 "required_tool_sequence": [
                     "inspect_upload",
+                    "If inspect_upload.sheet_summary.structured_candidates exists, use the recommended_catalog_seed and primary_table columns from that candidate instead of raw Excel headers",
                     "get_workspace_catalog",
                     "list_existing_tables",
                     "IF no catalog entry exists → call create_catalog_entry to create one (infer schema from upload columns)",
@@ -3644,11 +3653,17 @@ class WriteIngestionAgentRuntime:
             else []
         )
         upload_columns = [str(item).strip() for item in raw_columns if str(item).strip()]
+        structured_seed = _first_structured_catalog_seed(upload_info)
+        structured_primary = _first_structured_primary_table(upload_info)
 
         # Derive a table name from the upload file name or the schema hint
         file_name = str(upload_info.get("file_name") or "").strip()
         hint_table = str(schema_result.get("table_name") or "").strip().lower()
-        if hint_table and SAFE_IDENTIFIER_RE.match(hint_table):
+        if structured_seed:
+            table_name = str(structured_seed.get("table_name") or "project_assignments").strip().lower()
+            if not SAFE_IDENTIFIER_RE.match(table_name):
+                table_name = self._normalize_identifier(table_name) or "project_assignments"
+        elif hint_table and SAFE_IDENTIFIER_RE.match(hint_table):
             table_name = hint_table
         elif file_name:
             base = Path(file_name).stem
@@ -3656,23 +3671,48 @@ class WriteIngestionAgentRuntime:
         else:
             table_name = "uploaded_table"
 
-        human_label = table_name.replace("_", " ").title()
-        description = (
-            f"Table for uploads containing: {', '.join(upload_columns[:8])}."
-            if upload_columns
-            else "New table from uploaded file."
-        )
+        if structured_seed:
+            human_label = str(structured_seed.get("human_label") or table_name.replace("_", " ").title()).strip()
+            description = str(structured_seed.get("description") or "").strip()
+            business_type = str(structured_seed.get("business_type") or "project_progress").strip()
+            write_mode = str(structured_seed.get("write_mode") or "new_table").strip()
+            time_grain = str(structured_seed.get("time_grain") or "none").strip()
+            primary_keys = list(structured_seed.get("primary_keys") or [])
+            match_columns = list(structured_seed.get("match_columns") or [])
+            if not description and structured_primary:
+                columns = structured_primary.get("columns")
+                if isinstance(columns, list):
+                    description = f"Structured table with columns: {', '.join(str(item) for item in columns[:8])}."
+            if business_type not in {"roster", "project_progress", "attendance", "other"}:
+                business_type = "other"
+            if write_mode not in {"update_existing", "time_partitioned_new_table", "new_table"}:
+                write_mode = "new_table"
+            if time_grain not in {"none", "month", "quarter", "year"}:
+                time_grain = "none"
+        else:
+            human_label = table_name.replace("_", " ").title()
+            description = (
+                f"Table for uploads containing: {', '.join(upload_columns[:8])}."
+                if upload_columns
+                else "New table from uploaded file."
+            )
+            business_type = "other"
+            write_mode = "new_table"
+            time_grain = "none"
+            primary_keys = []
+            match_columns = []
 
         try:
             return IngestionAgentPlanOutput.model_validate(
                 {
                     "status": "awaiting_catalog_setup",
                     "agent_guess": {
-                        "business_type": "other",
-                        "confidence": 0.5,
+                        "business_type": business_type,
+                        "confidence": 0.82 if structured_seed else 0.5,
                         "reasoning": (
-                            "No catalog entry found for this upload. "
-                            "Recovered from tool trace to request catalog setup."
+                            "Detected a structured candidate from a human-readable Excel matrix."
+                            if structured_seed
+                            else "No catalog entry found for this upload. Recovered from tool trace to request catalog setup."
                         ),
                     },
                     "setup_questions": [
@@ -3683,13 +3723,13 @@ class WriteIngestionAgentRuntime:
                         }
                     ],
                     "suggested_catalog_seed": {
-                        "business_type": "other",
+                        "business_type": business_type,
                         "table_name": table_name,
                         "human_label": human_label,
-                        "write_mode": "new_table",
-                        "time_grain": "none",
-                        "primary_keys": [],
-                        "match_columns": [],
+                        "write_mode": write_mode,
+                        "time_grain": time_grain,
+                        "primary_keys": primary_keys,
+                        "match_columns": match_columns,
                         "is_active_target": True,
                         "description": description,
                     },
@@ -4983,6 +5023,10 @@ class WriteIngestionAgentRuntime:
         return merged, raw_header_mapping
 
     def _read_execution_workbook(self, *, upload_path: Path) -> dict[str, pd.DataFrame]:
+        structured = load_primary_structured_dataframe(upload_path)
+        if structured is not None:
+            return {"project_assignments": structured}
+
         try:
             sheets = pd.read_excel(upload_path, sheet_name=None, dtype=object, engine="openpyxl")
         except Exception as exc:
@@ -5540,15 +5584,17 @@ class WriteIngestionAgentRuntime:
                 message="Upload not found for ingestion job",
                 status_code=404,
             )
+        sheet_summary = _decode_json_dict(row["sheet_summary"])
         return {
             "upload_id": str(row["id"]),
             "file_name": str(row["file_name"]),
             "storage_path": str(row["storage_path"]),
             "size_bytes": int(row["size_bytes"]),
             "file_hash": str(row["file_hash"]),
-            "sheet_summary": _decode_json_dict(row["sheet_summary"]),
+            "sheet_summary": sheet_summary,
             "column_summary": _decode_json_dict(row["column_summary"]),
             "sample_preview": _decode_json_list(row["sample_preview"]),
+            "structured_candidates": sheet_summary.get("structured_candidates", []),
         }
 
     def _physical_table_summary(self, *, workspace_id: str, table_name: str) -> dict[str, Any]:
@@ -6213,6 +6259,36 @@ def _decode_json_dict(raw: Any) -> dict[str, Any]:
     if isinstance(decoded, dict):
         return decoded
     return {}
+
+
+def _first_structured_candidate(upload_info: dict[str, Any]) -> dict[str, Any] | None:
+    candidates = upload_info.get("structured_candidates")
+    if not isinstance(candidates, list):
+        sheet_summary = upload_info.get("sheet_summary")
+        if isinstance(sheet_summary, dict):
+            candidates = sheet_summary.get("structured_candidates")
+    if not isinstance(candidates, list):
+        return None
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def _first_structured_catalog_seed(upload_info: dict[str, Any]) -> dict[str, Any] | None:
+    candidate = _first_structured_candidate(upload_info)
+    if not candidate:
+        return None
+    seed = candidate.get("recommended_catalog_seed")
+    return seed if isinstance(seed, dict) else None
+
+
+def _first_structured_primary_table(upload_info: dict[str, Any]) -> dict[str, Any] | None:
+    candidate = _first_structured_candidate(upload_info)
+    if not candidate:
+        return None
+    primary = candidate.get("primary_table")
+    return primary if isinstance(primary, dict) else None
 
 
 def _canonical_mcp_tool_name(tool_name: str, *, server_name: str) -> str:

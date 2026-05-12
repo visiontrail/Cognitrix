@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap env-check lint test build dev dev-local dev-web dev-api smoke smoke-local smoke-docker test-all docker-up docker-down reset-local-data
+.PHONY: help bootstrap env-check lint test build dev dev-local dev-web dev-api smoke smoke-local smoke-docker test-all docker-up docker-down reset-local-data hf-deploy
 
 help: ## Show all available commands
 	@awk 'BEGIN {FS = ":.*##"; print "Available targets:"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -56,3 +56,6 @@ docker-publish: ## Build and push api+web images to Docker Hub (DOCKER_USER / TA
 
 reset-local-data: ## Clear local runtime databases, uploads, logs, and test artifacts
 	@bash scripts/reset_local_data.sh
+
+hf-deploy: ## Deploy to Hugging Face Spaces (HF_SPACE env var, default LeoGuo/CogniTrix)
+	@bash scripts/hf_deploy.sh

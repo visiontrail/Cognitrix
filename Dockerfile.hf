@@ -1,0 +1,71 @@
+# Dockerfile.hf — Single-container build for Hugging Face Spaces
+# Runs FastAPI (port 8000, internal) + Next.js (port 7860, exposed)
+# Next.js proxies /api/backend/* to the local FastAPI server.
+#
+# This file is independent of apps/api/Dockerfile and apps/web/Dockerfile,
+# which remain the standard two-container local/Docker Compose deployment.
+
+# ── Stage 1: Build Next.js frontend ─────────────────────────────────────────
+FROM node:20-slim AS web-builder
+
+WORKDIR /build/apps/web
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN npm ci
+
+COPY apps/web ./
+RUN npm run build && npm prune --omit=dev
+
+# ── Stage 2: Runtime — Python 3.11 + Node 20 ───────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install Node.js 20 and supervisord
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       curl ca-certificates gnupg supervisor \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+       > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# HF Spaces runs as uid 1000
+RUN useradd -m -u 1000 user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
+
+# Python deps
+COPY --chown=user apps/api/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
+
+# App directory
+WORKDIR $HOME/app
+
+# Copy backend source
+COPY --chown=user apps/__init__.py apps/__init__.py
+COPY --chown=user apps/api apps/api
+COPY --chown=user models models
+
+# Copy built frontend
+COPY --chown=user --from=web-builder /build/apps/web apps/web
+
+# Create data dirs with correct ownership
+RUN mkdir -p $HOME/app/data/uploads/state && chown -R user:user $HOME/app/data
+
+# Startup and supervisor config
+COPY --chown=user scripts/hf_start.sh scripts/hf_start.sh
+COPY --chown=user deploy/hf/supervisord.conf /etc/supervisor/conf.d/cognitrix.conf
+RUN chmod +x scripts/hf_start.sh
+
+USER user
+
+EXPOSE 7860
+
+CMD ["bash", "scripts/hf_start.sh"]

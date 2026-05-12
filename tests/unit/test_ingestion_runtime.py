@@ -257,6 +257,43 @@ def test_diff_preview_does_not_offer_update_without_physical_target(
     assert preview["recommended_action"] == "new_table"
 
 
+def test_diff_preview_uses_structured_candidate_row_count_for_new_table(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _set_runtime_env(monkeypatch, tmp_path)
+    runtime = WriteIngestionAgentRuntime()
+
+    preview = runtime._tool_build_diff_preview(  # noqa: SLF001
+        workspace_id="workspace-structured",
+        upload_info={
+            "upload_id": "upload-structured",
+            "storage_path": str(tmp_path / "missing.xlsx"),
+            "sheet_summary": {
+                "sheets": [{"row_count": 29}],
+                "structured_candidates": [
+                    {
+                        "kind": "project_assignment_matrix",
+                        "stats": {"assignment_count": 111},
+                        "primary_table": {
+                            "table_name": "project_assignments",
+                            "columns": ["source_cell", "person_name", "project_name"],
+                        },
+                    }
+                ],
+            },
+        },
+        target_table="project_assignments",
+        match_columns=["source_cell"],
+        action_mode="new_table",
+        column_mapping={"source_cell": "source_cell"},
+    )
+
+    assert preview["predicted_insert_count"] == 111
+    assert preview["predicted_update_count"] == 0
+    assert preview["recommended_action"] == "new_table"
+
+
 def test_diff_preview_counts_updates_from_real_target_table(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -461,6 +498,79 @@ def test_post_run_recovery_prefers_proposal_when_catalog_is_populated() -> None:
     assert recovered.proposal is not None
     assert recovered.proposal.recommended_action == "update_existing"
     assert recovered.proposal.target_table == "employee_roster"
+
+
+def test_recover_proposal_uses_structured_primary_columns_for_matrix_upload() -> None:
+    runtime = WriteIngestionAgentRuntime()
+    structured_candidate = {
+        "kind": "project_assignment_matrix",
+        "stats": {"assignment_count": 111},
+        "primary_table": {
+            "table_name": "project_assignments",
+            "columns": [
+                "source_sheet",
+                "source_cell",
+                "team",
+                "role",
+                "person_name",
+                "project_year",
+                "project_name",
+                "project_stage",
+                "project_manager",
+                "project_intro",
+                "project_milestone",
+                "assignment_text",
+                "main_work_content",
+            ],
+        },
+    }
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "file_name": "project_management_nonstructure.xlsx",
+                "column_summary": {"all_columns": ["项目/精力分配\n岗位/人员", "Unnamed: 1"]},
+                "structured_candidates": [structured_candidate],
+                "sheet_summary": {"structured_candidates": [structured_candidate]},
+            },
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "result": {
+                "found": True,
+                "table_name": "project_assignments",
+                "business_type": "project_progress",
+                "match_columns": ["source_cell"],
+                "time_grain": "none",
+            },
+        },
+        {
+            "tool_name": "build_diff_preview",
+            "result": {
+                "predicted_insert_count": 111,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+            },
+        },
+        {
+            "tool_name": "generate_write_sql_draft",
+            "arguments": {
+                "target_table": "project_assignments",
+                "action_mode": "new_table",
+                "match_columns": ["source_cell"],
+            },
+            "result": {"sql_draft": "CREATE TABLE project_assignments AS SELECT ..."},
+        },
+    ]
+
+    recovered = runtime._recover_proposal_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.proposal is not None
+    assert recovered.proposal.diff_preview.predicted_insert_count == 111
+    assert recovered.proposal.match_columns == ["source_cell"]
+    assert recovered.proposal.column_mapping["source_cell"] == "source_cell"
+    assert "Unnamed: 1" not in recovered.proposal.column_mapping
 
 
 def test_normalize_raw_plan_output_injects_diff_preview_for_proposal() -> None:

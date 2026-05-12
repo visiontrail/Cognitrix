@@ -3456,14 +3456,9 @@ class WriteIngestionAgentRuntime:
 
         schema = self._latest_tool_result(tool_trace, "describe_table_schema")
         upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
-        column_summary = upload_info.get("column_summary") if isinstance(upload_info.get("column_summary"), dict) else {}
-        raw_columns = column_summary.get("all_columns") if isinstance(column_summary.get("all_columns"), list) else []
-        upload_columns = [str(item).strip() for item in raw_columns if str(item).strip()]
-        normalized_columns: list[str] = []
-        for raw_column in upload_columns:
-            candidate = self._normalize_identifier(raw_column)
-            if candidate and candidate not in normalized_columns:
-                normalized_columns.append(candidate)
+        upload_columns, normalized_columns, structured_column_mode = self._proposal_columns_from_upload_info(
+            upload_info
+        )
 
         business_type = str(schema.get("business_type") or "other").strip()
         if business_type not in {"roster", "project_progress", "attendance", "other"}:
@@ -3579,8 +3574,8 @@ class WriteIngestionAgentRuntime:
 
         column_mapping: dict[str, str] = {}
         for index, raw_column in enumerate(upload_columns):
-            normalized = self._normalize_identifier(raw_column) or f"c_{index + 1}"
-            column_mapping[raw_column] = normalized
+            normalized = raw_column if structured_column_mode else self._normalize_identifier(raw_column)
+            column_mapping[raw_column] = normalized or f"c_{index + 1}"
 
         proposal_payload = {
             "business_type": business_type,
@@ -3762,14 +3757,9 @@ class WriteIngestionAgentRuntime:
 
         schema = self._latest_tool_result(tool_trace, "describe_table_schema")
         upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
-        column_summary = upload_info.get("column_summary") if isinstance(upload_info.get("column_summary"), dict) else {}
-        raw_columns = column_summary.get("all_columns") if isinstance(column_summary.get("all_columns"), list) else []
-        upload_columns = [str(item).strip() for item in raw_columns if str(item).strip()]
-        normalized_columns: list[str] = []
-        for raw_column in upload_columns:
-            candidate = self._normalize_identifier(raw_column)
-            if candidate and candidate not in normalized_columns:
-                normalized_columns.append(candidate)
+        upload_columns, normalized_columns, structured_column_mode = self._proposal_columns_from_upload_info(
+            upload_info
+        )
 
         business_type = str(schema.get("business_type") or "other").strip()
         if business_type not in {"roster", "project_progress", "attendance", "other"}:
@@ -3840,8 +3830,8 @@ class WriteIngestionAgentRuntime:
 
         column_mapping: dict[str, str] = {}
         for index, raw_column in enumerate(upload_columns):
-            normalized = self._normalize_identifier(raw_column) or f"c_{index + 1}"
-            column_mapping[raw_column] = normalized
+            normalized = raw_column if structured_column_mode else self._normalize_identifier(raw_column)
+            column_mapping[raw_column] = normalized or f"c_{index + 1}"
 
         proposal_payload = {
             "business_type": business_type,
@@ -3884,6 +3874,32 @@ class WriteIngestionAgentRuntime:
             )
         except Exception:
             return None
+
+    def _proposal_columns_from_upload_info(
+        self,
+        upload_info: dict[str, Any],
+    ) -> tuple[list[str], list[str], bool]:
+        structured_columns = _first_structured_primary_columns(upload_info)
+        if structured_columns:
+            return structured_columns, list(structured_columns), True
+
+        column_summary = (
+            upload_info.get("column_summary")
+            if isinstance(upload_info.get("column_summary"), dict)
+            else {}
+        )
+        raw_columns = (
+            column_summary.get("all_columns")
+            if isinstance(column_summary.get("all_columns"), list)
+            else []
+        )
+        upload_columns = [str(item).strip() for item in raw_columns if str(item).strip()]
+        normalized_columns: list[str] = []
+        for raw_column in upload_columns:
+            candidate = self._normalize_identifier(raw_column)
+            if candidate and candidate not in normalized_columns:
+                normalized_columns.append(candidate)
+        return upload_columns, normalized_columns, False
 
     def _run_tool(
         self,
@@ -5903,7 +5919,12 @@ class WriteIngestionAgentRuntime:
                 status_code=422,
             )
         sheets = upload_info["sheet_summary"].get("sheets", [])
-        total_rows = sum(int(item.get("row_count", 0)) for item in sheets)
+        structured_row_count = _first_structured_primary_row_count(upload_info)
+        total_rows = (
+            structured_row_count
+            if structured_row_count is not None
+            else sum(int(item.get("row_count", 0)) for item in sheets)
+        )
         total_rows = max(total_rows, 0)
         normalized_target = (target_table or "").strip().lower()
         target_is_valid = bool(normalized_target and SAFE_IDENTIFIER_RE.match(normalized_target))
@@ -6289,6 +6310,63 @@ def _first_structured_primary_table(upload_info: dict[str, Any]) -> dict[str, An
         return None
     primary = candidate.get("primary_table")
     return primary if isinstance(primary, dict) else None
+
+
+def _first_structured_primary_columns(upload_info: dict[str, Any]) -> list[str]:
+    primary = _first_structured_primary_table(upload_info)
+    if not primary:
+        return []
+    columns = primary.get("columns")
+    if not isinstance(columns, list):
+        return []
+    result: list[str] = []
+    for column in columns:
+        normalized = str(column).strip().lower()
+        if normalized and SAFE_IDENTIFIER_RE.match(normalized) and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _first_structured_primary_row_count(upload_info: dict[str, Any]) -> int | None:
+    primary = _first_structured_primary_table(upload_info)
+    if isinstance(primary, dict):
+        rows = primary.get("rows")
+        if isinstance(rows, list):
+            return len(rows)
+        sample_row_count = primary.get("row_count")
+        try:
+            if sample_row_count is not None:
+                return max(int(sample_row_count), 0)
+        except (TypeError, ValueError):
+            pass
+
+    candidate = _first_structured_candidate(upload_info)
+    if not candidate:
+        return None
+
+    stats = candidate.get("stats")
+    if isinstance(stats, dict):
+        for key in ("assignment_count", "row_count"):
+            try:
+                if stats.get(key) is not None:
+                    return max(int(stats.get(key)), 0)
+            except (TypeError, ValueError):
+                pass
+
+    primary_name = str(primary.get("table_name") if isinstance(primary, dict) else "").strip()
+    tables = candidate.get("candidate_tables")
+    if isinstance(tables, list):
+        for table in tables:
+            if not isinstance(table, dict):
+                continue
+            table_name = str(table.get("table_name") or "").strip()
+            if primary_name and table_name != primary_name:
+                continue
+            try:
+                return max(int(table.get("row_count")), 0)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 def _canonical_mcp_tool_name(tool_name: str, *, server_name: str) -> str:

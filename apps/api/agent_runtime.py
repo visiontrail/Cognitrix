@@ -243,6 +243,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
                 "pie",
                 "area",
                 "stacked_bar",
+                "stacked_line",
                 "scatter",
                 "radar",
                 "treemap",
@@ -1512,7 +1513,7 @@ class AgentRuntime:
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "stacked_bar", "treemap", "heatmap", "gauge", "sankey", "sunburst",
+        "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -1564,7 +1565,7 @@ class AgentRuntime:
             )
             # Normalise echarts chart_type to a valid catalog value
             echarts_catalog = {
-                "bar", "line", "pie", "area", "stacked_bar", "scatter", "treemap", "heatmap",
+                "bar", "line", "pie", "area", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
                 "radar", "funnel", "gauge", "sankey", "sunburst",
                 "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud", "table",
             }
@@ -2383,11 +2384,17 @@ def _build_echarts_option(
     if chart_type == "scatter":
         return _echarts_scatter_option(rows=rows, x_key=x_key, y_key=y_key)
 
-    # Default: category axis bar/line/stacked_bar/area
+    # Default: category axis bar/line/stacked_bar/stacked_line/area
     if chart_type == "stacked_bar":
         return _echarts_cartesian_option(
             rows=rows, x_key=x_key, y_key=y_key,
             series_key=series_key, series_type="bar",
+            metric_name=metric_name, stacked=True,
+        )
+    if chart_type == "stacked_line":
+        return _echarts_cartesian_option(
+            rows=rows, x_key=x_key, y_key=y_key,
+            series_key=series_key, series_type="line",
             metric_name=metric_name, stacked=True,
         )
     return _echarts_cartesian_option(

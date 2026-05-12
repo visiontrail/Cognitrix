@@ -5,6 +5,7 @@ export type QueryChartType = Extract<
   KnownChartType,
   | "bar"
   | "stacked_bar"
+  | "stacked_line"
   | "line"
   | "area"
   | "scatter"
@@ -54,6 +55,12 @@ const QUERY_CHART_TYPE_DEFINITIONS: ChartTypeOptionDefinition[] = [
     label: { "en-US": "Stacked bar", "zh-CN": "堆叠柱状图" },
     description: { "en-US": "Compare totals by stacked groups.", "zh-CN": "按堆叠分组比较总量。" },
     group: { "en-US": "Comparison", "zh-CN": "比较" },
+  },
+  {
+    type: "stacked_line",
+    label: { "en-US": "Stacked line", "zh-CN": "堆叠折线图" },
+    description: { "en-US": "Show cumulative trends by stacked series.", "zh-CN": "按系列堆叠展示累计趋势。" },
+    group: { "en-US": "Trend", "zh-CN": "趋势" },
   },
   {
     type: "line",

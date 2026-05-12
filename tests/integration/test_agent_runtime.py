@@ -601,6 +601,74 @@ def test_agent_runtime_retries_fresh_session_when_claude_resume_is_missing(
     assert result.ai_state["turn_count"] == 2
 
 
+def test_agent_runtime_builds_stacked_line_echarts_spec(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"month": "2026-01", "department": "HR", "headcount": 8},
+                {"month": "2026-01", "department": "PM", "headcount": 5},
+                {"month": "2026-02", "department": "HR", "headcount": 9},
+                {"month": "2026-02", "department": "PM", "headcount": 6},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        rows = [
+            {"month": "2026-01", "department": "HR", "metric_value": 8},
+            {"month": "2026-01", "department": "PM", "metric_value": 5},
+            {"month": "2026-02", "department": "HR", "metric_value": 9},
+            {"month": "2026-02", "department": "PM", "metric_value": 6},
+        ]
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [
+                    _sql_tool_call(
+                        rows,
+                        'SELECT "month", "department", "metric_value" FROM dataset',
+                    )
+                ],
+                "final_answer": {
+                    "chart_type": "stacked_line",
+                    "title": "月度人力堆叠趋势",
+                    "x_key": "month",
+                    "y_key": "metric_value",
+                    "series_key": "department",
+                    "metric_name": "headcount",
+                    "rows": rows,
+                    "conclusion": "HR 与 PM 的人数趋势均上涨。",
+                    "scope": "按月和部门统计",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-stacked-line",
+                request_id="agent-runtime-req-stacked-line",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请用堆叠折线图看部门月度人数趋势",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                preferred_chart_type="stacked_line",
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["engine"] == "echarts"
+    assert result.spec["chart_type"] == "stacked_line"
+    option = result.spec["config"]["option"]
+    assert option["series"]
+    assert all(item["type"] == "line" for item in option["series"])
+    assert all(item.get("stack") == "total" for item in option["series"])
+
+
 def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
     monkeypatch, tmp_path: Path
 ) -> None:

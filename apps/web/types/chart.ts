@@ -4,6 +4,7 @@ export type KnownChartType =
   | "pie"
   | "area"
   | "stacked_bar"
+  | "stacked_line"
   | "scatter"
   | "radar"
   | "funnel"

@@ -59,6 +59,7 @@ def build_agent_system_prompt() -> str:
         "**Basic comparison & distribution:**\n"
         "- `bar` — compare categorical values side-by-side.\n"
         "- `stacked_bar` — stacked bar chart; set series_key for the stacking dimension.\n"
+        "- `stacked_line` — stacked line chart; set series_key for the stacking dimension.\n"
         "- `line` — show trends over time or ordered sequence.\n"
         "- `area` — like line but filled; good for volume over time.\n"
         "- `scatter` — show correlation between two numeric variables (x_key and y_key both numeric).\n"

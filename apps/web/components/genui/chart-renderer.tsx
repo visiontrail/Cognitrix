@@ -53,6 +53,7 @@ const SUPPORTED_CHART_TYPES = new Set<KnownChartType>([
   "pie",
   "area",
   "stacked_bar",
+  "stacked_line",
   "scatter",
   "radar",
   "funnel",
@@ -80,6 +81,8 @@ const SUPPORTED_CHART_TYPES_BY_LOWER = new Map<string, KnownChartType>(
 const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
   "stackedbar": "stacked_bar",
   "stacked-bar": "stacked_bar",
+  "stackedline": "stacked_line",
+  "stacked-line": "stacked_line",
   "singlevalue": "single_value",
   "single-value": "single_value",
   "radialbar": "radialBar",
@@ -93,6 +96,7 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "pie",
   "area",
   "stacked_bar",
+  "stacked_line",
   "scatter",
   "radar",
   "funnel",
@@ -320,6 +324,60 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
     };
   }
 
+  if (chartType === "stacked_line") {
+    const seriesKey = typeof config.seriesKey === "string" ? config.seriesKey : null;
+    const stackedAreaStyle = { opacity: 0.2 };
+    if (!seriesKey) {
+      return {
+        title: { text: title, left: "center" },
+        tooltip: { trigger: "axis" },
+        grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+        xAxis: { type: "category", data: categories, axisLabel: { interval: 0, rotate: 30 } },
+        yAxis: { type: "value" },
+        series: [{ type: "line", smooth: true, stack: "total", areaStyle: stackedAreaStyle, data: values }],
+      };
+    }
+
+    const categoryOrder: string[] = [];
+    const categorySet = new Set<string>();
+    const seriesOrder: string[] = [];
+    const seriesSet = new Set<string>();
+    const matrix = new Map<string, Map<string, number>>();
+
+    for (const row of rows) {
+      const category = String(row[xKey] ?? "");
+      const seriesName = String(row[seriesKey] ?? "");
+      if (!categorySet.has(category)) {
+        categorySet.add(category);
+        categoryOrder.push(category);
+      }
+      if (!seriesSet.has(seriesName)) {
+        seriesSet.add(seriesName);
+        seriesOrder.push(seriesName);
+      }
+      const rowMap = matrix.get(seriesName) ?? new Map<string, number>();
+      rowMap.set(category, asNumber(row[yKey]));
+      matrix.set(seriesName, rowMap);
+    }
+
+    return {
+      title: { text: title, left: "center" },
+      tooltip: { trigger: "axis" },
+      legend: { top: 28 },
+      grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+      xAxis: { type: "category", data: categoryOrder, axisLabel: { interval: 0, rotate: 30 } },
+      yAxis: { type: "value" },
+      series: seriesOrder.map((seriesName) => ({
+        type: "line",
+        name: seriesName,
+        smooth: true,
+        stack: "total",
+        areaStyle: stackedAreaStyle,
+        data: categoryOrder.map((category) => matrix.get(seriesName)?.get(category) ?? 0),
+      })),
+    };
+  }
+
   const seriesType = chartType === "line" || chartType === "area" ? "line" : "bar";
   return {
     title: { text: title, left: "center" },
@@ -381,4 +439,3 @@ function asNumber(value: unknown): number {
   }
   return 0;
 }
-

@@ -797,6 +797,35 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     </>
   );
 
+  if (type === "stacked_line") {
+    // Three stacked series: each series' values are cumulative on top of the previous
+    const xs = [42, 88, 132, 178, 224, 272];
+    // Series A (bottom): gentle rise
+    const s1y = [128, 118, 112, 106, 100, 92];
+    // Series B (mid): stacked on top of A
+    const s2y = [108, 94, 86, 76, 68, 56];
+    // Series C (top): stacked on top of A+B
+    const s3y = [80, 66, 54, 42, 36, 28];
+    const pts = (ys: number[]) => xs.map((x, i) => `${x},${ys[i]}`).join(" L ");
+    return (
+      <>
+        {axis}
+        {/* Fill areas from bottom (x-axis) up */}
+        <path d={`M${pts(s1y)} L272,142 L42,142 Z`} fill="#9bb7a5" opacity="0.4" />
+        <path d={`M${pts(s2y)} L272,${s1y[5]} L${xs.slice().reverse().map((x, i) => `${x},${s1y[5 - i]}`).join(" L")} Z`} fill="#4b7f8c" opacity="0.3" />
+        <path d={`M${pts(s3y)} L272,${s2y[5]} L${xs.slice().reverse().map((x, i) => `${x},${s2y[5 - i]}`).join(" L")} Z`} fill="#c96442" opacity="0.25" />
+        {/* Series lines */}
+        <path d={`M${pts(s1y)}`} fill="none" stroke="#9bb7a5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={`M${pts(s2y)}`} fill="none" stroke="#4b7f8c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={`M${pts(s3y)}`} fill="none" stroke="#c96442" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Dots for each series */}
+        {xs.map((x, i) => <circle key={`s1-${x}`} cx={x} cy={s1y[i]} r="3.5" fill="#9bb7a5" stroke="#fff" strokeWidth="1" />)}
+        {xs.map((x, i) => <circle key={`s2-${x}`} cx={x} cy={s2y[i]} r="3.5" fill="#4b7f8c" stroke="#fff" strokeWidth="1" />)}
+        {xs.map((x, i) => <circle key={`s3-${x}`} cx={x} cy={s3y[i]} r="3.5" fill="#c96442" stroke="#fff" strokeWidth="1" />)}
+      </>
+    );
+  }
+
   if (type === "line" || type === "area") {
     return (
       <>

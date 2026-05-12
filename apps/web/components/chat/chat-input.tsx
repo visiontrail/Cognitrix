@@ -1131,7 +1131,7 @@ function formatApprovalActionLabel({
     if (timeGrain === "year") {
       return t("ingestion.lifecycle.action.newYearly");
     }
-    return t("ingestion.lifecycle.action.newTable");
+    return t("ingestion.lifecycle.action.newTimePartitioned");
   }
   return t("ingestion.lifecycle.action.cancel");
 }

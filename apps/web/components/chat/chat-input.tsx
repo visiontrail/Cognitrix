@@ -839,7 +839,7 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     );
   }
 
-  if (type === "bar" || type === "stacked_bar") {
+  if (type === "bar" || type === "grouped_bar" || type === "stacked_bar") {
     const bars = [
       [58, 86],
       [104, 58],
@@ -855,6 +855,11 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
             <g key={x}>
               <rect x={x} y={142 - height} width="26" height={height * 0.48} rx="3" fill="#4b7f8c" />
               <rect x={x} y={142 - height * 0.52} width="26" height={height * 0.52} rx="3" fill="#c96442" />
+            </g>
+          ) : type === "grouped_bar" ? (
+            <g key={x}>
+              <rect x={x - 8} y={142 - height * 0.72} width="12" height={height * 0.72} rx="2" fill="#4b7f8c" />
+              <rect x={x + 8} y={142 - height} width="12" height={height} rx="2" fill="#c96442" />
             </g>
           ) : (
             <rect key={x} x={x} y={142 - height} width="28" height={height} rx="4" fill="#c96442" />

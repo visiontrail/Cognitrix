@@ -58,6 +58,8 @@ def build_agent_system_prompt() -> str:
         "\n"
         "**Basic comparison & distribution:**\n"
         "- `bar` — compare categorical values side-by-side.\n"
+        "- `grouped_bar` — horizontal grouped bar chart for comparing multiple series at the same category; "
+        "set x_key to the category column, y_key to the numeric metric, and series_key to the comparison dimension.\n"
         "- `stacked_bar` — stacked bar chart; set series_key for the stacking dimension.\n"
         "- `stacked_line` — stacked line chart; set series_key for the stacking dimension.\n"
         "- `line` — show trends over time or ordered sequence.\n"

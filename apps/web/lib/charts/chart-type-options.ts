@@ -4,6 +4,7 @@ import type { Locale } from "@/lib/i18n/dictionary";
 export type QueryChartType = Extract<
   KnownChartType,
   | "bar"
+  | "grouped_bar"
   | "stacked_bar"
   | "stacked_line"
   | "line"
@@ -54,6 +55,15 @@ const QUERY_CHART_TYPE_DEFINITIONS: ChartTypeOptionDefinition[] = [
     type: "stacked_bar",
     label: { "en-US": "Stacked bar", "zh-CN": "堆叠柱状图" },
     description: { "en-US": "Compare totals by stacked groups.", "zh-CN": "按堆叠分组比较总量。" },
+    group: { "en-US": "Comparison", "zh-CN": "比较" },
+  },
+  {
+    type: "grouped_bar",
+    label: { "en-US": "Grouped bar", "zh-CN": "分组条形图" },
+    description: {
+      "en-US": "Compare multiple series within each category.",
+      "zh-CN": "在同一类别内并列比较多个系列。",
+    },
     group: { "en-US": "Comparison", "zh-CN": "比较" },
   },
   {

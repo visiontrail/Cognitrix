@@ -1,5 +1,6 @@
 export type KnownChartType =
   | "bar"
+  | "grouped_bar"
   | "line"
   | "pie"
   | "area"

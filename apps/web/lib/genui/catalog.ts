@@ -1,6 +1,7 @@
 export const GENUI_CATALOG = {
   recharts: [
     "bar",
+    "grouped_bar",
     "line",
     "stacked_line",
     "pie",
@@ -18,6 +19,7 @@ export const GENUI_CATALOG = {
   ],
   echarts: [
     "bar",
+    "grouped_bar",
     "line",
     "stacked_line",
     "pie",

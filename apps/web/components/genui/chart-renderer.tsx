@@ -49,6 +49,7 @@ function mapLegacySpec(spec: LegacyGenUISpec): ChartSpec | null {
 
 const SUPPORTED_CHART_TYPES = new Set<KnownChartType>([
   "bar",
+  "grouped_bar",
   "line",
   "pie",
   "area",
@@ -81,6 +82,14 @@ const SUPPORTED_CHART_TYPES_BY_LOWER = new Map<string, KnownChartType>(
 const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
   "stackedbar": "stacked_bar",
   "stacked-bar": "stacked_bar",
+  "bar-y-category": "grouped_bar",
+  "bar_y_category": "grouped_bar",
+  "groupedbar": "grouped_bar",
+  "grouped-bar": "grouped_bar",
+  "horizontal_bar": "grouped_bar",
+  "horizontal-bar": "grouped_bar",
+  "horizontal_grouped_bar": "grouped_bar",
+  "horizontal-grouped-bar": "grouped_bar",
   "stackedline": "stacked_line",
   "stacked-line": "stacked_line",
   "singlevalue": "single_value",
@@ -92,6 +101,7 @@ const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
 };
 const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "bar",
+  "grouped_bar",
   "line",
   "pie",
   "area",
@@ -273,16 +283,21 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
     };
   }
 
-  if (chartType === "stacked_bar") {
+  if (chartType === "grouped_bar" || chartType === "stacked_bar") {
     const seriesKey = typeof config.seriesKey === "string" ? config.seriesKey : null;
     if (!seriesKey) {
+      const horizontalAxis = chartType === "grouped_bar";
       return {
         title: { text: title, left: "center" },
-        tooltip: { trigger: "axis" },
+        tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
         grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
-        xAxis: { type: "category", data: categories, axisLabel: { interval: 0, rotate: 30 } },
-        yAxis: { type: "value" },
-        series: [{ type: "bar", stack: "total", data: values }],
+        xAxis: horizontalAxis
+          ? { type: "value" }
+          : { type: "category", data: categories, axisLabel: { interval: 0, rotate: 30 } },
+        yAxis: horizontalAxis
+          ? { type: "category", data: categories }
+          : { type: "value" },
+        series: [{ type: "bar", ...(chartType === "stacked_bar" ? { stack: "total" } : {}), data: values }],
       };
     }
 
@@ -310,15 +325,19 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
 
     return {
       title: { text: title, left: "center" },
-      tooltip: { trigger: "axis" },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       legend: { top: 28 },
       grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
-      xAxis: { type: "category", data: categoryOrder, axisLabel: { interval: 0, rotate: 30 } },
-      yAxis: { type: "value" },
+      xAxis: chartType === "grouped_bar"
+        ? { type: "value" }
+        : { type: "category", data: categoryOrder, axisLabel: { interval: 0, rotate: 30 } },
+      yAxis: chartType === "grouped_bar"
+        ? { type: "category", data: categoryOrder }
+        : { type: "value" },
       series: seriesOrder.map((seriesName) => ({
         type: "bar",
         name: seriesName,
-        stack: "total",
+        ...(chartType === "stacked_bar" ? { stack: "total" } : {}),
         data: categoryOrder.map((category) => matrix.get(seriesName)?.get(category) ?? 0),
       })),
     };

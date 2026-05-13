@@ -239,6 +239,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": [
                 "bar",
+                "grouped_bar",
                 "line",
                 "pie",
                 "area",
@@ -1513,7 +1514,7 @@ class AgentRuntime:
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
+        "grouped_bar", "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -1528,12 +1529,10 @@ class AgentRuntime:
         request: AgentRequest,
     ) -> dict[str, Any]:
         rows = list(answer.get("rows") or [])
-        chart_type = str(answer.get("chart_type") or "bar")
+        chart_type = self._normalize_chart_type(str(answer.get("chart_type") or "bar")) or "bar"
         preferred_chart_type = self._normalize_chart_type(request.preferred_chart_type)
         if preferred_chart_type:
             chart_type = preferred_chart_type
-        if chart_type not in self.ALL_CHART_TYPES:
-            chart_type = "bar"
         if not rows:
             chart_type = "empty"
 
@@ -1565,7 +1564,7 @@ class AgentRuntime:
             )
             # Normalise echarts chart_type to a valid catalog value
             echarts_catalog = {
-                "bar", "line", "pie", "area", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
+                "bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
                 "radar", "funnel", "gauge", "sankey", "sunburst",
                 "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud", "table",
             }
@@ -1602,6 +1601,19 @@ class AgentRuntime:
         chart_type = str(value).strip()
         if chart_type in self.ALL_CHART_TYPES:
             return chart_type
+        aliases = {
+            "bar-y-category": "grouped_bar",
+            "bar_y_category": "grouped_bar",
+            "groupedbar": "grouped_bar",
+            "grouped-bar": "grouped_bar",
+            "horizontal_bar": "grouped_bar",
+            "horizontal-bar": "grouped_bar",
+            "horizontal_grouped_bar": "grouped_bar",
+            "horizontal-grouped-bar": "grouped_bar",
+        }
+        aliased = aliases.get(chart_type.lower())
+        if aliased:
+            return aliased
         lower_catalog = {item.lower(): item for item in self.ALL_CHART_TYPES}
         return lower_catalog.get(chart_type.lower())
 
@@ -2384,7 +2396,12 @@ def _build_echarts_option(
     if chart_type == "scatter":
         return _echarts_scatter_option(rows=rows, x_key=x_key, y_key=y_key)
 
-    # Default: category axis bar/line/stacked_bar/stacked_line/area
+    # Default: category axis bar/line/grouped_bar/stacked_bar/stacked_line/area
+    if chart_type == "grouped_bar":
+        return _echarts_grouped_bar_option(
+            rows=rows, x_key=x_key, y_key=y_key,
+            series_key=series_key, metric_name=metric_name,
+        )
     if chart_type == "stacked_bar":
         return _echarts_cartesian_option(
             rows=rows, x_key=x_key, y_key=y_key,
@@ -2402,6 +2419,59 @@ def _build_echarts_option(
         series_key=series_key, series_type=chart_type if chart_type in {"line", "bar", "area"} else "bar",
         metric_name=metric_name,
     )
+
+
+def _echarts_grouped_bar_option(
+    *,
+    rows: list[dict[str, Any]],
+    x_key: str,
+    y_key: str,
+    series_key: str | None,
+    metric_name: str,
+) -> dict[str, Any]:
+    categories: list[str] = []
+    category_seen: set[str] = set()
+
+    if series_key:
+        series_names: list[str] = []
+        series_seen: set[str] = set()
+        matrix: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            category = str(row.get(x_key, ""))
+            if category not in category_seen:
+                category_seen.add(category)
+                categories.append(category)
+
+            series_name = str(row.get(series_key, ""))
+            if series_name not in series_seen:
+                series_seen.add(series_name)
+                series_names.append(series_name)
+            matrix.setdefault(series_name, {})[category] = row.get(y_key, 0)
+
+        series = [
+            {
+                "name": series_name,
+                "type": "bar",
+                "data": [matrix.get(series_name, {}).get(category, 0) for category in categories],
+            }
+            for series_name in series_names
+        ]
+        legend: dict[str, Any] = {"top": 0}
+    else:
+        for index, row in enumerate(rows):
+            category = str(row.get(x_key, f"item-{index + 1}"))
+            categories.append(category)
+        series = [{"name": metric_name, "type": "bar", "data": [row.get(y_key, 0) for row in rows]}]
+        legend = {}
+
+    return {
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "legend": legend,
+        "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
+        "xAxis": {"type": "value"},
+        "yAxis": {"type": "category", "data": categories},
+        "series": series,
+    }
 
 
 def _echarts_cartesian_option(

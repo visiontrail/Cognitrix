@@ -120,8 +120,6 @@ def _seed_jobs(conn: sqlite3.Connection) -> None:
 
 
 def _bootstrap_admin(conn: sqlite3.Connection) -> None:
-    import bcrypt as _bcrypt_lib
-
     settings = get_settings()
     admin_email = settings.auth_bootstrap_admin_email.strip()
     admin_password = settings.auth_bootstrap_admin_password.strip()
@@ -131,6 +129,8 @@ def _bootstrap_admin(conn: sqlite3.Connection) -> None:
     row = conn.execute("SELECT COUNT(*) AS cnt FROM users WHERE password_hash IS NOT NULL").fetchone()
     if row and int(row["cnt"]) > 0:
         return
+
+    import bcrypt as _bcrypt_lib
 
     salt = _bcrypt_lib.gensalt()
     password_hash = _bcrypt_lib.hashpw(admin_password.encode("utf-8"), salt).decode("utf-8")

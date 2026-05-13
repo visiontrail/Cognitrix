@@ -669,6 +669,79 @@ def test_agent_runtime_builds_stacked_line_echarts_spec(monkeypatch, tmp_path: P
     assert all(item.get("stack") == "total" for item in option["series"])
 
 
+def test_agent_runtime_builds_grouped_bar_echarts_spec(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"department": "HR", "period": "2026-Q1", "headcount": 8},
+                {"department": "HR", "period": "2026-Q2", "headcount": 10},
+                {"department": "PM", "period": "2026-Q1", "headcount": 5},
+                {"department": "PM", "period": "2026-Q2", "headcount": 7},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        rows = [
+            {"department": "HR", "period": "2026-Q1", "metric_value": 8},
+            {"department": "HR", "period": "2026-Q2", "metric_value": 10},
+            {"department": "PM", "period": "2026-Q1", "metric_value": 5},
+            {"department": "PM", "period": "2026-Q2", "metric_value": 7},
+        ]
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [
+                    _sql_tool_call(
+                        rows,
+                        'SELECT "department", "period", "metric_value" FROM dataset',
+                    )
+                ],
+                "final_answer": {
+                    "chart_type": "grouped_bar",
+                    "title": "部门季度人数对比",
+                    "x_key": "department",
+                    "y_key": "metric_value",
+                    "series_key": "period",
+                    "metric_name": "headcount",
+                    "rows": rows,
+                    "conclusion": "Q2 各部门人数均高于 Q1。",
+                    "scope": "按部门和季度统计",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-grouped-bar",
+                request_id="agent-runtime-req-grouped-bar",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请用分组条形图对比各部门不同季度人数",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                preferred_chart_type="bar-y-category",
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["engine"] == "echarts"
+    assert result.spec["chart_type"] == "grouped_bar"
+    option = result.spec["config"]["option"]
+    assert option["xAxis"]["type"] == "value"
+    assert option["yAxis"]["type"] == "category"
+    assert option["yAxis"]["data"] == ["HR", "PM"]
+    assert [item["name"] for item in option["series"]] == ["2026-Q1", "2026-Q2"]
+    assert all(item["type"] == "bar" for item in option["series"])
+    assert all("stack" not in item for item in option["series"])
+    assert option["series"][0]["data"] == [8, 5]
+    assert option["series"][1]["data"] == [10, 7]
+
+
 def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -245,6 +245,7 @@ export function useSendMessage() {
           apiBaseUrl: API_BASE_URL,
           authContext,
           content: normalizedContent,
+          locale,
         })
           .then((title) => {
             useChatStore.getState().touchSession(sessionId, { title });

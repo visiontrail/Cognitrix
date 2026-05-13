@@ -44,10 +44,12 @@ export async function requestGeneratedSessionTitle({
   apiBaseUrl,
   authContext,
   content,
+  locale = "en",
 }: {
   apiBaseUrl: string;
   authContext: AuthContext;
   content: string;
+  locale?: string;
 }): Promise<string> {
   const fallback = buildFallbackSessionTitle(content);
   const prompt = String(content ?? "").trim();
@@ -66,6 +68,7 @@ export async function requestGeneratedSessionTitle({
       user_id: authContext.userId,
       project_id: authContext.projectId,
       prompt,
+      locale,
     }),
   });
 

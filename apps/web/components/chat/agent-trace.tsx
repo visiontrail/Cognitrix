@@ -84,7 +84,7 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
         <div className="mb-2">
           <div className="flex items-center gap-1.5 pl-3 border-l border-border-cream py-1">
             <Brain className="w-3 h-3 text-stone-gray shrink-0 animate-pulse" />
-            <span className="text-[11px] text-stone-gray select-none">思考中</span>
+            <span className="text-[11px] text-stone-gray select-none">{t("chat.thinking")}</span>
             <ThinkingDots />
           </div>
         </div>
@@ -104,7 +104,7 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
           <div className="border-l border-border-cream pl-3">
             <div className="flex items-center gap-1.5 mb-1">
               <Brain className="w-3 h-3 text-stone-gray shrink-0 animate-pulse" />
-              <span className="text-[10px] text-stone-gray select-none">思考中</span>
+              <span className="text-[10px] text-stone-gray select-none">{t("chat.thinking")}</span>
               <ThinkingDots />
             </div>
             <div className="max-h-[4.5rem] overflow-y-auto">

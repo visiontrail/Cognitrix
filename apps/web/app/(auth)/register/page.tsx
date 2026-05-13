@@ -1,13 +1,19 @@
 "use client";
 
 import { Suspense, useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Globe } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Globe, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { API_BASE_URL } from "@/lib/api-base";
 import { apiRegister, AuthError } from "@/lib/auth/auth-client";
-import { setInMemoryToken, setStoredAppMode } from "@/lib/auth/session";
 import { useI18n } from "@/lib/i18n/context";
 import { SUPPORTED_LOCALES, type Locale } from "@/lib/i18n/dictionary";
 
@@ -46,9 +52,6 @@ function LanguageSwitcher() {
 
 function RegisterForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const next = searchParams.get("next") ?? "/";
-  const invite = searchParams.get("invite");
   const { t, locale } = useI18n();
 
   const [email, setEmail] = useState("");
@@ -58,6 +61,7 @@ function RegisterForm() {
   const [jobs, setJobs] = useState<JobOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/jobs`)
@@ -77,16 +81,15 @@ function RegisterForm() {
     if (password.length < 8) { setError(t("auth.passwordTooShort", { n: 8 })); return; }
     setLoading(true);
     try {
-      const result = await apiRegister({
+      await apiRegister({
         email,
         password,
         display_name: displayName,
         job_id: Number(jobId),
       });
-      setInMemoryToken(result.access_token, result.expires_at);
-      setStoredAppMode("designer");
-      router.push(invite ? `/invites/${invite}` : next);
+      setShowSuccess(true);
     } catch (err) {
+      setLoading(false);
       if (err instanceof AuthError) {
         if (err.code === "email_taken") setError(t("auth.emailTaken"));
         else if (err.code === "password_too_short") setError(t("auth.passwordTooShort", { n: 8 }));
@@ -94,9 +97,11 @@ function RegisterForm() {
       } else {
         setError(t("auth.registerError"));
       }
-    } finally {
-      setLoading(false);
     }
+  }
+
+  function handleSuccessConfirm() {
+    router.push("/login");
   }
 
   return (
@@ -187,6 +192,26 @@ function RegisterForm() {
           t("auth.createAccount")
         )}
       </Button>
+
+      <Dialog open={showSuccess} onOpenChange={() => {}}>
+        <DialogContent
+          className="max-w-xs text-center [&>button.absolute]:hidden"
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
+          <DialogHeader className="items-center">
+            <CheckCircle2 className="h-10 w-10 text-green-600 mb-2" />
+            <DialogTitle>{t("auth.registerSuccess")}</DialogTitle>
+            <DialogDescription>{t("auth.registerSuccessDesc")}</DialogDescription>
+          </DialogHeader>
+          <Button
+            className="w-full h-10 text-body font-medium mt-2"
+            onClick={handleSuccessConfirm}
+          >
+            {t("auth.goToLogin")}
+          </Button>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

@@ -35,13 +35,17 @@ class SessionTitleService:
     def enabled(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
 
-    def generate_title(self, prompt: str) -> tuple[str, str]:
+    def generate_title(self, prompt: str, *, locale: str = "en") -> tuple[str, str]:
         fallback_title = build_fallback_session_title(prompt)
         normalized_prompt = normalize_session_title(prompt, fallback_title)
         if not normalized_prompt:
             return fallback_title, "fallback"
         if not self.enabled:
             return fallback_title, "fallback"
+
+        lang_instruction = (
+            "Return the title in Chinese." if locale.startswith("zh") else "Return the title in English."
+        )
 
         payload = {
             "model": self.model,
@@ -51,7 +55,7 @@ class SessionTitleService:
                     "role": "system",
                     "content": (
                         "You create concise conversation titles for a BI chat application. "
-                        "Return only the title text in the user's language. "
+                        f"{lang_instruction} "
                         "Keep it specific, natural, and short. "
                         "Use at most 6 English words or 18 Chinese characters. "
                         "Do not add quotes, markdown, prefixes, or explanations."

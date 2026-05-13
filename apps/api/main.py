@@ -112,6 +112,7 @@ class ChatTitleRequest(BaseModel):
     user_id: str
     project_id: str
     prompt: str
+    locale: str = "en"
 
 
 class SaveViewRequest(BaseModel):
@@ -514,7 +515,7 @@ async def generate_chat_title(
     identity: AuthIdentity = Depends(require_permission("chat:stream")),
 ) -> dict[str, str]:
     ensure_scope(identity, user_id=request.user_id, project_id=request.project_id)
-    title, source = get_session_title_service().generate_title(request.prompt)
+    title, source = get_session_title_service().generate_title(request.prompt, locale=request.locale)
 
     get_audit_logger().log(
         event_type="query",

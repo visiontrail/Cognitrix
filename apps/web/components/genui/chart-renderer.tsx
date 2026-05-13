@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartPreview } from "@/components/charts/chart-preview";
+import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { isRecord } from "@/lib/utils";
 import type { ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 
@@ -232,20 +233,8 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
   }
 
   if (chartType === "treemap") {
-    return {
-      title: { text: title, left: "center" },
-      series: [
-        {
-          type: "treemap",
-          roam: false,
-          nodeClick: false,
-          data: rows.map((row, index) => ({
-            name: String(row[xKey] ?? `item-${index + 1}`),
-            value: asNumber(row[yKey]),
-          })),
-        },
-      ],
-    };
+    const nameKey = typeof config.nameKey === "string" ? config.nameKey : null;
+    return buildRichTreemapFallbackOption({ rows, title, xKey, yKey, nameKey });
   }
 
   if (chartType === "funnel") {

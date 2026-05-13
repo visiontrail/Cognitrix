@@ -274,7 +274,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
         "name_key": {
             "type": ["string", "null"],
             "description": (
-                "Label column name shown inside each element "
+                "Leaf label column name shown inside each element "
                 "(e.g. employee name in treemap boxes or scatter clusters). "
                 "Only used for treemap/graph/scatter_clustering."
             ),
@@ -2645,33 +2645,176 @@ def _echarts_treemap_option(
     name_key: str | None,
     title: str,
 ) -> dict[str, Any]:
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        group = str(row.get(x_key, "other"))
-        label = str(row.get(name_key, "")) if name_key else group
-        size = row.get(y_key, 1)
-        size = size if isinstance(size, (int, float)) else 1
-        groups.setdefault(group, []).append({"name": label, "value": size})
+    def field_payload(row: dict[str, Any]) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        skipped = {x_key, y_key}
+        if name_key:
+            skipped.add(name_key)
+        for key, value in row.items():
+            if key in skipped or value is None:
+                continue
+            fields.append({"name": str(key), "value": str(value)})
+            if len(fields) >= 6:
+                break
+        return fields
+
+    def leaf_node(
+        *,
+        row: dict[str, Any],
+        index: int,
+        group_name: str | None,
+        parent_total: float,
+        total_value: float,
+    ) -> dict[str, Any]:
+        label_source = row.get(name_key) if name_key else row.get(x_key)
+        label = str(label_source or f"item-{index + 1}")
+        metric_value = max(float(_coerce_chart_number(row.get(y_key, 1))), 0)
+        share_of_total = (metric_value / total_value * 100) if total_value > 0 else 0
+        share_of_parent = (metric_value / parent_total * 100) if parent_total > 0 else share_of_total
+        return {
+            "id": f"{group_name or 'root'}::{label}::{index}",
+            "name": label,
+            "value": [metric_value, share_of_total, 1],
+            "metricValue": metric_value,
+            "shareOfTotal": share_of_total,
+            "shareOfParent": share_of_parent,
+            "itemCount": 1,
+            "groupName": group_name,
+            "metricLabel": y_key,
+            "rawFields": field_payload(row),
+        }
+
+    row_values = [max(float(_coerce_chart_number(row.get(y_key, 1))), 0) for row in rows]
+    grand_total = sum(row_values) or 1
+
+    groups: dict[str, list[tuple[int, dict[str, Any], float]]] = {}
+    for index, row in enumerate(rows):
+        group = str(row.get(x_key) or "other")
+        groups.setdefault(group, []).append((index, row, row_values[index] if index < len(row_values) else 0))
 
     tree_data: list[dict[str, Any]]
     if len(groups) <= 1 and not name_key:
-        tree_data = [{"name": str(r.get(x_key, f"item-{i+1}")), "value": r.get(y_key, 1)} for i, r in enumerate(rows)]
+        only_group = next(iter(groups.values()), [])
+        parent_total = sum(value for _, _, value in only_group) or grand_total
+        tree_data = [
+            leaf_node(
+                row=row,
+                index=index,
+                group_name=None,
+                parent_total=parent_total,
+                total_value=grand_total,
+            )
+            for index, row, _ in sorted(only_group, key=lambda item: item[2], reverse=True)
+        ]
     else:
-        tree_data = [{"name": g, "children": children} for g, children in groups.items()]
+        tree_data = []
+        for group_name, group_rows in sorted(
+            groups.items(),
+            key=lambda item: sum(row_value for _, _, row_value in item[1]),
+            reverse=True,
+        ):
+            group_total = sum(row_value for _, _, row_value in group_rows)
+            children = [
+                leaf_node(
+                    row=row,
+                    index=index,
+                    group_name=group_name,
+                    parent_total=group_total,
+                    total_value=grand_total,
+                )
+                for index, row, _ in sorted(group_rows, key=lambda item: item[2], reverse=True)
+            ]
+            tree_data.append(
+                {
+                    "id": f"group::{group_name}",
+                    "name": group_name,
+                    "value": [group_total, (group_total / grand_total * 100) if grand_total > 0 else 0, len(children)],
+                    "metricValue": group_total,
+                    "shareOfTotal": (group_total / grand_total * 100) if grand_total > 0 else 0,
+                    "shareOfParent": (group_total / grand_total * 100) if grand_total > 0 else 0,
+                    "itemCount": len(children),
+                    "metricLabel": y_key,
+                    "children": children,
+                }
+            )
 
     return {
-        "tooltip": {"trigger": "item"},
-        "series": [{
-            "type": "treemap",
-            "data": tree_data,
-            "label": {"show": True, "formatter": "{b}"},
-            "upperLabel": {"show": True, "height": 30},
-            "breadcrumb": {"show": True},
-            "levels": [
-                {"itemStyle": {"borderColor": "#555", "borderWidth": 4, "gapWidth": 4}},
-                {"colorSaturation": [0.3, 0.6], "itemStyle": {"borderColorSaturation": 0.7, "gapWidth": 2, "borderWidth": 2}},
-            ],
-        }],
+        "__cognitrixRichTreemap": True,
+        "title": {"text": title, "left": "center", "top": 4, "textStyle": {"fontSize": 14, "fontWeight": 600}},
+        "tooltip": {"trigger": "item", "confine": True},
+        "series": [
+            {
+                "__cognitrixRichTreemap": True,
+                "name": title,
+                "type": "treemap",
+                "top": 44,
+                "left": 4,
+                "right": 4,
+                "bottom": 8,
+                "data": tree_data,
+                "visualDimension": 0,
+                "colorMappingBy": "id",
+                "visibleMin": 24,
+                "nodeClick": "zoomToNode",
+                "roam": False,
+                "label": {
+                    "show": True,
+                    "position": "insideTopLeft",
+                    "minMargin": 4,
+                    "overflow": "truncate",
+                    "rich": {
+                        "name": {"fontSize": 12, "fontWeight": 600, "lineHeight": 18, "color": "#ffffff"},
+                        "metric": {"fontSize": 18, "fontWeight": 700, "lineHeight": 24, "color": "#fff7cc"},
+                        "share": {"fontSize": 12, "lineHeight": 18, "color": "#ffffff"},
+                        "count": {"fontSize": 11, "lineHeight": 16, "color": "rgba(255,255,255,0.86)"},
+                        "label": {
+                            "fontSize": 9,
+                            "lineHeight": 16,
+                            "color": "#ffffff",
+                            "backgroundColor": "rgba(0,0,0,0.28)",
+                            "borderRadius": 2,
+                            "padding": [1, 4],
+                        },
+                        "hr": {
+                            "width": "100%",
+                            "borderColor": "rgba(255,255,255,0.22)",
+                            "borderWidth": 0.5,
+                            "height": 0,
+                            "lineHeight": 8,
+                        },
+                    },
+                },
+                "upperLabel": {
+                    "show": True,
+                    "height": 26,
+                    "color": "#ffffff",
+                    "fontSize": 12,
+                    "fontWeight": 600,
+                    "backgroundColor": "rgba(0,0,0,0.22)",
+                },
+                "itemStyle": {"borderColor": "#101010", "borderWidth": 1},
+                "breadcrumb": {
+                    "show": True,
+                    "bottom": 0,
+                    "height": 20,
+                    "itemStyle": {"color": "rgba(255,255,255,0.92)", "borderColor": "rgba(0,0,0,0.12)"},
+                    "emphasis": {"itemStyle": {"color": "#fff7cc"}},
+                },
+                "color": ["#3f6f76", "#b85f48", "#7d6aa8", "#8a9b4f", "#d08a3f", "#4f7fb8", "#a85d73", "#5f8f67"],
+                "levels": [
+                    {"itemStyle": {"borderColor": "#111111", "borderWidth": 3, "gapWidth": 3}},
+                    {
+                        "colorSaturation": [0.35, 0.72],
+                        "upperLabel": {"show": True},
+                        "itemStyle": {"borderColor": "#f7f4ef", "borderWidth": 2, "gapWidth": 2},
+                    },
+                    {
+                        "colorSaturation": [0.45, 0.9],
+                        "itemStyle": {"borderColor": "rgba(255,255,255,0.72)", "borderWidth": 1, "gapWidth": 1},
+                    },
+                ],
+            }
+        ],
     }
 
 

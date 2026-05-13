@@ -7,6 +7,7 @@ import { validateChartSpec } from "@/types/chart";
 import { ensureChinaMap, normaliseProvinceName } from "@/lib/genui/geo-loader";
 import { useI18n } from "@/lib/i18n/context";
 import { isRecord } from "@/lib/utils";
+import { enhanceRichTreemapOption } from "@/lib/charts/treemap-option";
 
 type ChartPreviewProps = {
   spec: ChartSpec;
@@ -30,7 +31,7 @@ export function ChartPreview({ spec, height = 320, className }: ChartPreviewProp
 }
 
 function EchartsChartPreview({ spec, height = 320, className }: ChartPreviewProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const chartRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
   const [geoReady, setGeoReady] = useState(true);
@@ -44,14 +45,15 @@ function EchartsChartPreview({ spec, height = 320, className }: ChartPreviewProp
     const baseOption = requiresChinaMap
       ? normaliseMapOption(spec.echartsOption)
       : spec.echartsOption;
+    const enhancedOption = enhanceRichTreemapOption(baseOption, locale);
     return {
       ...WARM_THEME,
-      ...baseOption,
+      ...enhancedOption,
       animation: true,
       animationDuration: 600,
       animationEasing: "cubicInOut" as const,
     };
-  }, [spec.echartsOption, requiresChinaMap, validation.valid]);
+  }, [locale, spec.echartsOption, requiresChinaMap, validation.valid]);
 
   useEffect(() => {
     if (!requiresChinaMap) {

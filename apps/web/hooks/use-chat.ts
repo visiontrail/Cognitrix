@@ -27,6 +27,7 @@ import {
 } from "@/lib/ingestion/api";
 import type { IngestionSSEEvent } from "@/lib/ingestion/api";
 import type { QueryChartType } from "@/lib/charts/chart-type-options";
+import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { generateId, isRecord } from "@/lib/utils";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 import type { ChatMessage, ChatSession } from "@/types/chat";
@@ -1689,20 +1690,8 @@ function resolveEchartsOption(rawSpec: Record<string, unknown>): Record<string, 
   }
 
   if (chartType === "treemap") {
-    return withRawRows({
-      title: { text: title, left: "center" },
-      series: [
-        {
-          type: "treemap",
-          roam: false,
-          nodeClick: false,
-          data: rows.map((row, index) => ({
-            name: String(row[xKey] ?? `item-${index + 1}`),
-            value: asNumber(row[yKey]),
-          })),
-        },
-      ],
-    });
+    const nameKey = typeof config.nameKey === "string" ? config.nameKey : null;
+    return withRawRows(buildRichTreemapFallbackOption({ rows, title, xKey, yKey, nameKey }));
   }
 
   if (chartType === "funnel") {

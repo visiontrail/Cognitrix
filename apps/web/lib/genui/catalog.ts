@@ -19,6 +19,7 @@ export const GENUI_CATALOG = {
   ],
   echarts: [
     "bar",
+    "negative_bar",
     "grouped_bar",
     "line",
     "stacked_line",

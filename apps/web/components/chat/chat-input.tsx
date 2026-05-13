@@ -839,6 +839,34 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     );
   }
 
+  if (type === "negative_bar") {
+    const zeroX = 160;
+    const rows = [
+      { y: 50, value: -58 },
+      { y: 72, value: 76 },
+      { y: 94, value: -36 },
+      { y: 116, value: 92 },
+      { y: 138, value: -64 },
+    ];
+    const scale = 1.05;
+    return (
+      <>
+        <line x1="42" y1="32" x2="286" y2="32" stroke="#d9d3c4" strokeWidth="2" />
+        <line x1={zeroX} y1="36" x2={zeroX} y2="148" stroke="#bdb5a6" strokeWidth="2" strokeDasharray="4 4" />
+        {rows.map(({ y, value }, index) => {
+          const width = Math.abs(value) * scale;
+          const x = value < 0 ? zeroX - width : zeroX;
+          return (
+            <g key={index}>
+              <rect x={x} y={y - 8} width={width} height="16" rx="3" fill={value < 0 ? "#c96442" : "#4b7f8c"} />
+              <line x1="42" y1={y} x2="286" y2={y} stroke="#efe9dc" strokeWidth="1" strokeDasharray="3 4" />
+            </g>
+          );
+        })}
+      </>
+    );
+  }
+
   if (type === "bar" || type === "grouped_bar" || type === "stacked_bar") {
     const bars = [
       [58, 86],

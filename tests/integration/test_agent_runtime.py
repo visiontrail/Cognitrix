@@ -742,6 +742,77 @@ def test_agent_runtime_builds_grouped_bar_echarts_spec(monkeypatch, tmp_path: Pa
     assert option["series"][1]["data"] == [10, 7]
 
 
+def test_agent_runtime_builds_negative_bar_echarts_spec(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"department": "HR", "delta": -3},
+                {"department": "PM", "delta": 5},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        rows = [
+            {"department": "HR", "metric_value": -3},
+            {"department": "PM", "metric_value": 5},
+        ]
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [
+                    _sql_tool_call(
+                        rows,
+                        'SELECT "department", "metric_value" FROM dataset',
+                    )
+                ],
+                "final_answer": {
+                    "chart_type": "negative_bar",
+                    "title": "部门人数净变化",
+                    "x_key": "department",
+                    "y_key": "metric_value",
+                    "series_key": None,
+                    "metric_name": "headcount_delta",
+                    "rows": rows,
+                    "conclusion": "HR 减少，PM 增加。",
+                    "scope": "按部门统计净变化",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-negative-bar",
+                request_id="agent-runtime-req-negative-bar",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请用负数柱状图看部门人数净变化",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                preferred_chart_type="negative_bar",
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["engine"] == "echarts"
+    assert result.spec["chart_type"] == "negative_bar"
+    option = result.spec["config"]["option"]
+    assert option["xAxis"]["type"] == "value"
+    assert option["xAxis"]["position"] == "top"
+    assert option["xAxis"]["splitLine"]["lineStyle"]["type"] == "dashed"
+    assert option["yAxis"]["type"] == "category"
+    assert option["yAxis"]["axisLabel"]["show"] is False
+    assert option["series"][0]["type"] == "bar"
+    assert option["series"][0]["label"]["formatter"] == "{b}"
+    assert option["series"][0]["data"][0]["value"] == -3
+    assert option["series"][0]["data"][0]["label"]["position"] == "right"
+    assert option["series"][0]["data"][1]["value"] == 5
+
+
 def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -139,6 +139,7 @@ function EchartsChartPreview({ spec, height = 320, className }: ChartPreviewProp
 
   return (
     <div
+      data-testid="echarts-chart"
       ref={chartRef}
       className={className}
       style={{ width: "100%", height }}

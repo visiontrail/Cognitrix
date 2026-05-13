@@ -46,6 +46,13 @@ class ChartStrategyRouter:
         "graph",
         "关系图",
         "网络图",
+        "negative",
+        "负数",
+        "正负",
+        "盈亏",
+        "差异",
+        "变化量",
+        "净变化",
     )
 
     def route(
@@ -56,8 +63,16 @@ class ChartStrategyRouter:
         group_by: list[str],
     ) -> ChartRouteDecision:
         score, reasons = self._score_complexity(intent=intent, rows=rows, group_by=group_by)
-        engine = "echarts" if score >= self.COMPLEXITY_THRESHOLD else "recharts"
-        chart_type = self._pick_chart_type(engine=engine, rows=rows, group_by=group_by)
+        has_negative_value = self._has_negative_metric(rows)
+        engine = "echarts" if score >= self.COMPLEXITY_THRESHOLD or has_negative_value else "recharts"
+        chart_type = self._pick_chart_type(
+            engine=engine,
+            rows=rows,
+            group_by=group_by,
+            has_negative_value=has_negative_value,
+        )
+        if has_negative_value:
+            reasons.append("negative_metric_value")
         reasons.append(
             f"complexity_score={score}, threshold={self.COMPLEXITY_THRESHOLD}, selected_engine={engine}"
         )
@@ -102,6 +117,10 @@ class ChartStrategyRouter:
 
         categories = [str(item.get(x_key, f"item-{index + 1}")) for index, item in enumerate(normalized_rows)]
         values = [item.get("metric_value", 0) for item in normalized_rows]
+        if decision.chart_type == "negative_bar":
+            base["config"] = {"option": self._negative_bar_option(categories=categories, values=values, metric=metric)}
+            return base
+
         option = {
             "tooltip": {"trigger": "axis"},
             "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
@@ -160,7 +179,16 @@ class ChartStrategyRouter:
 
         return score, reasons
 
-    def _pick_chart_type(self, *, engine: str, rows: list[dict[str, Any]], group_by: list[str]) -> str:
+    def _pick_chart_type(
+        self,
+        *,
+        engine: str,
+        rows: list[dict[str, Any]],
+        group_by: list[str],
+        has_negative_value: bool = False,
+    ) -> str:
+        if has_negative_value and group_by:
+            return "negative_bar"
         if engine == "echarts":
             return "line" if len(rows) > 10 else "bar"
         if not group_by:
@@ -188,3 +216,56 @@ class ChartStrategyRouter:
         # Ensure frontend can always render an empty state without null checks.
         return [], (group_by[0] if group_by else "label")
 
+    def _has_negative_metric(self, rows: list[dict[str, Any]]) -> bool:
+        for row in rows:
+            value = row.get("metric_value")
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)) and value < 0:
+                return True
+        return False
+
+    def _negative_bar_option(
+        self,
+        *,
+        categories: list[str],
+        values: list[Any],
+        metric: str,
+    ) -> dict[str, Any]:
+        data = []
+        for value in values:
+            numeric = value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+            item: dict[str, Any] = {
+                "value": numeric,
+                "itemStyle": {"color": "#c96442" if numeric < 0 else "#4b7f8c"},
+            }
+            if numeric < 0:
+                item["label"] = {"position": "right"}
+            data.append(item)
+
+        return {
+            "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+            "grid": {"top": 36, "left": "3%", "right": "4%", "bottom": 20, "containLabel": True},
+            "xAxis": {
+                "type": "value",
+                "position": "top",
+                "splitLine": {"lineStyle": {"type": "dashed"}},
+            },
+            "yAxis": {
+                "type": "category",
+                "axisLine": {"show": False},
+                "axisLabel": {"show": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": False},
+                "data": categories,
+            },
+            "series": [
+                {
+                    "name": metric,
+                    "type": "bar",
+                    "stack": "Total",
+                    "label": {"show": True, "formatter": "{b}"},
+                    "data": data,
+                }
+            ],
+        }

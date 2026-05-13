@@ -58,6 +58,8 @@ def build_agent_system_prompt() -> str:
         "\n"
         "**Basic comparison & distribution:**\n"
         "- `bar` — compare categorical values side-by-side.\n"
+        "- `negative_bar` — horizontal bar chart optimized for positive/negative values around a zero axis; "
+        "use for profit/loss, delta, variance, net change, or any metric that can be below zero.\n"
         "- `grouped_bar` — horizontal grouped bar chart for comparing multiple series at the same category; "
         "set x_key to the category column, y_key to the numeric metric, and series_key to the comparison dimension.\n"
         "- `stacked_bar` — stacked bar chart; set series_key for the stacking dimension.\n"

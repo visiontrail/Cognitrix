@@ -49,6 +49,7 @@ function mapLegacySpec(spec: LegacyGenUISpec): ChartSpec | null {
 
 const SUPPORTED_CHART_TYPES = new Set<KnownChartType>([
   "bar",
+  "negative_bar",
   "grouped_bar",
   "line",
   "pie",
@@ -90,6 +91,14 @@ const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
   "horizontal-bar": "grouped_bar",
   "horizontal_grouped_bar": "grouped_bar",
   "horizontal-grouped-bar": "grouped_bar",
+  "negativebar": "negative_bar",
+  "negative-bar": "negative_bar",
+  "bar-negative": "negative_bar",
+  "bar_negative": "negative_bar",
+  "bar-negative2": "negative_bar",
+  "bar_negative2": "negative_bar",
+  "positive_negative_bar": "negative_bar",
+  "positive-negative-bar": "negative_bar",
   "stackedline": "stacked_line",
   "stacked-line": "stacked_line",
   "singlevalue": "single_value",
@@ -101,6 +110,7 @@ const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
 };
 const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "bar",
+  "negative_bar",
   "grouped_bar",
   "line",
   "pie",
@@ -178,6 +188,40 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
 
   const categories = rows.map((row, index) => String(row[xKey] ?? `item-${index + 1}`));
   const values = rows.map((row) => asNumber(row[yKey]));
+
+  if (chartType === "negative_bar") {
+    return {
+      title: { text: title, left: "center" },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      grid: { top: 60, left: "3%", right: "4%", bottom: 20, containLabel: true },
+      xAxis: {
+        type: "value",
+        position: "top",
+        splitLine: { lineStyle: { type: "dashed" } },
+      },
+      yAxis: {
+        type: "category",
+        axisLine: { show: false },
+        axisLabel: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        data: categories,
+      },
+      series: [
+        {
+          name: configuredYKey ?? yKey,
+          type: "bar",
+          stack: "Total",
+          label: { show: true, formatter: "{b}" },
+          data: values.map((value) => ({
+            value,
+            itemStyle: { color: value < 0 ? "#c96442" : "#4b7f8c" },
+            ...(value < 0 ? { label: { position: "right" } } : {}),
+          })),
+        },
+      ],
+    };
+  }
 
   if (chartType === "treemap") {
     return {

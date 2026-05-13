@@ -239,6 +239,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": [
                 "bar",
+                "negative_bar",
                 "grouped_bar",
                 "line",
                 "pie",
@@ -1514,7 +1515,7 @@ class AgentRuntime:
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "grouped_bar", "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
+        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -1564,7 +1565,7 @@ class AgentRuntime:
             )
             # Normalise echarts chart_type to a valid catalog value
             echarts_catalog = {
-                "bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
+                "bar", "negative_bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
                 "radar", "funnel", "gauge", "sankey", "sunburst",
                 "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud", "table",
             }
@@ -1610,6 +1611,14 @@ class AgentRuntime:
             "horizontal-bar": "grouped_bar",
             "horizontal_grouped_bar": "grouped_bar",
             "horizontal-grouped-bar": "grouped_bar",
+            "negativebar": "negative_bar",
+            "negative-bar": "negative_bar",
+            "bar-negative": "negative_bar",
+            "bar_negative": "negative_bar",
+            "bar-negative2": "negative_bar",
+            "bar_negative2": "negative_bar",
+            "positive_negative_bar": "negative_bar",
+            "positive-negative-bar": "negative_bar",
         }
         aliased = aliases.get(chart_type.lower())
         if aliased:
@@ -2397,6 +2406,10 @@ def _build_echarts_option(
         return _echarts_scatter_option(rows=rows, x_key=x_key, y_key=y_key)
 
     # Default: category axis bar/line/grouped_bar/stacked_bar/stacked_line/area
+    if chart_type == "negative_bar":
+        return _echarts_negative_bar_option(
+            rows=rows, x_key=x_key, y_key=y_key, metric_name=metric_name,
+        )
     if chart_type == "grouped_bar":
         return _echarts_grouped_bar_option(
             rows=rows, x_key=x_key, y_key=y_key,
@@ -2419,6 +2432,73 @@ def _build_echarts_option(
         series_key=series_key, series_type=chart_type if chart_type in {"line", "bar", "area"} else "bar",
         metric_name=metric_name,
     )
+
+
+def _echarts_negative_bar_option(
+    *,
+    rows: list[dict[str, Any]],
+    x_key: str,
+    y_key: str,
+    metric_name: str,
+) -> dict[str, Any]:
+    categories: list[str] = []
+    data: list[dict[str, Any]] = []
+    label_right = {"position": "right"}
+
+    for index, row in enumerate(rows):
+        categories.append(str(row.get(x_key, f"item-{index + 1}")))
+        raw_value = row.get(y_key, 0)
+        value = _coerce_chart_number(raw_value)
+        item: dict[str, Any] = {
+            "value": value,
+            "itemStyle": {"color": "#c96442" if value < 0 else "#4b7f8c"},
+        }
+        if value < 0:
+            item["label"] = label_right
+        data.append(item)
+
+    return {
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "grid": {"top": 36, "left": "3%", "right": "4%", "bottom": 20, "containLabel": True},
+        "xAxis": {
+            "type": "value",
+            "position": "top",
+            "splitLine": {"lineStyle": {"type": "dashed"}},
+        },
+        "yAxis": {
+            "type": "category",
+            "axisLine": {"show": False},
+            "axisLabel": {"show": False},
+            "axisTick": {"show": False},
+            "splitLine": {"show": False},
+            "data": categories,
+        },
+        "series": [
+            {
+                "name": metric_name,
+                "type": "bar",
+                "stack": "Total",
+                "label": {"show": True, "formatter": "{b}"},
+                "data": data,
+            }
+        ],
+    }
+
+
+def _coerce_chart_number(value: Any) -> float | int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if value == value else 0
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return 0
+        return parsed if parsed == parsed else 0
+    return 0
 
 
 def _echarts_grouped_bar_option(

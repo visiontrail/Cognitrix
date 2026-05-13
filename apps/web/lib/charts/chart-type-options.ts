@@ -4,6 +4,7 @@ import type { Locale } from "@/lib/i18n/dictionary";
 export type QueryChartType = Extract<
   KnownChartType,
   | "bar"
+  | "negative_bar"
   | "grouped_bar"
   | "stacked_bar"
   | "stacked_line"
@@ -49,6 +50,15 @@ const QUERY_CHART_TYPE_DEFINITIONS: ChartTypeOptionDefinition[] = [
     type: "bar",
     label: { "en-US": "Bar", "zh-CN": "柱状图" },
     description: { "en-US": "Compare categorical values.", "zh-CN": "比较不同类别的数值。" },
+    group: { "en-US": "Comparison", "zh-CN": "比较" },
+  },
+  {
+    type: "negative_bar",
+    label: { "en-US": "Negative bar", "zh-CN": "负数柱状图" },
+    description: {
+      "en-US": "Compare positive and negative values around zero.",
+      "zh-CN": "围绕零轴比较正负数值。",
+    },
     group: { "en-US": "Comparison", "zh-CN": "比较" },
   },
   {

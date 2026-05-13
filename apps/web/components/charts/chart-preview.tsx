@@ -19,6 +19,8 @@ const WARM_THEME = {
   textStyle: { fontFamily: "Inter, system-ui, sans-serif", color: "#4d4c48" },
 };
 
+let echartsStatClusteringRegistered = false;
+
 export function ChartPreview({ spec, height = 320, className }: ChartPreviewProps) {
   if (spec.chartType === "table" || spec.echartsOption.__table__ === true) {
     return <TableView spec={spec} height={height} className={className} />;
@@ -83,7 +85,10 @@ function EchartsChartPreview({ spec, height = 320, className }: ChartPreviewProp
 
     let cancelled = false;
 
-    import("echarts-wordcloud").then(() => {
+    Promise.all([
+      import("echarts-wordcloud"),
+      ensureEchartsStatTransforms(option),
+    ]).then(() => {
       if (cancelled || !chartRef.current) return;
 
       const instance = echarts.init(chartRef.current, undefined, { renderer: "canvas" });
@@ -101,6 +106,8 @@ function EchartsChartPreview({ spec, height = 320, className }: ChartPreviewProp
         instance.resize();
       });
       observer.observe(chartRef.current);
+    }).catch(() => {
+      // Keep the existing compact failure behavior: invalid extension setup leaves the chart blank.
     });
 
     return () => {
@@ -255,4 +262,46 @@ function normaliseMapOption(option: Record<string, unknown>): Record<string, unk
   });
 
   return { ...option, series: nextSeries };
+}
+
+async function ensureEchartsStatTransforms(option: Record<string, unknown>): Promise<void> {
+  if (!requiresEchartsStatClustering(option) || echartsStatClusteringRegistered) {
+    return;
+  }
+
+  const ecStatModule = await import("echarts-stat");
+  const ecStat = ("default" in ecStatModule ? ecStatModule.default : ecStatModule) as {
+    transform?: { clustering?: unknown };
+  };
+  const clusteringTransform = ecStat.transform?.clustering;
+  if (clusteringTransform) {
+    echarts.registerTransform(clusteringTransform as Parameters<typeof echarts.registerTransform>[0]);
+    echartsStatClusteringRegistered = true;
+  }
+}
+
+function requiresEchartsStatClustering(option: Record<string, unknown>): boolean {
+  const marker = option.__requiresEchartsStat__;
+  if (isRecord(marker) && Array.isArray(marker.transforms) && marker.transforms.includes("clustering")) {
+    return true;
+  }
+
+  return hasClusteringTransform(option.dataset);
+}
+
+function hasClusteringTransform(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(hasClusteringTransform);
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  const transform = value.transform;
+  if (transform === "ecStat:clustering") {
+    return true;
+  }
+  if (isRecord(transform) && transform.type === "ecStat:clustering") {
+    return true;
+  }
+  return false;
 }

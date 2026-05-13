@@ -908,7 +908,10 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     );
   }
 
-  if (type === "scatter") {
+  if (type === "scatter" || type === "scatter_clustering") {
+    const colors = type === "scatter_clustering"
+      ? ["#37A2DA", "#e06343", "#37a354"]
+      : ["#4b7f8c"];
     return (
       <>
         {axis}
@@ -921,8 +924,8 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
           [202, 56],
           [232, 68],
           [258, 44],
-        ].map(([x, y]) => (
-          <circle key={`${x}-${y}`} cx={x} cy={y} r="7" fill="#4b7f8c" opacity="0.86" />
+        ].map(([x, y], index) => (
+          <circle key={`${x}-${y}`} cx={x} cy={y} r="7" fill={colors[index % colors.length]} opacity="0.86" />
         ))}
       </>
     );

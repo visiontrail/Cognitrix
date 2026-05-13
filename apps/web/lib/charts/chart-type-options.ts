@@ -11,6 +11,7 @@ export type QueryChartType = Extract<
   | "line"
   | "area"
   | "scatter"
+  | "scatter_clustering"
   | "pie"
   | "funnel"
   | "radar"
@@ -98,6 +99,15 @@ const QUERY_CHART_TYPE_DEFINITIONS: ChartTypeOptionDefinition[] = [
     type: "scatter",
     label: { "en-US": "Scatter", "zh-CN": "散点图" },
     description: { "en-US": "Show correlation between numeric fields.", "zh-CN": "展示数值字段之间的相关性。" },
+    group: { "en-US": "Distribution", "zh-CN": "分布" },
+  },
+  {
+    type: "scatter_clustering",
+    label: { "en-US": "Scatter clustering", "zh-CN": "聚类散点图" },
+    description: {
+      "en-US": "Cluster two numeric fields into colored point groups.",
+      "zh-CN": "将两个数值字段聚类为不同颜色的点群。",
+    },
     group: { "en-US": "Distribution", "zh-CN": "分布" },
   },
   {

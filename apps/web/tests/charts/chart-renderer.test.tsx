@@ -4,11 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChartRenderer } from "../../components/genui/chart-renderer";
 
-const setOptionMock = vi.fn();
-const disposeMock = vi.fn();
-const resizeMock = vi.fn();
+const { setOptionMock, disposeMock, resizeMock, registerTransformMock } = vi.hoisted(() => ({
+  setOptionMock: vi.fn(),
+  disposeMock: vi.fn(),
+  resizeMock: vi.fn(),
+  registerTransformMock: vi.fn(),
+}));
 
 vi.mock("echarts", () => ({
+  registerTransform: registerTransformMock,
   init: vi.fn(() => ({
     setOption: setOptionMock,
     dispose: disposeMock,
@@ -23,6 +27,7 @@ describe("ChartRenderer", () => {
     setOptionMock.mockClear();
     disposeMock.mockClear();
     resizeMock.mockClear();
+    registerTransformMock.mockClear();
   });
 
   it("builds fallback bar/line/pie options", async () => {
@@ -133,5 +138,41 @@ describe("ChartRenderer", () => {
     const data = series[0].data as Array<Record<string, unknown>>;
     expect(data[0]).toMatchObject({ value: -2, label: { position: "right" } });
     expect(data[1]).toMatchObject({ value: 3 });
+  });
+
+  it("builds and registers a scatter clustering option", async () => {
+    render(
+      <ChartRenderer
+        spec={{
+          engine: "echarts",
+          chart_type: "scatter-clustering",
+          title: "Clusters",
+          data: [
+            { employee: "A", tenure: 1, salary: 10 },
+            { employee: "B", tenure: 2, salary: 12 },
+            { employee: "C", tenure: 8, salary: 30 },
+            { employee: "D", tenure: 9, salary: 32 }
+          ],
+          config: { xKey: "tenure", yKey: "salary", nameKey: "employee" }
+        }}
+      />
+    );
+
+    expect(screen.getByTestId("echarts-chart")).toBeInTheDocument();
+    await waitFor(() => expect(setOptionMock).toHaveBeenCalled());
+    expect(registerTransformMock).toHaveBeenCalled();
+    const option = setOptionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(option.__requiresEchartsStat__).toEqual({ transforms: ["clustering"] });
+    const dataset = option.dataset as Array<Record<string, unknown>>;
+    expect(dataset[1].transform).toMatchObject({
+      type: "ecStat:clustering",
+      config: {
+        dimensions: [0, 1],
+        outputClusterIndexDimension: { index: 3, name: "cluster" }
+      }
+    });
+    expect(option.visualMap).toMatchObject({ type: "piecewise", dimension: 3 });
+    const series = option.series as Array<Record<string, unknown>>;
+    expect(series[0]).toMatchObject({ type: "scatter", datasetIndex: 1 });
   });
 });

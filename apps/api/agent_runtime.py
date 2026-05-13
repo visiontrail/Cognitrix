@@ -247,6 +247,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
                 "stacked_bar",
                 "stacked_line",
                 "scatter",
+                "scatter_clustering",
                 "radar",
                 "treemap",
                 "funnel",
@@ -274,7 +275,8 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
             "type": ["string", "null"],
             "description": (
                 "Label column name shown inside each element "
-                "(e.g. employee name in treemap boxes). Only used for treemap/graph."
+                "(e.g. employee name in treemap boxes or scatter clusters). "
+                "Only used for treemap/graph/scatter_clustering."
             ),
         },
         "series_key": {
@@ -1515,7 +1517,7 @@ class AgentRuntime:
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "treemap", "heatmap", "gauge", "sankey", "sunburst",
+        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "scatter_clustering", "treemap", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -1565,7 +1567,7 @@ class AgentRuntime:
             )
             # Normalise echarts chart_type to a valid catalog value
             echarts_catalog = {
-                "bar", "negative_bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "treemap", "heatmap",
+                "bar", "negative_bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "scatter_clustering", "treemap", "heatmap",
                 "radar", "funnel", "gauge", "sankey", "sunburst",
                 "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud", "table",
             }
@@ -1619,6 +1621,12 @@ class AgentRuntime:
             "bar_negative2": "negative_bar",
             "positive_negative_bar": "negative_bar",
             "positive-negative-bar": "negative_bar",
+            "scatterclustering": "scatter_clustering",
+            "scatter-clustering": "scatter_clustering",
+            "scatter_cluster": "scatter_clustering",
+            "scatter-cluster": "scatter_clustering",
+            "clustered_scatter": "scatter_clustering",
+            "clustered-scatter": "scatter_clustering",
         }
         aliased = aliases.get(chart_type.lower())
         if aliased:
@@ -2404,6 +2412,14 @@ def _build_echarts_option(
         return _echarts_pie_option(rows=rows, x_key=x_key, y_key=y_key)
     if chart_type == "scatter":
         return _echarts_scatter_option(rows=rows, x_key=x_key, y_key=y_key)
+    if chart_type == "scatter_clustering":
+        return _echarts_scatter_clustering_option(
+            rows=rows,
+            x_key=x_key,
+            y_key=y_key,
+            name_key=name_key,
+            title=title,
+        )
 
     # Default: category axis bar/line/grouped_bar/stacked_bar/stacked_line/area
     if chart_type == "negative_bar":
@@ -2864,6 +2880,83 @@ def _echarts_scatter_option(
         "xAxis": {"type": "value", "name": x_key},
         "yAxis": {"type": "value", "name": y_key},
         "series": [{"type": "scatter", "data": data, "symbolSize": 10}],
+    }
+
+
+def _echarts_scatter_clustering_option(
+    *,
+    rows: list[dict[str, Any]],
+    x_key: str,
+    y_key: str,
+    name_key: str | None,
+    title: str,
+) -> dict[str, Any]:
+    points: list[list[Any]] = []
+    for index, row in enumerate(rows):
+        points.append([
+            _coerce_chart_number(row.get(x_key, 0)),
+            _coerce_chart_number(row.get(y_key, 0)),
+            str(row.get(name_key, f"item-{index + 1}")) if name_key else f"item-{index + 1}",
+        ])
+
+    if len(points) < 2:
+        return _echarts_scatter_option(rows=rows, x_key=x_key, y_key=y_key)
+
+    cluster_count = min(6, max(2, round(len(points) ** 0.5)))
+    cluster_dimension = 3
+    colors = ["#37A2DA", "#e06343", "#37a354", "#b55dba", "#b5bd48", "#8378EA"]
+    pieces = [
+        {"value": index, "label": f"cluster {index}", "color": colors[index % len(colors)]}
+        for index in range(cluster_count)
+    ]
+
+    return {
+        "__requiresEchartsStat__": {"transforms": ["clustering"]},
+        "title": {"text": title, "left": "center"},
+        "dataset": [
+            {
+                "dimensions": [x_key, y_key, "label"],
+                "source": points,
+            },
+            {
+                "transform": {
+                    "type": "ecStat:clustering",
+                    "config": {
+                        "clusterCount": cluster_count,
+                        "dimensions": [0, 1],
+                        "outputType": "single",
+                        "outputClusterIndexDimension": {"index": cluster_dimension, "name": "cluster"},
+                        "outputCentroidDimensions": [
+                            {"index": 4, "name": "centroid_x"},
+                            {"index": 5, "name": "centroid_y"},
+                        ],
+                    },
+                },
+            },
+        ],
+        "tooltip": {"position": "top"},
+        "visualMap": {
+            "type": "piecewise",
+            "top": "middle",
+            "min": 0,
+            "max": cluster_count,
+            "left": 10,
+            "splitNumber": cluster_count,
+            "dimension": cluster_dimension,
+            "pieces": pieces,
+        },
+        "grid": {"left": 120, "right": 24, "top": 56, "bottom": 40},
+        "xAxis": {"type": "value", "name": x_key},
+        "yAxis": {"type": "value", "name": y_key},
+        "series": [
+            {
+                "type": "scatter",
+                "datasetIndex": 1,
+                "encode": {"x": 0, "y": 1, "tooltip": [2, 0, 1, cluster_dimension], "itemName": 2},
+                "symbolSize": 15,
+                "itemStyle": {"borderColor": "#555"},
+            }
+        ],
     }
 
 

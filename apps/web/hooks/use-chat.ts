@@ -320,7 +320,9 @@ const SUPPORTED_CHART_TYPES = new Set<KnownChartType>([
   "pie",
   "area",
   "stacked_bar",
+  "stacked_line",
   "scatter",
+  "scatter_clustering",
   "radar",
   "funnel",
   "radialBar",
@@ -363,6 +365,14 @@ const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
   "bar_negative2": "negative_bar",
   "positive_negative_bar": "negative_bar",
   "positive-negative-bar": "negative_bar",
+  "scatterclustering": "scatter_clustering",
+  "scatter-clustering": "scatter_clustering",
+  "scatter_cluster": "scatter_clustering",
+  "scatter-cluster": "scatter_clustering",
+  "clustered_scatter": "scatter_clustering",
+  "clustered-scatter": "scatter_clustering",
+  "stackedline": "stacked_line",
+  "stacked-line": "stacked_line",
   "singlevalue": "single_value",
   "single-value": "single_value",
   "radialbar": "radialBar",
@@ -378,7 +388,9 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "pie",
   "area",
   "stacked_bar",
+  "stacked_line",
   "scatter",
+  "scatter_clustering",
   "radar",
   "funnel",
   "treemap",
@@ -1767,6 +1779,16 @@ function resolveEchartsOption(rawSpec: Record<string, unknown>): Record<string, 
     });
   }
 
+  if (chartType === "scatter_clustering") {
+    return withRawRows(buildScatterClusteringOption({
+      rows,
+      xKey,
+      yKey,
+      title,
+      labelKey: typeof config.nameKey === "string" ? config.nameKey : null,
+    }));
+  }
+
   if (chartType === "grouped_bar" || chartType === "stacked_bar") {
     const seriesKey = typeof config.seriesKey === "string" ? config.seriesKey : null;
     if (!seriesKey) {
@@ -1904,4 +1926,77 @@ function asNumber(value: unknown): number {
     }
   }
   return 0;
+}
+
+function buildScatterClusteringOption({
+  rows,
+  xKey,
+  yKey,
+  title,
+  labelKey,
+}: {
+  rows: Array<Record<string, unknown>>;
+  xKey: string;
+  yKey: string;
+  title: string;
+  labelKey: string | null;
+}): Record<string, unknown> {
+  const points = rows.map((row, index) => [
+    asNumber(row[xKey]),
+    asNumber(row[yKey]),
+    labelKey ? String(row[labelKey] ?? `item-${index + 1}`) : `item-${index + 1}`,
+  ]);
+  const clusterCount = Math.min(6, Math.max(2, Math.round(Math.sqrt(Math.max(points.length, 2)))));
+  const clusterDimension = 3;
+  const colors = ["#37A2DA", "#e06343", "#37a354", "#b55dba", "#b5bd48", "#8378EA"];
+
+  return {
+    __requiresEchartsStat__: { transforms: ["clustering"] },
+    title: { text: title, left: "center" },
+    dataset: [
+      { dimensions: [xKey, yKey, "label"], source: points },
+      {
+        transform: {
+          type: "ecStat:clustering",
+          config: {
+            clusterCount,
+            dimensions: [0, 1],
+            outputType: "single",
+            outputClusterIndexDimension: { index: clusterDimension, name: "cluster" },
+            outputCentroidDimensions: [
+              { index: 4, name: "centroid_x" },
+              { index: 5, name: "centroid_y" },
+            ],
+          },
+        },
+      },
+    ],
+    tooltip: { position: "top" },
+    visualMap: {
+      type: "piecewise",
+      top: "middle",
+      min: 0,
+      max: clusterCount,
+      left: 10,
+      splitNumber: clusterCount,
+      dimension: clusterDimension,
+      pieces: Array.from({ length: clusterCount }, (_, index) => ({
+        value: index,
+        label: `cluster ${index}`,
+        color: colors[index % colors.length],
+      })),
+    },
+    grid: { left: 120, right: 24, top: 56, bottom: 40 },
+    xAxis: { type: "value", name: xKey },
+    yAxis: { type: "value", name: yKey },
+    series: [
+      {
+        type: "scatter",
+        datasetIndex: 1,
+        encode: { x: 0, y: 1, tooltip: [2, 0, 1, clusterDimension], itemName: 2 },
+        symbolSize: 15,
+        itemStyle: { borderColor: "#555" },
+      },
+    ],
+  };
 }

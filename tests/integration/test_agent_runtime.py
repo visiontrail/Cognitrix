@@ -813,6 +813,83 @@ def test_agent_runtime_builds_negative_bar_echarts_spec(monkeypatch, tmp_path: P
     assert option["series"][0]["data"][1]["value"] == 5
 
 
+def test_agent_runtime_builds_scatter_clustering_echarts_spec(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"employee": "A", "tenure": 1, "salary": 10},
+                {"employee": "B", "tenure": 2, "salary": 12},
+                {"employee": "C", "tenure": 8, "salary": 30},
+                {"employee": "D", "tenure": 9, "salary": 32},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        rows = [
+            {"employee": "A", "tenure": 1, "salary": 10},
+            {"employee": "B", "tenure": 2, "salary": 12},
+            {"employee": "C", "tenure": 8, "salary": 30},
+            {"employee": "D", "tenure": 9, "salary": 32},
+        ]
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [
+                    _sql_tool_call(
+                        rows,
+                        'SELECT "employee", "tenure", "salary" FROM dataset',
+                    )
+                ],
+                "final_answer": {
+                    "chart_type": "scatter_clustering",
+                    "title": "员工任期薪资聚类",
+                    "x_key": "tenure",
+                    "y_key": "salary",
+                    "name_key": "employee",
+                    "series_key": None,
+                    "metric_name": "salary",
+                    "rows": rows,
+                    "conclusion": "样本可按任期与薪资分成两个主要点群。",
+                    "scope": "按员工任期与薪资聚类",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-scatter-clustering",
+                request_id="agent-runtime-req-scatter-clustering",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请用 ECharts scatter-clustering 看任期和薪资的聚类",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                preferred_chart_type="scatter-clustering",
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["engine"] == "echarts"
+    assert result.spec["chart_type"] == "scatter_clustering"
+    option = result.spec["config"]["option"]
+    assert option["__requiresEchartsStat__"] == {"transforms": ["clustering"]}
+    assert option["dataset"][1]["transform"]["type"] == "ecStat:clustering"
+    assert option["dataset"][1]["transform"]["config"]["dimensions"] == [0, 1]
+    assert option["dataset"][1]["transform"]["config"]["outputClusterIndexDimension"] == {
+        "index": 3,
+        "name": "cluster",
+    }
+    assert option["visualMap"]["type"] == "piecewise"
+    assert option["visualMap"]["dimension"] == 3
+    assert option["series"][0]["type"] == "scatter"
+    assert option["series"][0]["datasetIndex"] == 1
+
+
 def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
     monkeypatch, tmp_path: Path
 ) -> None:

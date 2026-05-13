@@ -25,6 +25,7 @@ export const GENUI_CATALOG = {
     "stacked_line",
     "pie",
     "scatter",
+    "scatter_clustering",
     "treemap",
     "heatmap",
     "radar",

@@ -57,6 +57,7 @@ describe("ChatInput chart type picker", () => {
     expect(screen.getAllByText("柱状图").length).toBeGreaterThan(0);
     expect(screen.getAllByText("负数柱状图").length).toBeGreaterThan(0);
     expect(screen.getAllByText("分组条形图").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("聚类散点图").length).toBeGreaterThan(0);
     expect(screen.getAllByText("比较").length).toBeGreaterThan(0);
     expect(screen.getByText("比较不同类别的数值。")).toBeInTheDocument();
   });
@@ -72,6 +73,7 @@ describe("ChatInput chart type picker", () => {
     expect(screen.getAllByText("Bar").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Negative bar").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Grouped bar").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Scatter clustering").length).toBeGreaterThan(0);
     expect(screen.getByText("chart_type: bar")).toBeInTheDocument();
 
     await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");

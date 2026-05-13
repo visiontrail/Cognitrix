@@ -8,6 +8,7 @@ export type KnownChartType =
   | "stacked_bar"
   | "stacked_line"
   | "scatter"
+  | "scatter_clustering"
   | "radar"
   | "funnel"
   | "radialBar"

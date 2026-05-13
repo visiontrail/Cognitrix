@@ -49,6 +49,8 @@ rsync -a --exclude='.git' \
          --exclude='test-results' \
          --exclude='.env' \
          --exclude='.env.local' \
+         --exclude='claude-agent-sdk-demos' \
+         --exclude='claude-agent-sdk-python' \
          "$ROOT_DIR/" "$DEPLOY_DIR/"
 
 # Rename Dockerfile.hf → Dockerfile for HF Spaces (HF expects "Dockerfile")

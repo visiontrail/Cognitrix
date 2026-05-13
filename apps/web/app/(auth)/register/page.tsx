@@ -2,19 +2,54 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { API_BASE_URL } from "@/lib/api-base";
 import { apiRegister, AuthError } from "@/lib/auth/auth-client";
 import { setInMemoryToken, setStoredAppMode } from "@/lib/auth/session";
+import { useI18n } from "@/lib/i18n/context";
+import { SUPPORTED_LOCALES, type Locale } from "@/lib/i18n/dictionary";
+
+const LOCALE_LABELS: Record<Locale, string> = {
+  "en-US": "English",
+  "zh-CN": "中文",
+};
 
 type JobOption = { id: number; code: string; label_zh: string; label_en: string };
+
+function LanguageSwitcher() {
+  const { locale, setLocale } = useI18n();
+
+  return (
+    <div className="absolute top-5 right-5 flex items-center gap-1">
+      <Globe className="h-4 w-4 text-olive-gray" />
+      {SUPPORTED_LOCALES.map((loc, i) => (
+        <span key={loc} className="flex items-center">
+          {i > 0 && <span className="text-stone-gray mx-1">/</span>}
+          <button
+            type="button"
+            onClick={() => setLocale(loc)}
+            className={`text-body-sm transition-colors ${
+              locale === loc
+                ? "text-near-black font-medium"
+                : "text-stone-gray hover:text-olive-gray"
+            }`}
+          >
+            {LOCALE_LABELS[loc]}
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/";
   const invite = searchParams.get("invite");
+  const { t, locale } = useI18n();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,11 +66,15 @@ function RegisterForm() {
       .catch(() => {});
   }, []);
 
+  function jobLabel(j: JobOption) {
+    return locale === "zh-CN" ? j.label_zh : (j.label_en || j.label_zh);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!jobId) { setError("请选择您的岗位"); return; }
-    if (password.length < 8) { setError("密码至少 8 位"); return; }
+    if (!jobId) { setError(t("auth.jobRequired")); return; }
+    if (password.length < 8) { setError(t("auth.passwordTooShort", { n: 8 })); return; }
     setLoading(true);
     try {
       const result = await apiRegister({
@@ -49,11 +88,11 @@ function RegisterForm() {
       router.push(invite ? `/invites/${invite}` : next);
     } catch (err) {
       if (err instanceof AuthError) {
-        if (err.code === "email_taken") setError("该邮箱已被注册");
-        else if (err.code === "password_too_short") setError("密码长度不足");
-        else setError(err.message || "注册失败，请重试");
+        if (err.code === "email_taken") setError(t("auth.emailTaken"));
+        else if (err.code === "password_too_short") setError(t("auth.passwordTooShort", { n: 8 }));
+        else setError(err.message || t("auth.registerError"));
       } else {
-        setError("注册失败，请稍后重试");
+        setError(t("auth.registerError"));
       }
     } finally {
       setLoading(false);
@@ -64,13 +103,13 @@ function RegisterForm() {
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-1.5">
         <label htmlFor="displayName" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
-          姓名
+          {t("auth.displayName")}
         </label>
         <Input
           id="displayName"
           type="text"
           autoComplete="name"
-          placeholder="您的姓名"
+          placeholder={t("auth.namePlaceholder")}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           required
@@ -79,7 +118,7 @@ function RegisterForm() {
 
       <div className="space-y-1.5">
         <label htmlFor="email" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
-          邮箱地址
+          {t("auth.emailAddress")}
         </label>
         <Input
           id="email"
@@ -94,13 +133,13 @@ function RegisterForm() {
 
       <div className="space-y-1.5">
         <label htmlFor="password" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
-          密码
+          {t("auth.password")}
         </label>
         <Input
           id="password"
           type="password"
           autoComplete="new-password"
-          placeholder="至少 8 位"
+          placeholder={t("auth.passwordPlaceholder")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
@@ -110,7 +149,7 @@ function RegisterForm() {
 
       <div className="space-y-1.5">
         <label htmlFor="job" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
-          岗位
+          {t("auth.job")}
         </label>
         <select
           id="job"
@@ -119,10 +158,10 @@ function RegisterForm() {
           onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : "")}
           required
         >
-          <option value="" className="text-stone-gray">请选择您的岗位</option>
+          <option value="" className="text-stone-gray">{t("auth.selectJob")}</option>
           {jobs.map((j) => (
             <option key={j.id} value={j.id}>
-              {j.label_zh}
+              {jobLabel(j)}
             </option>
           ))}
         </select>
@@ -142,10 +181,10 @@ function RegisterForm() {
         {loading ? (
           <span className="flex items-center gap-2">
             <span className="h-4 w-4 rounded-full border-2 border-ivory/30 border-t-ivory animate-spin" />
-            注册中…
+            {t("auth.registering")}
           </span>
         ) : (
-          "创建账号"
+          t("auth.createAccount")
         )}
       </Button>
     </form>
@@ -153,16 +192,19 @@ function RegisterForm() {
 }
 
 export default function RegisterPage() {
+  const { t } = useI18n();
+
   return (
-    <div className="min-h-screen bg-parchment flex flex-col items-center justify-center p-6">
+    <div className="relative min-h-screen bg-parchment flex flex-col items-center justify-center p-6">
+      <LanguageSwitcher />
 
       {/* Brand */}
       <div className="mb-10 text-center">
         <div className="inline-flex items-baseline gap-2 mb-3">
           <span className="font-serif text-[1.6rem] font-[500] leading-none text-near-black">Cognitrix</span>
         </div>
-        <h1 className="font-serif text-heading text-near-black">创建账号</h1>
-        <p className="mt-2 text-olive-gray text-body">开始使用 AI 驱动的数据分析</p>
+        <h1 className="font-serif text-heading text-near-black">{t("auth.createAccount")}</h1>
+        <p className="mt-2 text-olive-gray text-body">{t("auth.registerSubtitle")}</p>
       </div>
 
       {/* Card */}
@@ -181,12 +223,12 @@ export default function RegisterPage() {
 
       {/* Footer */}
       <p className="mt-6 text-stone-gray text-body-sm text-center">
-        已有账号？{" "}
+        {t("auth.hasAccount")}{" "}
         <a
           href="/login"
           className="text-terracotta hover:text-terracotta-light underline underline-offset-2 transition-colors"
         >
-          立即登录
+          {t("auth.loginNow")}
         </a>
       </p>
 

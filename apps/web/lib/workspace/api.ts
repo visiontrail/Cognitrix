@@ -1,7 +1,6 @@
 import { getAuthorizationHeader } from "@/lib/auth/session";
 import { API_BASE_URL } from "@/lib/api-base";
 import { safeLoadFromStorage, safeSaveToStorage, WORKSPACE_SNAPSHOT_STORAGE_KEY } from "@/lib/chat/session-storage";
-import type { IngestionCatalogSetupSeed } from "@/types/ingestion";
 import type {
   TableCatalogDataColumn,
   TableCatalogDataPreview,
@@ -191,49 +190,6 @@ export async function fetchWorkspaceCatalogDataPreview(
     });
   }
   return preview;
-}
-
-export async function createWorkspaceCatalogFromSetup(
-  workspaceId: string,
-  seed: IngestionCatalogSetupSeed
-): Promise<TableCatalogEntry> {
-  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
-  const tableName = seed.tableName.trim();
-  const response = await fetch(
-    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/catalog`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...headers,
-      },
-      body: JSON.stringify({
-        ...(tableName ? { table_name: tableName } : {}),
-        human_label: seed.humanLabel,
-        business_type: seed.businessType,
-        write_mode: seed.writeMode,
-        time_grain: seed.timeGrain,
-        primary_keys: seed.primaryKeys,
-        match_columns: seed.matchColumns,
-        is_active_target: seed.isActiveTarget,
-        description: seed.description,
-      }),
-    }
-  );
-  const payload = await readPayload(response);
-  if (!response.ok) {
-    throw toApiError(payload, response.status, "workspace_catalog_create_failed");
-  }
-  const data = asRecord(payload);
-  const entry = mapTableCatalogEntry(asRecord(data.entry));
-  if (!entry) {
-    throw new WorkspaceApiError({
-      code: "workspace_catalog_create_invalid_payload",
-      message: "Workspace catalog create response is invalid",
-      status: 500,
-    });
-  }
-  return entry;
 }
 
 export async function deleteWorkspaceCatalogEntry(

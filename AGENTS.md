@@ -76,9 +76,8 @@ FastAPI app defined in `main.py`. All routes (except `/healthz` and `/auth/login
 - `security.py` — `SQLReadOnlyValidator`, `RLSInjector`, `AccessContext`; combined through `secure_query_sql()`
 - `data_policy.py` — `redact_rows()`, `redact_structure()`, `forbidden_sensitive_columns()` based on role
 - `agent_prompting.py` — `build_agent_system_prompt()`; owns the static BI system prompt injected into every chat turn
-- `agent_runtime.py` — ReAct agent loop; orchestrates `OpenAIAgentLoopClient` + BI tool dispatch; maps LLM events to SSE format
-- `llm_openai.py` — `OpenAIAgentLoopClient`; OpenAI-compatible chat-completions client used by the agent loop (works with DeepSeek, Kimi, etc.)
-- `llm_anthropic.py` — `AnthropicLLMResponse`; Anthropic-specific client path (used when `ANTHROPIC_AUTH_TOKEN` is set)
+- `agent_runtime.py` — ReAct agent loop built on the Claude Agent SDK (`ClaudeSDKClient` + `ClaudeAgentOptions`); orchestrates BI tool dispatch and maps SDK events to SSE format. Anthropic Messages API is the wire protocol; the underlying model is whatever `ANTHROPIC_BASE_URL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` point at (DeepSeek's `/anthropic` gateway by default).
+- `chart_query_agent.py` — `ClaudeSDKClient`-backed agent that produces chart specs for follow-up chart queries
 - `agent_logging.py` — `format_agent_debug_blocks()`; structured debug log formatter for AI input/output/tool traces
 - `chat.py` — `ChatStreamService` routes `POST /chat/stream` into `AgentRuntime.run_turn()`; handles SSE streaming
 - `agent_guardrails.py` — blocks jailbreak attempts, validates tool names and SQL before execution
@@ -98,7 +97,7 @@ FastAPI app defined in `main.py`. All routes (except `/healthz` and `/auth/login
 1. `POST /chat/stream` → `ChatStreamService` → `AgentRuntime.run_turn()`
 2. `AgentGuardrails` validates the user message; `agentic_ingestion/routing.py` decides `query` vs `write_ingestion` route
 3. System prompt assembled from: `agent_prompting.build_agent_system_prompt()` + dataset hints + user role/RLS context + previous structured result
-4. `OpenAIAgentLoopClient` runs the ReAct loop; each tool call goes through `ToolCallingService` → `secure_query_sql()` → DuckDB; SSE events emitted per step
+4. `ClaudeSDKClient` runs the ReAct loop over the Anthropic Messages protocol; each tool call goes through `ToolCallingService` → `secure_query_sql()` → DuckDB; SDK events are translated into SSE per step
 5. Final answer (JSON schema) normalized to ECharts/Recharts spec by `ChartStrategyRouter` and emitted as `spec` + `final` SSE events
 6. Session state persisted to `UPLOAD_DIR/state/agent_sessions.sqlite3`
 

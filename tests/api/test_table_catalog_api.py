@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -13,7 +14,6 @@ from apps.api.chat import clear_chat_stream_service_cache
 from apps.api.config import get_settings
 from apps.api.datasets import clear_dataset_service_cache
 from apps.api.main import app
-from apps.api import table_catalog
 from apps.api.semantic import clear_semantic_cache
 from apps.api.table_catalog import clear_table_catalog_service_cache
 from apps.api.tool_calling import clear_tool_calling_service_cache
@@ -40,8 +40,60 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     clear_table_catalog_service_cache()
 
 
-def test_table_catalog_crud_and_active_target(monkeypatch, tmp_path: Path) -> None:
+def _insert_catalog_entry(
+    db_path: Path,
+    *,
+    workspace_id: str,
+    table_name: str,
+    human_label: str,
+    business_type: str = "other",
+    write_mode: str = "new_table",
+    time_grain: str = "none",
+    primary_keys: list[str] | None = None,
+    match_columns: list[str] | None = None,
+    is_active_target: bool = False,
+    description: str = "",
+    created_by: str = "alice",
+) -> str:
+    catalog_id = uuid.uuid4().hex
+    now = "2026-01-01T00:00:00+00:00"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            INSERT INTO table_catalog (
+                id, workspace_id, table_name, human_label, business_type,
+                write_mode, time_grain, primary_keys, match_columns,
+                is_active_target, description, created_by, updated_by,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                catalog_id,
+                workspace_id,
+                table_name,
+                human_label,
+                business_type,
+                write_mode,
+                time_grain,
+                json.dumps(primary_keys or []),
+                json.dumps(match_columns or []),
+                int(is_active_target),
+                description,
+                created_by,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    return catalog_id
+
+
+def test_table_catalog_list_patch_delete_and_active_target(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
+    db_path = tmp_path / "workspace-state.db"
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
@@ -54,52 +106,35 @@ def test_table_catalog_crud_and_active_target(monkeypatch, tmp_path: Path) -> No
         assert workspace_response.status_code == 200
         workspace_id = workspace_response.json()["workspace_id"]
 
-        first_create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employees_roster",
-                "human_label": "Employees Roster",
-                "business_type": "roster",
-                "write_mode": "update_existing",
-                "time_grain": "none",
-                "primary_keys": ["employee_id"],
-                "match_columns": ["employee_id", "email"],
-                "is_active_target": True,
-                "description": "Primary roster table",
-            },
+        first_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="employees_roster",
+            human_label="Employees Roster",
+            business_type="roster",
+            write_mode="update_existing",
+            primary_keys=["employee_id"],
+            match_columns=["employee_id", "email"],
+            is_active_target=True,
+            description="Primary roster table",
         )
-        assert first_create_response.status_code == 200
-        first_entry = first_create_response.json()["entry"]
-        assert first_entry["table_name"] == "employees_roster"
-        assert first_entry["primary_keys"] == ["employee_id"]
-        assert first_entry["is_active_target"] is True
-
-        second_create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employees_roster_2026",
-                "human_label": "Employees Roster 2026",
-                "business_type": "roster",
-                "write_mode": "time_partitioned_new_table",
-                "time_grain": "year",
-                "primary_keys": ["employee_id"],
-                "match_columns": ["employee_id"],
-                "is_active_target": True,
-                "description": "Yearly roster table",
-            },
+        second_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="employees_roster_2026",
+            human_label="Employees Roster 2026",
+            business_type="roster",
+            write_mode="time_partitioned_new_table",
+            time_grain="year",
+            primary_keys=["employee_id"],
+            match_columns=["employee_id"],
+            is_active_target=False,
+            description="Yearly roster table",
         )
-        assert second_create_response.status_code == 200
-        second_entry = second_create_response.json()["entry"]
-        assert second_entry["is_active_target"] is True
 
         list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=owner_headers)
         assert list_response.status_code == 200
-        listed_entries = {entry["id"]: entry for entry in list_response.json()["entries"]}
         assert list_response.json()["count"] == 2
-        assert listed_entries[first_entry["id"]]["is_active_target"] is False
-        assert listed_entries[second_entry["id"]]["is_active_target"] is True
 
         active_target_response = client.get(
             f"/workspaces/{workspace_id}/catalog/active-target",
@@ -107,31 +142,23 @@ def test_table_catalog_crud_and_active_target(monkeypatch, tmp_path: Path) -> No
             params={"business_type": "roster"},
         )
         assert active_target_response.status_code == 200
-        assert active_target_response.json()["entry"]["id"] == second_entry["id"]
+        assert active_target_response.json()["entry"]["id"] == first_id
 
         update_response = client.patch(
-            f"/workspaces/{workspace_id}/catalog/{first_entry['id']}",
+            f"/workspaces/{workspace_id}/catalog/{first_id}",
             headers=owner_headers,
             json={
                 "human_label": "Employees Master",
-                "is_active_target": True,
+                "is_active_target": False,
                 "description": "Switched to master table",
             },
         )
         assert update_response.status_code == 200
         assert update_response.json()["entry"]["human_label"] == "Employees Master"
-        assert update_response.json()["entry"]["is_active_target"] is True
-
-        active_target_after_update = client.get(
-            f"/workspaces/{workspace_id}/catalog/active-target",
-            headers=owner_headers,
-            params={"business_type": "roster"},
-        )
-        assert active_target_after_update.status_code == 200
-        assert active_target_after_update.json()["entry"]["id"] == first_entry["id"]
+        assert update_response.json()["entry"]["is_active_target"] is False
 
         delete_response = client.delete(
-            f"/workspaces/{workspace_id}/catalog/{second_entry['id']}",
+            f"/workspaces/{workspace_id}/catalog/{second_id}",
             headers=owner_headers,
         )
         assert delete_response.status_code == 200
@@ -140,10 +167,10 @@ def test_table_catalog_crud_and_active_target(monkeypatch, tmp_path: Path) -> No
         final_list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=owner_headers)
         assert final_list_response.status_code == 200
         assert final_list_response.json()["count"] == 1
-        assert final_list_response.json()["entries"][0]["id"] == first_entry["id"]
+        assert final_list_response.json()["entries"][0]["id"] == first_id
 
 
-def test_table_catalog_create_accepts_business_intent_only(monkeypatch, tmp_path: Path) -> None:
+def test_table_catalog_post_returns_405(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
@@ -151,7 +178,7 @@ def test_table_catalog_create_accepts_business_intent_only(monkeypatch, tmp_path
 
         workspace_response = client.post(
             "/workspaces",
-            json={"name": "Intent Only Catalog"},
+            json={"name": "No Create Workspace"},
             headers=owner_headers,
         )
         assert workspace_response.status_code == 200
@@ -163,21 +190,15 @@ def test_table_catalog_create_accepts_business_intent_only(monkeypatch, tmp_path
             json={
                 "table_name": "employee_master",
                 "human_label": "Employee Master",
-                "description": "Stores the employee master sheet used for workforce analysis.",
+                "description": "Should be rejected.",
             },
         )
-        assert create_response.status_code == 200
-        entry = create_response.json()["entry"]
-        assert entry["business_type"] == "other"
-        assert entry["write_mode"] == "new_table"
-        assert entry["primary_keys"] == []
-        assert entry["match_columns"] == []
-        assert entry["is_active_target"] is False
-        assert entry["description"] == "Stores the employee master sheet used for workforce analysis."
+        assert create_response.status_code == 405
 
 
 def test_table_catalog_data_preview_reads_workspace_duckdb(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
+    db_path = tmp_path / "workspace-state.db"
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
@@ -190,21 +211,17 @@ def test_table_catalog_data_preview_reads_workspace_duckdb(monkeypatch, tmp_path
         assert workspace_response.status_code == 200
         workspace_id = workspace_response.json()["workspace_id"]
 
-        create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employee_master",
-                "human_label": "Employee Master",
-                "description": "Stores employee master rows.",
-            },
+        catalog_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="employee_master",
+            human_label="Employee Master",
+            description="Stores employee master rows.",
         )
-        assert create_response.status_code == 200
-        catalog_id = create_response.json()["entry"]["id"]
 
-        db_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = duckdb.connect(str(db_path))
+        duck_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
+        duck_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(duck_path))
         try:
             conn.execute(
                 """
@@ -252,6 +269,7 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
     tmp_path: Path,
 ) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
+    db_path = tmp_path / "workspace-state.db"
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
@@ -264,21 +282,17 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
         assert workspace_response.status_code == 200
         workspace_id = workspace_response.json()["workspace_id"]
 
-        create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employee_master",
-                "human_label": "Employee Master",
-                "description": "Stores employee master rows.",
-            },
+        catalog_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="employee_master",
+            human_label="Employee Master",
+            description="Stores employee master rows.",
         )
-        assert create_response.status_code == 200
-        catalog_id = create_response.json()["entry"]["id"]
 
-        db_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = duckdb.connect(str(db_path))
+        duck_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
+        duck_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(duck_path))
         try:
             conn.execute(
                 """
@@ -292,7 +306,7 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
         finally:
             conn.close()
 
-        with sqlite3.connect(tmp_path / "workspace-state.db") as sqlite_conn:
+        with sqlite3.connect(db_path) as sqlite_conn:
             sqlite_conn.execute("PRAGMA foreign_keys = ON")
             sqlite_conn.execute(
                 """
@@ -315,13 +329,8 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
             sqlite_conn.execute(
                 """
                 INSERT INTO ingestion_proposals (
-                    id,
-                    job_id,
-                    workspace_id,
-                    proposal_version,
-                    proposal_json,
-                    recommended_action,
-                    target_table
+                    id, job_id, workspace_id, proposal_version, proposal_json,
+                    recommended_action, target_table
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -338,16 +347,8 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
             sqlite_conn.execute(
                 """
                 INSERT INTO ingestion_executions (
-                    id,
-                    job_id,
-                    proposal_id,
-                    workspace_id,
-                    executed_by,
-                    execution_mode,
-                    validated_sql,
-                    execution_receipt,
-                    status,
-                    finished_at
+                    id, job_id, proposal_id, workspace_id, executed_by,
+                    execution_mode, validated_sql, execution_receipt, status, finished_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
@@ -376,56 +377,6 @@ def test_table_catalog_data_preview_resolves_recent_execution_table(
         assert payload["rows"] == [{"employee_id": "E001", "employee_name": "Ava Chen"}]
 
 
-def test_table_catalog_create_generates_missing_table_name_with_ai(monkeypatch, tmp_path: Path) -> None:
-    _set_minimal_env(monkeypatch, tmp_path)
-    monkeypatch.setenv("AI_API_KEY", "test-ai-key")
-    monkeypatch.setenv("AI_MODEL", "test-model")
-    get_settings.cache_clear()
-
-    observed_payloads: list[dict[str, object]] = []
-
-    def fake_ai_request(**kwargs) -> dict[str, object]:  # type: ignore[no-untyped-def]
-        observed_payloads.append(kwargs["payload"])
-        return {
-            "choices": [
-                {
-                    "message": {
-                        "content": '{"table_name":"employee_master_snapshot"}',
-                    },
-                },
-            ],
-        }
-
-    monkeypatch.setattr(table_catalog, "_post_table_name_ai_request", fake_ai_request)
-
-    with TestClient(app) as client:
-        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
-
-        workspace_response = client.post(
-            "/workspaces",
-            json={"name": "AI Named Catalog"},
-            headers=owner_headers,
-        )
-        assert workspace_response.status_code == 200
-        workspace_id = workspace_response.json()["workspace_id"]
-
-        create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "human_label": "员工主数据",
-                "description": "存放员工主数据，用于人数、组织、职级等分析。",
-            },
-        )
-        assert create_response.status_code == 200
-        entry = create_response.json()["entry"]
-        assert entry["table_name"] == "employee_master_snapshot"
-        assert observed_payloads
-        user_message = observed_payloads[0]["messages"][1]["content"]  # type: ignore[index]
-        assert "员工主数据" in str(user_message)
-        assert "职级" in str(user_message)
-
-
 def test_table_catalog_workspace_role_checks(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 
@@ -449,19 +400,6 @@ def test_table_catalog_workspace_role_checks(monkeypatch, tmp_path: Path) -> Non
         )
         assert add_member_response.status_code == 200
 
-        viewer_create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=viewer_headers,
-            json={
-                "table_name": "attendance_daily",
-                "human_label": "Attendance Daily",
-                "business_type": "attendance",
-                "write_mode": "append_only",
-                "time_grain": "month",
-            },
-        )
-        expect_error_code(viewer_create_response, "WORKSPACE_FORBIDDEN", status_code=403)
-
         viewer_list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=viewer_headers)
         assert viewer_list_response.status_code == 200
         assert viewer_list_response.json()["count"] == 0
@@ -472,6 +410,7 @@ def test_table_catalog_workspace_role_checks(monkeypatch, tmp_path: Path) -> Non
 
 def test_table_catalog_delete_requires_workspace_admin(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
+    db_path = tmp_path / "workspace-state.db"
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
@@ -492,19 +431,15 @@ def test_table_catalog_delete_requires_workspace_admin(monkeypatch, tmp_path: Pa
         )
         assert add_editor_response.status_code == 200
 
-        create_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "project_progress_monthly",
-                "human_label": "Project Progress Monthly",
-                "business_type": "project_progress",
-                "write_mode": "append_only",
-                "time_grain": "month",
-            },
+        catalog_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="project_progress_monthly",
+            human_label="Project Progress Monthly",
+            business_type="project_progress",
+            write_mode="append_only",
+            time_grain="month",
         )
-        assert create_response.status_code == 200
-        catalog_id = create_response.json()["entry"]["id"]
 
         editor_delete_response = client.delete(
             f"/workspaces/{workspace_id}/catalog/{catalog_id}",

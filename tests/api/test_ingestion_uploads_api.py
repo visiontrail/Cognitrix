@@ -165,7 +165,7 @@ def test_ingestion_upload_creates_upload_and_job_records(monkeypatch, tmp_path: 
         assert str(job_row["status"]) == "uploaded"
 
 
-def test_ingestion_upload_returns_structured_candidate_for_matrix_workbook(
+def test_ingestion_upload_returns_neutral_structure_for_matrix_workbook(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -190,15 +190,77 @@ def test_ingestion_upload_returns_structured_candidate_for_matrix_workbook(
 
     assert response.status_code == 200
     payload = response.json()
-    candidates = payload["structured_candidates"]
-    assert len(candidates) == 1
-    candidate = candidates[0]
-    assert candidate["kind"] == "project_assignment_matrix"
-    assert candidate["stats"]["project_count"] == 20
-    assert candidate["stats"]["assignment_count"] == 111
-    assert candidate["recommended_catalog_seed"]["table_name"] == "project_assignments"
-    assert "rows" not in candidate["primary_table"]
-    assert candidate["primary_table"]["sample_rows"][0]["source_cell"] == "D8"
+
+    # The API must NEVER ship hardcoded Chinese business labels invented by a
+    # heuristic detector — the agent decides table_name / human_label from the
+    # actual content.
+    serialized = response.text
+    assert "项目人员投入分配" not in serialized
+    assert "recommended_catalog_seed" not in serialized
+    assert "project_assignment_matrix" not in serialized
+
+    workbook_structure = payload["workbook_structure"]
+    assert workbook_structure is not None
+    sheets = workbook_structure["sheets"]
+    assert sheets, "expected at least one inspected sheet"
+
+    primary = sheets[0]
+    signals = primary["structural_signals"]
+    assert signals["has_merged_cells"] is True
+    assert signals["likely_layout"] == "human_readable_matrix"
+    assert primary["top_rows_preview"]
+
+
+def test_ingestion_upload_flags_flat_hr_roster_as_flat_table(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Regression for the hardcoded `项目人员投入分配` bug: a plain HR roster
+    upload must classify as a flat_table and must not leak any project-matrix
+    label into the response."""
+
+    _set_minimal_env(monkeypatch, tmp_path, ingestion_enabled=True)
+
+    sample_path = Path(__file__).resolve().parents[2] / "sample_data" / "gs_hr_roster.xlsx"
+    files = [
+        (
+            "files",
+            (
+                "gs_hr_roster.xlsx",
+                sample_path.read_bytes(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        )
+    ]
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
+        workspace_response = client.post(
+            "/workspaces",
+            json={"name": "Flat Roster Workspace"},
+            headers=owner_headers,
+        )
+        assert workspace_response.status_code == 200
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        response = client.post(
+            "/ingestion/uploads",
+            data={"workspace_id": workspace_id},
+            headers=owner_headers,
+            files=files,
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    serialized = response.text
+    assert "项目人员投入分配" not in serialized
+    assert "project_assignments" not in serialized
+
+    workbook_structure = payload["workbook_structure"]
+    assert workbook_structure is not None
+    primary_sheet = workbook_structure["sheets"][0]
+    assert primary_sheet["structural_signals"]["likely_layout"] == "flat_table"
 
 
 def test_ingestion_upload_ignores_disabled_feature_flag(monkeypatch, tmp_path: Path) -> None:

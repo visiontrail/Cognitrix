@@ -15,7 +15,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  useCreateWorkspaceCatalogFromSetup,
   useDeleteWorkspaceCatalogEntry,
   useWorkspaceCatalogDataPreview,
   useWorkspaceCatalog,
@@ -23,7 +22,6 @@ import {
 import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import type { TableCatalogEntry } from "@/types/workspace";
-import { WorkspaceCatalogSetupCard } from "./workspace-catalog-setup-card";
 
 export function WorkspaceCatalogReadonly({
   workspaceId,
@@ -43,7 +41,6 @@ export function WorkspaceCatalogReadonly({
     limit: PREVIEW_LIMIT,
     offset: previewOffset,
   });
-  const createSetupMutation = useCreateWorkspaceCatalogFromSetup();
   const deleteMutation = useDeleteWorkspaceCatalogEntry();
 
   const handleConfirmDelete = async () => {
@@ -171,12 +168,6 @@ export function WorkspaceCatalogReadonly({
           ))}
         </div>
       )}
-
-      <WorkspaceCatalogSetupCard
-        entries={entries}
-        isSubmitting={createSetupMutation.isPending}
-        onAdd={(seed) => createSetupMutation.mutateAsync({ workspaceId, seed })}
-      />
 
       <Dialog
         open={selectedEntry !== null}

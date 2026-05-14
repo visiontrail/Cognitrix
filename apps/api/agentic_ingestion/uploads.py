@@ -18,7 +18,7 @@ from fastapi import UploadFile
 
 from ..config import get_settings
 from ..workspaces import get_workspace_service
-from .nonstructured_excel import inspect_nonstructured_workbook
+from .nonstructured_excel import inspect_workbook_structure
 from .schema import initialize_sqlite_schema
 
 ALLOWED_EXTENSIONS = {".xlsx"}
@@ -215,7 +215,7 @@ class IngestionUploadInspectionService:
             "sheet_summary": sheet_summary,
             "column_summary": column_summary,
             "sample_preview": sample_preview,
-            "structured_candidates": sheet_summary.get("structured_candidates", []),
+            "workbook_structure": sheet_summary.get("workbook_structure"),
         }
 
     def _inspect_workbook(
@@ -301,9 +301,9 @@ class IngestionUploadInspectionService:
             "by_sheet": column_items,
         }
 
-        structured_candidate = inspect_nonstructured_workbook(workbook_bytes=workbook_bytes)
-        if structured_candidate:
-            sheet_summary["structured_candidates"] = [_candidate_preview(structured_candidate)]
+        workbook_structure = inspect_workbook_structure(workbook_bytes=workbook_bytes)
+        if workbook_structure:
+            sheet_summary["workbook_structure"] = workbook_structure
 
         return sheet_summary, column_summary, preview_items
 
@@ -381,16 +381,6 @@ def clear_ingestion_upload_service_cache() -> None:
 def _sanitize_filename(raw: str) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", raw)
     return safe_name or "uploaded.xlsx"
-
-
-def _candidate_preview(candidate: dict[str, Any]) -> dict[str, Any]:
-    preview = dict(candidate)
-    primary = preview.get("primary_table")
-    if isinstance(primary, dict):
-        preview["primary_table"] = {
-            key: value for key, value in primary.items() if key != "rows"
-        }
-    return preview
 
 
 def _build_sample_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:

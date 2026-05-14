@@ -3,7 +3,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mutateAsync = vi.fn();
 const deleteMutateAsync = vi.fn();
 const refetchPreview = vi.fn();
 
@@ -99,10 +98,6 @@ vi.mock("../../hooks/use-workspace", () => ({
       },
     };
   },
-  useCreateWorkspaceCatalogFromSetup: () => ({
-    isPending: false,
-    mutateAsync,
-  }),
   useDeleteWorkspaceCatalogEntry: () => ({
     isPending: false,
     mutateAsync: deleteMutateAsync,
@@ -113,7 +108,6 @@ import { WorkspaceCatalogReadonly } from "../../components/workspace/workspace-c
 
 describe("WorkspaceCatalogReadonly", () => {
   beforeEach(() => {
-    mutateAsync.mockReset();
     deleteMutateAsync.mockReset();
     refetchPreview.mockReset();
     deleteMutateAsync.mockResolvedValue(undefined);
@@ -161,12 +155,12 @@ describe("WorkspaceCatalogReadonly", () => {
     expect(screen.getByText("HR")).toBeInTheDocument();
   });
 
-  it("renders empty state and add-table setup card when workspace has no catalog entries", async () => {
+  it("renders empty state when workspace has no catalog entries", async () => {
     render(<WorkspaceCatalogReadonly workspaceId="ws-empty" />);
 
     expect(
       await screen.findByText("No table intents yet. Start by listing the business tables you expect to upload.")
     ).toBeInTheDocument();
-    expect(screen.getByText("Add Table Intent")).toBeInTheDocument();
+    expect(screen.queryByText("Add Table Intent")).not.toBeInTheDocument();
   });
 });

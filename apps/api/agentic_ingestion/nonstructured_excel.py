@@ -1,191 +1,117 @@
+"""Workbook structural inspector.
+
+Produces a neutral structural summary of an uploaded Excel workbook so the
+ingestion agent can decide on its own whether the workbook is a flat
+structured table, a human-readable matrix, or something in between, and
+how to decompose it into analysis-ready tables.
+
+This module intentionally does NOT emit business names, table names,
+business types, human labels, or any pre-baked catalog seed. All such
+naming and decomposition decisions are made by the LLM based on the
+observed content.
+"""
+
 from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-MAX_SAMPLE_ROWS = 8
+
+MAX_TOP_ROWS = 15
+MAX_TOP_COLUMNS = 30
+MAX_MERGED_RANGE_SAMPLES = 8
+MAX_CELL_TEXT_LEN = 120
 
 
-def inspect_nonstructured_workbook(
+def inspect_workbook_structure(
     *,
     workbook_bytes: bytes | None = None,
     workbook_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Detect human-readable matrix workbooks and return structured candidates.
+    """Return a neutral structural summary of the workbook.
 
-    The first supported pattern is a project resource allocation matrix:
-    rows near the top describe projects, the left columns describe people, and
-    the project columns contain free-text assignment cells.  The analysis-ready
-    primary table is a denormalized long fact table, one row per non-empty
-    person/project assignment.
+    Each sheet entry exposes the raw structural signals the ingestion agent
+    needs to self-classify the layout (flat table vs human-readable matrix
+    vs mixed). The summary deliberately carries no business naming.
     """
 
     if workbook_bytes is None and workbook_path is None:
         raise ValueError("workbook_bytes or workbook_path is required")
 
-    workbook_source: BytesIO | Path
+    source: BytesIO | Path
     if workbook_bytes is not None:
-        workbook_source = BytesIO(workbook_bytes)
+        source = BytesIO(workbook_bytes)
     else:
-        workbook_source = Path(workbook_path or "")
+        source = Path(workbook_path or "")
 
     try:
-        workbook = load_workbook(workbook_source, data_only=True, read_only=False)
+        workbook = load_workbook(source, data_only=True, read_only=False)
     except Exception:
         return None
 
-    best: dict[str, Any] | None = None
+    sheets_summary: list[dict[str, Any]] = []
     for worksheet in workbook.worksheets:
-        candidate = _inspect_project_assignment_matrix(worksheet)
-        if candidate is None:
+        try:
+            sheets_summary.append(_summarize_sheet(worksheet))
+        except Exception:
             continue
-        if best is None or candidate["confidence"] > best["confidence"]:
-            best = candidate
-    return best
 
-
-def load_primary_structured_dataframe(upload_path: Path) -> pd.DataFrame | None:
-    candidate = inspect_nonstructured_workbook(workbook_path=upload_path)
-    if not candidate:
-        return None
-    primary = candidate.get("primary_table")
-    if not isinstance(primary, dict):
-        return None
-    rows = primary.get("rows")
-    if not isinstance(rows, list) or not rows:
-        return None
-    return pd.DataFrame(rows)
-
-
-def _inspect_project_assignment_matrix(worksheet: Worksheet) -> dict[str, Any] | None:
-    merged_values = _build_merged_value_lookup(worksheet)
-    value = lambda row, col: _cell_text(worksheet, row, col, merged_values)
-
-    header = _find_people_header_row(worksheet, value)
-    if header is None:
+    if not sheets_summary:
         return None
 
-    team_col = header["team_col"]
-    role_col = header["role_col"]
-    name_col = header["name_col"]
-    main_work_col = header.get("main_work_col")
-    project_start_col = max(team_col, role_col, name_col) + 1
-    project_end_col = (main_work_col - 1) if main_work_col else worksheet.max_column
+    return {"sheets": sheets_summary}
 
-    projects = _extract_projects(
-        worksheet=worksheet,
-        value=value,
-        header_row=header["row"],
-        project_start_col=project_start_col,
-        project_end_col=project_end_col,
+
+TOP_METADATA_ROW_WINDOW = 6
+
+
+def _summarize_sheet(worksheet: Worksheet) -> dict[str, Any]:
+    merged_lookup = _build_merged_value_lookup(worksheet)
+    max_row = int(worksheet.max_row or 0)
+    max_col = int(worksheet.max_column or 0)
+
+    preview_rows = min(max_row, MAX_TOP_ROWS)
+    preview_cols = min(max_col, MAX_TOP_COLUMNS)
+    top_rows_preview: list[list[str]] = []
+    for row in range(1, preview_rows + 1):
+        row_cells = [
+            _cell_text(worksheet, row, col, merged_lookup)
+            for col in range(1, preview_cols + 1)
+        ]
+        top_rows_preview.append(row_cells)
+
+    merged_ranges = list(worksheet.merged_cells.ranges)
+    merged_range_samples = [str(rng) for rng in merged_ranges[:MAX_MERGED_RANGE_SAMPLES]]
+
+    has_merged_cells = len(merged_ranges) > 0
+    top_horizontal_merge_count = sum(
+        1
+        for rng in merged_ranges
+        if rng.min_row <= TOP_METADATA_ROW_WINDOW and rng.max_col > rng.min_col
     )
-    if len(projects) < 2:
-        return None
-
-    people, assignments = _extract_people_and_assignments(
-        worksheet=worksheet,
-        value=value,
-        header_row=header["row"],
-        team_col=team_col,
-        role_col=role_col,
-        name_col=name_col,
-        main_work_col=main_work_col,
-        projects=projects,
+    has_stacked_top_metadata = top_horizontal_merge_count >= 2
+    likely_layout = _classify_layout(
+        has_merged_cells=has_merged_cells,
+        has_stacked_top_metadata=has_stacked_top_metadata,
+        max_row=max_row,
     )
-    if len(assignments) < 3:
-        return None
-
-    project_rows = [{key: item[key] for key in item if key != "_column"} for item in projects]
-    people_rows = list(people.values())
-
-    primary_columns = [
-        "source_sheet",
-        "source_cell",
-        "team",
-        "role",
-        "person_name",
-        "project_year",
-        "project_name",
-        "project_stage",
-        "project_manager",
-        "project_intro",
-        "project_milestone",
-        "assignment_text",
-        "main_work_content",
-    ]
 
     return {
-        "kind": "project_assignment_matrix",
-        "confidence": 0.92,
         "sheet_name": worksheet.title,
-        "detection_reasons": [
-            "Detected left-side people columns: team, role, name",
-            "Detected horizontal project metadata rows above the assignment matrix",
-            "Expanded non-empty person/project intersection cells into long fact rows",
-            "Merged cells were resolved by inheriting their top-left value",
-        ],
-        "stats": {
-            "project_count": len(project_rows),
-            "person_count": len(people_rows),
-            "assignment_count": len(assignments),
-            "merged_range_count": len(worksheet.merged_cells.ranges),
-        },
-        "recommended_catalog_seed": {
-            "business_type": "project_progress",
-            "table_name": "project_assignments",
-            "human_label": "项目人员投入分配",
-            "write_mode": "new_table",
-            "time_grain": "none",
-            "primary_keys": ["source_cell"],
-            "match_columns": ["source_cell"],
-            "is_active_target": True,
-            "description": (
-                "Structured from a human-readable project assignment matrix. "
-                "One row represents one non-empty person/project assignment cell, "
-                "with project metadata denormalized for BI analysis."
-            ),
-        },
-        "candidate_tables": [
-            {
-                "table_name": "projects",
-                "label": "项目维表",
-                "row_count": len(project_rows),
-                "columns": [
-                    "project_key",
-                    "project_year",
-                    "project_name",
-                    "project_stage",
-                    "project_manager",
-                    "project_intro",
-                    "project_milestone",
-                ],
-                "sample_rows": project_rows[:MAX_SAMPLE_ROWS],
-            },
-            {
-                "table_name": "people",
-                "label": "人员维表",
-                "row_count": len(people_rows),
-                "columns": ["person_key", "team", "role", "person_name", "main_work_content"],
-                "sample_rows": people_rows[:MAX_SAMPLE_ROWS],
-            },
-            {
-                "table_name": "project_assignments",
-                "label": "项目人员投入分配事实表",
-                "row_count": len(assignments),
-                "columns": primary_columns,
-                "sample_rows": assignments[:MAX_SAMPLE_ROWS],
-            },
-        ],
-        "primary_table": {
-            "table_name": "project_assignments",
-            "columns": primary_columns,
-            "rows": assignments,
-            "sample_rows": assignments[:MAX_SAMPLE_ROWS],
+        "max_row": max_row,
+        "max_column": max_col,
+        "merged_cell_count": len(merged_ranges),
+        "merged_cell_range_samples": merged_range_samples,
+        "top_horizontal_merge_count": top_horizontal_merge_count,
+        "top_rows_preview": top_rows_preview,
+        "structural_signals": {
+            "has_merged_cells": has_merged_cells,
+            "has_stacked_top_metadata": has_stacked_top_metadata,
+            "likely_layout": likely_layout,
         },
     }
 
@@ -211,162 +137,23 @@ def _cell_text(
         raw = merged_values.get((row, col))
     if raw is None:
         return ""
-    return _normalize_text(raw)
+    text = str(raw).replace("\r\n", "\n").replace("\r", "\n")
+    text = " / ".join(line.strip() for line in text.split("\n") if line.strip())
+    if len(text) > MAX_CELL_TEXT_LEN:
+        text = text[: MAX_CELL_TEXT_LEN - 1] + "…"
+    return text
 
 
-def _normalize_text(value: Any) -> str:
-    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
-    lines = [line.strip() for line in text.split("\n")]
-    return "\n".join(line for line in lines if line)
-
-
-def _find_people_header_row(
-    worksheet: Worksheet,
-    value: Any,
-) -> dict[str, int] | None:
-    for row in range(1, min(worksheet.max_row, 20) + 1):
-        labels = {col: value(row, col) for col in range(1, worksheet.max_column + 1)}
-        team_col = _find_col(labels, ("团队", "部门", "组"))
-        role_col = _find_col(labels, ("岗位名称", "岗位", "角色"))
-        name_col = _find_col(labels, ("姓名", "人员", "成员"))
-        if team_col and role_col and name_col:
-            result = {
-                "row": row,
-                "team_col": team_col,
-                "role_col": role_col,
-                "name_col": name_col,
-            }
-            main_work_col = _find_col(labels, ("所负责主要工作内容", "主要工作内容", "负责内容"))
-            if not main_work_col:
-                main_work_col = _find_col_above_header(
-                    worksheet,
-                    value,
-                    header_row=row,
-                    needles=("所负责主要工作内容", "主要工作内容", "负责内容"),
-                )
-            if main_work_col:
-                result["main_work_col"] = main_work_col
-            return result
-    return None
-
-
-def _find_col(labels: dict[int, str], needles: tuple[str, ...]) -> int | None:
-    for col, label in labels.items():
-        compact = label.replace(" ", "")
-        if any(needle in compact for needle in needles):
-            return col
-    return None
-
-
-def _find_col_above_header(
-    worksheet: Worksheet,
-    value: Any,
+def _classify_layout(
     *,
-    header_row: int,
-    needles: tuple[str, ...],
-) -> int | None:
-    for row in range(1, header_row):
-        labels = {col: value(row, col) for col in range(1, worksheet.max_column + 1)}
-        found = _find_col(labels, needles)
-        if found:
-            return found
-    return None
-
-
-def _extract_projects(
-    *,
-    worksheet: Worksheet,
-    value: Any,
-    header_row: int,
-    project_start_col: int,
-    project_end_col: int,
-) -> list[dict[str, Any]]:
-    year_row = max(1, header_row - 6)
-    name_row = max(1, header_row - 5)
-    stage_row = max(1, header_row - 4)
-    manager_row = max(1, header_row - 3)
-    intro_row = max(1, header_row - 2)
-    milestone_row = max(1, header_row - 1)
-
-    projects: list[dict[str, Any]] = []
-    for col in range(project_start_col, project_end_col + 1):
-        project_name = value(name_row, col)
-        if not project_name:
-            continue
-        projects.append(
-            {
-                "_column": col,
-                "project_key": f"p{len(projects) + 1:03d}",
-                "project_year": value(year_row, col),
-                "project_name": project_name,
-                "project_stage": value(stage_row, col),
-                "project_manager": value(manager_row, col),
-                "project_intro": value(intro_row, col),
-                "project_milestone": value(milestone_row, col),
-            }
-        )
-    return projects
-
-
-def _extract_people_and_assignments(
-    *,
-    worksheet: Worksheet,
-    value: Any,
-    header_row: int,
-    team_col: int,
-    role_col: int,
-    name_col: int,
-    main_work_col: int | None,
-    projects: list[dict[str, Any]],
-) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    people: dict[str, dict[str, Any]] = {}
-    assignments: list[dict[str, Any]] = []
-
-    for row in range(header_row + 1, worksheet.max_row + 1):
-        person_name = value(row, name_col)
-        if not person_name:
-            continue
-        team = value(row, team_col)
-        role = value(row, role_col)
-        main_work = value(row, main_work_col) if main_work_col else ""
-        person_key = _person_key(team=team, role=role, person_name=person_name)
-        people.setdefault(
-            person_key,
-            {
-                "person_key": person_key,
-                "team": team,
-                "role": role,
-                "person_name": person_name,
-                "main_work_content": main_work,
-            },
-        )
-
-        for project in projects:
-            col = int(project["_column"])
-            assignment_text = value(row, col)
-            if not assignment_text:
-                continue
-            assignments.append(
-                {
-                    "source_sheet": worksheet.title,
-                    "source_cell": worksheet.cell(row, col).coordinate,
-                    "team": team,
-                    "role": role,
-                    "person_name": person_name,
-                    "project_year": project["project_year"],
-                    "project_name": project["project_name"],
-                    "project_stage": project["project_stage"],
-                    "project_manager": project["project_manager"],
-                    "project_intro": project["project_intro"],
-                    "project_milestone": project["project_milestone"],
-                    "assignment_text": assignment_text,
-                    "main_work_content": main_work,
-                }
-            )
-
-    return people, assignments
-
-
-def _person_key(*, team: str, role: str, person_name: str) -> str:
-    raw = "|".join([team, role, person_name]).strip("|")
-    return raw or person_name
+    has_merged_cells: bool,
+    has_stacked_top_metadata: bool,
+    max_row: int,
+) -> str:
+    if max_row <= 0:
+        return "empty"
+    if has_stacked_top_metadata:
+        return "human_readable_matrix"
+    if not has_merged_cells:
+        return "flat_table"
+    return "mixed_or_unknown"

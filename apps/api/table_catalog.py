@@ -4,7 +4,6 @@ import json
 import logging
 import re
 import sqlite3
-import socket
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -12,8 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
-from urllib import error as urllib_error
-from urllib import request as urllib_request
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,51 +42,6 @@ class TableCatalogError(Exception):
             "code": self.code,
             "message": self.message,
         }
-
-
-class TableCatalogEntryCreateRequest(BaseModel):
-    table_name: str | None = Field(default=None, min_length=1, max_length=128)
-    human_label: str = Field(min_length=1, max_length=120)
-    business_type: Literal["roster", "project_progress", "attendance", "other"] = "other"
-    write_mode: Literal[
-        "update_existing",
-        "time_partitioned_new_table",
-        "new_table",
-        "append_only",
-    ] = "new_table"
-    time_grain: Literal["none", "month", "quarter", "year"] = "none"
-    primary_keys: list[str] = Field(default_factory=list)
-    match_columns: list[str] = Field(default_factory=list)
-    is_active_target: bool = False
-    description: str = Field(default="", max_length=1000)
-
-    @field_validator("table_name")
-    @classmethod
-    def validate_table_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if not TABLE_NAME_PATTERN.match(normalized):
-            raise ValueError("table_name must be a valid SQL identifier")
-        return normalized.lower()
-
-    @field_validator("human_label")
-    @classmethod
-    def validate_human_label(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("human_label cannot be empty")
-        return normalized
-
-    @field_validator("description")
-    @classmethod
-    def validate_description(cls, value: str) -> str:
-        return value.strip()
-
-    @field_validator("primary_keys", "match_columns")
-    @classmethod
-    def validate_column_lists(cls, values: list[str]) -> list[str]:
-        return _normalize_column_list(values)
 
 
 class TableCatalogEntryUpdateRequest(BaseModel):
@@ -178,104 +130,6 @@ class TableCatalogService:
 
     def get_entry(self, *, workspace_id: str, catalog_id: str) -> dict[str, Any]:
         row = self._get_entry_row(workspace_id=workspace_id, catalog_id=catalog_id)
-        return self._serialize_entry(row)
-
-    def create_entry(
-        self,
-        *,
-        workspace_id: str,
-        actor_user_id: str,
-        payload: TableCatalogEntryCreateRequest,
-    ) -> dict[str, Any]:
-        normalized_workspace_id = workspace_id.strip()
-        normalized_actor = actor_user_id.strip()
-        catalog_id = uuid.uuid4().hex
-        now = _utc_now()
-
-        with self._lock, self._connect() as conn:
-            self._assert_workspace_exists(conn, workspace_id=normalized_workspace_id)
-            self._ensure_user_record(conn, user_id=normalized_actor)
-            existing_table_names = self._list_table_names(conn, workspace_id=normalized_workspace_id)
-
-        generated_table_name = payload.table_name is None
-        candidate_table_name = payload.table_name or _generate_table_name_with_ai(
-            human_label=payload.human_label,
-            description=payload.description,
-            existing_table_names=existing_table_names,
-        )
-
-        with self._lock, self._connect() as conn:
-            self._assert_workspace_exists(conn, workspace_id=normalized_workspace_id)
-            self._ensure_user_record(conn, user_id=normalized_actor)
-            current_table_names = self._list_table_names(conn, workspace_id=normalized_workspace_id)
-            table_name = (
-                _dedupe_table_name(candidate_table_name, current_table_names)
-                if generated_table_name
-                else candidate_table_name
-            )
-
-            if payload.is_active_target:
-                conn.execute(
-                    """
-                    UPDATE table_catalog
-                    SET is_active_target = 0, updated_by = ?, updated_at = ?
-                    WHERE workspace_id = ? AND business_type = ?
-                    """,
-                    (normalized_actor, now, normalized_workspace_id, payload.business_type),
-                )
-
-            conn.execute(
-                """
-                INSERT INTO table_catalog (
-                    id,
-                    workspace_id,
-                    table_name,
-                    human_label,
-                    business_type,
-                    write_mode,
-                    time_grain,
-                    primary_keys,
-                    match_columns,
-                    is_active_target,
-                    description,
-                    created_by,
-                    updated_by,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    catalog_id,
-                    normalized_workspace_id,
-                    table_name,
-                    payload.human_label,
-                    payload.business_type,
-                    payload.write_mode,
-                    payload.time_grain,
-                    json.dumps(payload.primary_keys, ensure_ascii=False),
-                    json.dumps(payload.match_columns, ensure_ascii=False),
-                    int(payload.is_active_target),
-                    payload.description,
-                    normalized_actor,
-                    normalized_actor,
-                    now,
-                    now,
-                ),
-            )
-            conn.commit()
-
-            row = conn.execute(
-                "SELECT * FROM table_catalog WHERE id = ? AND workspace_id = ?",
-                (catalog_id, normalized_workspace_id),
-            ).fetchone()
-
-        if row is None:
-            raise TableCatalogError(
-                code="CATALOG_ENTRY_NOT_FOUND",
-                message="Catalog entry not found",
-                status_code=404,
-            )
-
         return self._serialize_entry(row)
 
     def update_entry(
@@ -686,26 +540,6 @@ class TableCatalogService:
 router = APIRouter(prefix="/workspaces/{workspace_id}/catalog", tags=["table-catalog"])
 
 
-@router.post("")
-async def create_table_catalog_entry(
-    workspace_id: str,
-    request: TableCatalogEntryCreateRequest,
-    identity: AuthIdentity = Depends(require_permission("workspaces:write")),
-) -> dict[str, Any]:
-    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="editor")
-    service = get_table_catalog_service()
-    try:
-        entry = service.create_entry(
-            workspace_id=workspace_id,
-            actor_user_id=identity.user_id,
-            payload=request,
-        )
-    except TableCatalogError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-    return {"entry": entry}
-
-
 @router.get("")
 async def list_table_catalog_entries(
     workspace_id: str,
@@ -839,214 +673,6 @@ def _assert_workspace_role(*, workspace_id: str, identity: AuthIdentity, minimum
         )
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-
-def _generate_table_name_with_ai(
-    *,
-    human_label: str,
-    description: str,
-    existing_table_names: set[str],
-) -> str:
-    settings = get_settings()
-    if not settings.model_provider_url.strip() or not settings.ai_api_key.strip() or not settings.ai_model.strip():
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_NOT_CONFIGURED",
-            message="AI table name generation is not configured",
-            status_code=503,
-        )
-
-    payload: dict[str, Any] = {
-        "model": settings.ai_model,
-        "temperature": 0,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You generate concise SQL table names for business datasets. "
-                    "Return only JSON: {\"table_name\":\"...\"}. "
-                    "The table_name must be English, lowercase snake_case, start with a letter or underscore, "
-                    "contain only letters, numbers, and underscores, be at most 48 characters, "
-                    "and must not be a generic sequence like table1, table2, workspace_table, or business_table."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "display_name": human_label,
-                        "description": description,
-                        "existing_table_names": sorted(existing_table_names),
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ],
-    }
-    response = _post_table_name_ai_request(
-        base_url=settings.model_provider_url,
-        api_key=settings.ai_api_key,
-        timeout_seconds=settings.ai_timeout_seconds,
-        payload=payload,
-    )
-    candidate = _extract_ai_table_name(response)
-    normalized = _normalize_ai_table_name(candidate)
-    if not normalized:
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_INVALID_RESPONSE",
-            message="AI did not return a valid table name",
-            status_code=502,
-        )
-    return normalized
-
-
-def _post_table_name_ai_request(
-    *,
-    base_url: str,
-    api_key: str,
-    timeout_seconds: float,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    endpoint = _chat_completions_endpoint(base_url)
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    request = urllib_request.Request(endpoint, data=body, headers=headers, method="POST")
-
-    try:
-        with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
-            raw = response.read().decode("utf-8")
-    except TimeoutError as exc:
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_TIMEOUT",
-            message="AI table name generation timed out",
-            status_code=504,
-        ) from exc
-    except socket.timeout as exc:
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_TIMEOUT",
-            message="AI table name generation timed out",
-            status_code=504,
-        ) from exc
-    except urllib_error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
-        logger.warning("table_name_ai_http_error status=%s details=%s", exc.code, details or exc.reason)
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_HTTP_ERROR",
-            message="AI table name generation failed",
-            status_code=502,
-        ) from exc
-    except urllib_error.URLError as exc:
-        logger.warning("table_name_ai_request_error reason=%s", exc.reason)
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_REQUEST_FAILED",
-            message="AI table name generation request failed",
-            status_code=502,
-        ) from exc
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_NON_JSON",
-            message="AI table name generation returned invalid JSON",
-            status_code=502,
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise TableCatalogError(
-            code="TABLE_NAME_AI_NON_JSON",
-            message="AI table name generation returned invalid JSON",
-            status_code=502,
-        )
-    return parsed
-
-
-def _extract_ai_table_name(response: dict[str, Any]) -> str:
-    choices = response.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-
-    first = choices[0] if isinstance(choices[0], dict) else {}
-    message = first.get("message") if isinstance(first, dict) else {}
-    content = message.get("content") if isinstance(message, dict) else None
-    text = _content_to_text(content)
-    if not text:
-        return ""
-
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        payload = _json_from_text_block(text)
-    if not isinstance(payload, dict):
-        return ""
-    return str(payload.get("table_name") or "")
-
-
-def _content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        chunks: list[str] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            text = item.get("text")
-            if isinstance(text, str) and text.strip():
-                chunks.append(text.strip())
-        return "\n".join(chunks).strip()
-    return ""
-
-
-def _json_from_text_block(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?", "", stripped, flags=re.IGNORECASE).strip()
-        stripped = re.sub(r"```$", "", stripped).strip()
-
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    if not match:
-        return {}
-    try:
-        decoded = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {}
-    return decoded if isinstance(decoded, dict) else {}
-
-
-def _normalize_ai_table_name(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
-    if not TABLE_NAME_PATTERN.match(normalized):
-        return ""
-    if normalized in {"table", "table1", "table2", "workspace_table", "business_table"}:
-        return ""
-    if re.fullmatch(r"table_?\d+", normalized):
-        return ""
-    return normalized[:48]
-
-
-def _dedupe_table_name(table_name: str, existing_table_names: set[str]) -> str:
-    normalized_existing = {item.lower() for item in existing_table_names}
-    if table_name.lower() not in normalized_existing:
-        return table_name
-
-    index = 2
-    base = table_name[:124]
-    candidate = f"{base}_{index}"
-    while candidate.lower() in normalized_existing:
-        index += 1
-        suffix = f"_{index}"
-        candidate = f"{table_name[: 128 - len(suffix)]}{suffix}"
-    return candidate
-
-
-def _chat_completions_endpoint(base_url: str) -> str:
-    normalized = base_url.rstrip("/")
-    if normalized.endswith("/chat/completions"):
-        return normalized
-    if normalized.endswith("/v1"):
-        return f"{normalized}/chat/completions"
-    return f"{normalized}/v1/chat/completions"
 
 
 @lru_cache(maxsize=2)

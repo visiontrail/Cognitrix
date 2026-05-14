@@ -7,7 +7,6 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useI18n } from "@/lib/i18n/context";
 import { refreshWorkspaceCatalog, workspaceCatalogQueryKey } from "@/lib/workspace/query-keys";
-import type { IngestionCatalogSetupSeed } from "@/types/ingestion";
 import type { WorkspaceSnapshot } from "@/types/workspace";
 import * as api from "@/lib/workspace/api";
 
@@ -75,18 +74,6 @@ export function useWorkspaceCatalogDataPreview(
     retry: (failureCount, error) => {
       if (error instanceof api.WorkspaceApiError && error.status === 404) return false;
       return failureCount < 3;
-    },
-  });
-}
-
-export function useCreateWorkspaceCatalogFromSetup() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ workspaceId, seed }: { workspaceId: string; seed: IngestionCatalogSetupSeed }) =>
-      api.createWorkspaceCatalogFromSetup(workspaceId, seed),
-    onSuccess: async (_, variables) => {
-      await refreshWorkspaceCatalog(queryClient, variables.workspaceId);
     },
   });
 }

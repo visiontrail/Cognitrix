@@ -789,6 +789,37 @@ function ChartExamplePreview({ type }: { type: QueryChartType }) {
   );
 }
 
+function polarPoint(cx: number, cy: number, radius: number, angle: number) {
+  const radians = ((angle - 90) * Math.PI) / 180;
+  return {
+    x: cx + radius * Math.cos(radians),
+    y: cy + radius * Math.sin(radians),
+  };
+}
+
+function annularSegmentPath(
+  cx: number,
+  cy: number,
+  innerRadius: number,
+  outerRadius: number,
+  startAngle: number,
+  endAngle: number
+) {
+  const outerStart = polarPoint(cx, cy, outerRadius, startAngle);
+  const outerEnd = polarPoint(cx, cy, outerRadius, endAngle);
+  const innerEnd = polarPoint(cx, cy, innerRadius, endAngle);
+  const innerStart = polarPoint(cx, cy, innerRadius, startAngle);
+  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    "Z",
+  ].join(" ");
+}
+
 function ChartExampleShape({ type }: { type: QueryChartType }) {
   const axis = (
     <>
@@ -981,12 +1012,36 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
   }
 
   if (type === "sunburst") {
+    const cx = 160;
+    const cy = 90;
+    const outerSegments = [
+      { start: 0, end: 90, fill: "#c96442" },
+      { start: 90, end: 220, fill: "#9bb7a5" },
+      { start: 220, end: 360, fill: "#d6a94a" },
+    ];
+    const innerSegments = [
+      { start: 0, end: 145, fill: "#4b7f8c" },
+      { start: 145, end: 250, fill: "#c96442" },
+      { start: 250, end: 360, fill: "#d6a94a" },
+    ];
+
     return (
       <>
-        <circle cx="160" cy="90" r="24" fill="#faf9f5" stroke="#4b7f8c" strokeWidth="16" />
-        <path d="M160 26 A64 64 0 0 1 224 90 L192 90 A32 32 0 0 0 160 58 Z" fill="#c96442" />
-        <path d="M224 90 A64 64 0 0 1 104 130 L130 110 A32 32 0 0 0 192 90 Z" fill="#9bb7a5" />
-        <path d="M104 130 A64 64 0 0 1 160 26 L160 58 A32 32 0 0 0 130 110 Z" fill="#d6a94a" />
+        {outerSegments.map((segment) => (
+          <path
+            key={`outer-${segment.start}`}
+            d={annularSegmentPath(cx, cy, 38, 64, segment.start, segment.end)}
+            fill={segment.fill}
+          />
+        ))}
+        {innerSegments.map((segment) => (
+          <path
+            key={`inner-${segment.start}`}
+            d={annularSegmentPath(cx, cy, 17, 32, segment.start, segment.end)}
+            fill={segment.fill}
+          />
+        ))}
+        <circle cx={cx} cy={cy} r="15" fill="#faf9f5" />
       </>
     );
   }

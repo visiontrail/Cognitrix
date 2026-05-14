@@ -39,6 +39,7 @@ type ChatState = {
   setMessages: (sessionId: string, messages: ChatMessage[]) => void;
   appendMessage: (sessionId: string, message: ChatMessage) => void;
   replaceMessage: (sessionId: string, messageId: string, message: ChatMessage) => void;
+  resetConversation: (sessionId: string) => void;
   setPendingIngestionApproval: (
     sessionId: string,
     pending: PendingIngestionApproval | null
@@ -351,6 +352,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
       persistChatState(nextState);
       return { messagesBySession: nextState.messagesBySession };
+    }),
+
+  resetConversation: (sessionId) =>
+    set((state) => {
+      const existingMessages = state.messagesBySession[sessionId] ?? [];
+      const messageIds = new Set(existingMessages.map((message) => message.id));
+      const traceByMessageId = Object.fromEntries(
+        Object.entries(state.traceByMessageId).filter(([messageId]) => !messageIds.has(messageId))
+      );
+      const pendingIngestionBySession = { ...state.pendingIngestionBySession };
+      const pendingIngestionSetupBySession = { ...state.pendingIngestionSetupBySession };
+      delete pendingIngestionBySession[sessionId];
+      delete pendingIngestionSetupBySession[sessionId];
+      const sessions = state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              lastMessage: "",
+              messageCount: 0,
+              updatedAt: new Date().toISOString(),
+            }
+          : session
+      );
+      const messagesBySession = {
+        ...state.messagesBySession,
+        [sessionId]: [],
+      };
+      const nextState = {
+        ...state,
+        sessions,
+        messagesBySession,
+        pendingIngestionBySession,
+        pendingIngestionSetupBySession,
+        traceByMessageId,
+      };
+      persistChatState(nextState);
+      persistTrace(traceByMessageId);
+      return {
+        sessions,
+        messagesBySession,
+        pendingIngestionBySession,
+        pendingIngestionSetupBySession,
+        traceByMessageId,
+      };
     }),
 
   setPendingIngestionApproval: (sessionId, pending) =>

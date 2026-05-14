@@ -486,6 +486,14 @@ class AgentSessionStore:
             conn.execute("DELETE FROM agent_sessions")
             conn.commit()
 
+    def delete(self, conversation_id: str) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "DELETE FROM agent_sessions WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            conn.commit()
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -791,6 +799,11 @@ class AgentRuntime:
             self._hot_sessions.clear()
         if clear_persisted:
             self._store.clear()
+
+    def reset_session(self, conversation_id: str) -> None:
+        with self._lock:
+            self._hot_sessions.pop(conversation_id, None)
+        self._store.delete(conversation_id)
 
     def get_persisted_session(self, conversation_id: str) -> AgentSessionState | None:
         return self._store.load(conversation_id)

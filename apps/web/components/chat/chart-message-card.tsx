@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback } from "react";
-import { LayoutDashboard, Copy, RefreshCw, Maximize2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { toBlob } from "html-to-image";
+import { LayoutDashboard, Copy, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { useAssetStore } from "@/stores/asset-store";
+import { useChatStore } from "@/stores/chat-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
+import { stopChatResponse } from "@/hooks/use-chat";
+import { API_BASE_URL } from "@/lib/api-base";
+import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session";
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
@@ -18,6 +23,13 @@ import type { ChartNodeData } from "@/types/workspace";
 
 const DEFAULT_CHART_NODE_WIDTH = 520;
 const DEFAULT_CHART_NODE_HEIGHT = 380;
+const DEFAULT_AUTH_CONTEXT = {
+  userId: process.env.NEXT_PUBLIC_DEFAULT_USER_ID ?? "demo-user",
+  projectId: process.env.NEXT_PUBLIC_DEFAULT_PROJECT_ID ?? "demo-project",
+  role: process.env.NEXT_PUBLIC_DEFAULT_ROLE ?? "hr",
+  department: process.env.NEXT_PUBLIC_DEFAULT_DEPARTMENT ?? "HR",
+  clearance: Number(process.env.NEXT_PUBLIC_DEFAULT_CLEARANCE ?? 1),
+};
 
 type ChartMessageCardProps = {
   assetId: string;
@@ -27,7 +39,12 @@ type ChartMessageCardProps = {
 
 export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCardProps) {
   const { t } = useI18n();
+  const chartCaptureRef = useRef<HTMLDivElement>(null);
+  const [isCopying, setIsCopying] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const getAsset = useAssetStore((s) => s.getAsset);
+  const setComposerText = useChatStore((s) => s.setComposerText);
+  const resetConversation = useChatStore((s) => s.resetConversation);
   const addNode = useWorkspaceStore((s) => s.addNode);
   const addNodeToWebDesign = useWorkspaceStore((s) => s.addNodeToWebDesign);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
@@ -83,6 +100,72 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
     toast.success(t("chat.toast.addedToWorkspace", { title: asset.title, canvasName }));
   }, [asset, activeWorkspaceId, nodes.length, canvasFormat.id, addNode, addNodeToWebDesign, setActivePanel, t, canvasName]);
 
+  const handleCopyAsPng = useCallback(async () => {
+    if (!asset || !chartCaptureRef.current) {
+      toast.error(t("chat.toast.chartAssetNotFound"));
+      return;
+    }
+    if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
+      toast.error(t("chat.toast.clipboardImageUnsupported"));
+      return;
+    }
+
+    setIsCopying(true);
+    try {
+      const blob = await toBlob(chartCaptureRef.current, {
+        backgroundColor: "#f5f0e8",
+        pixelRatio: 2,
+      });
+      if (!blob) {
+        throw new Error("png_export_failed");
+      }
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "image/png": blob,
+        }),
+      ]);
+      toast.success(t("chat.toast.chartCopiedAsPng"));
+    } catch {
+      toast.error(t("chat.toast.chartCopyFailed"));
+    } finally {
+      setIsCopying(false);
+    }
+  }, [asset, t]);
+
+  const handleRegenerate = useCallback(async () => {
+    const prompt = asset?.sourceMeta.prompt?.trim();
+    const sessionId = asset?.sourceMeta.sessionId?.trim();
+    if (!prompt) {
+      toast.error(t("chat.toast.regeneratePromptMissing"));
+      return;
+    }
+    if (!sessionId) {
+      toast.error(t("chat.toast.regenerateSessionMissing"));
+      return;
+    }
+
+    setIsRegenerating(true);
+    stopChatResponse(sessionId);
+    resetConversation(sessionId);
+    try {
+      await resetBackendConversation({
+        conversationId: sessionId,
+        workspaceId: activeWorkspaceId,
+      });
+      toast.success(t("chat.toast.regenerateReady"));
+    } catch {
+      toast.error(t("chat.toast.regenerateContextResetFailed"));
+    } finally {
+      setComposerText(prompt);
+      requestAnimationFrame(() => {
+        const composer = document.querySelector<HTMLTextAreaElement>("[data-chat-composer='true']");
+        composer?.focus();
+        composer?.setSelectionRange(prompt.length, prompt.length);
+      });
+      setIsRegenerating(false);
+    }
+  }, [activeWorkspaceId, asset, resetConversation, setComposerText, t]);
+
   return (
     <Card className="w-full max-w-lg overflow-hidden animate-fade-in">
       <CardHeader className="pb-2">
@@ -94,7 +177,10 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
 
       <CardContent className="pb-3">
         {asset ? (
-          <div className="rounded-comfortable overflow-hidden border border-border-cream bg-parchment">
+          <div
+            ref={chartCaptureRef}
+            className="rounded-comfortable overflow-hidden border border-border-cream bg-parchment"
+          >
             <ChartPreview spec={asset.spec} height={220} />
           </div>
         ) : (
@@ -117,7 +203,13 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleCopyAsPng}
+                disabled={!asset || isCopying}
+                aria-label={t("chat.duplicate")}
+              >
                 <Copy className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
@@ -126,23 +218,47 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleRegenerate}
+                disabled={!asset || isRegenerating}
+                aria-label={t("chat.regenerate")}
+              >
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t("chat.regenerate")}</TooltipContent>
           </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm">
-                <Maximize2 className="w-3.5 h-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t("chat.fullScreen")}</TooltipContent>
-          </Tooltip>
         </div>
       </CardContent>
     </Card>
   );
+}
+
+async function resetBackendConversation({
+  conversationId,
+  workspaceId,
+}: {
+  conversationId: string;
+  workspaceId: string | null;
+}): Promise<void> {
+  const authContext = getActiveAuthContext(DEFAULT_AUTH_CONTEXT);
+  const authorizationHeader = await getAuthorizationHeader(API_BASE_URL, authContext);
+  const response = await fetch(`${API_BASE_URL}/chat/session/reset`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authorizationHeader,
+    },
+    body: JSON.stringify({
+      user_id: authContext.userId,
+      project_id: authContext.projectId,
+      workspace_id: workspaceId,
+      conversation_id: conversationId,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`chat_session_reset_failed_${response.status}`);
+  }
 }

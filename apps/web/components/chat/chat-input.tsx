@@ -395,6 +395,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           <div className="relative flex-1">
             <textarea
               ref={textareaRef}
+              data-chat-composer="true"
               value={composerText}
               aria-label={t("chat.inputAriaLabel")}
               aria-autocomplete="list"

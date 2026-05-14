@@ -115,6 +115,13 @@ class ChatTitleRequest(BaseModel):
     locale: str = "en"
 
 
+class ChatSessionResetRequest(BaseModel):
+    user_id: str
+    project_id: str
+    conversation_id: str
+    workspace_id: str | None = None
+
+
 class SaveViewRequest(BaseModel):
     user_id: str
     project_id: str
@@ -507,6 +514,48 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/chat/session/reset")
+async def reset_chat_session(
+    request: ChatSessionResetRequest,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, Any]:
+    ensure_scope(identity, user_id=request.user_id, project_id=request.project_id)
+    workspace_id = (request.workspace_id or "").strip() or None
+    if workspace_id is not None:
+        try:
+            get_workspace_service().assert_workspace_access(
+                workspace_id=workspace_id,
+                user_id=identity.user_id,
+                minimum_role="viewer",
+            )
+        except WorkspaceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    conversation_id = request.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_conversation_id",
+                "message": "conversation_id is required",
+            },
+        )
+
+    get_chat_stream_service().reset_conversation(conversation_id)
+    get_audit_logger().log(
+        event_type="query",
+        action="chat_session_reset",
+        status="success",
+        user_id=identity.user_id,
+        project_id=identity.project_id,
+        detail={
+            "conversation_id": conversation_id,
+            "workspace_id": workspace_id,
+        },
+    )
+    return {"status": "reset", "conversation_id": conversation_id}
 
 
 @app.post("/chat/title")

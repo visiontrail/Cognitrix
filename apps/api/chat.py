@@ -95,6 +95,10 @@ class ChatSessionStore:
                 self._sessions[conversation_id] = session
             session.context.update(updates)
 
+    def clear_conversation(self, *, conversation_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(conversation_id, None)
+
     def clear(self) -> None:
         with self._lock:
             self._sessions.clear()
@@ -304,6 +308,10 @@ class ChatStreamService:
     def clear_runtime_state(self) -> None:
         self.sessions.clear()
         self.agent_runtime.clear_runtime_state()
+
+    def reset_conversation(self, conversation_id: str) -> None:
+        self.sessions.clear_conversation(conversation_id=conversation_id)
+        self.agent_runtime.reset_session(conversation_id)
 
     def _generate_event_payloads(
         self,

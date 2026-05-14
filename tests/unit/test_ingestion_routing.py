@@ -19,14 +19,20 @@ def test_route_prefers_write_for_active_ingestion_status() -> None:
     assert decision.reason == "ingestion_lifecycle_active"
 
 
-def test_route_matches_write_intent_keywords() -> None:
+def test_route_falls_back_to_query_for_write_intent_text_only() -> None:
+    """Free-form text intent no longer forces the write-ingestion route.
+
+    Without a file attachment or an active ingestion job, even a clearly
+    write-flavored message routes to `query`. The query agent is responsible
+    for recognising the intent and guiding the user to the upload affordance.
+    """
     decision = select_agent_route(
         message="请帮我导入这个月项目进度",
         has_files=False,
         ingestion_job_status=None,
     )
-    assert decision.route == "write_ingestion"
-    assert decision.reason == "matched_write_intent_keyword"
+    assert decision.route == "query"
+    assert decision.reason == "default_query_route"
 
 
 def test_route_falls_back_to_query() -> None:

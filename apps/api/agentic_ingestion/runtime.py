@@ -206,7 +206,12 @@ INGESTION_AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "business_type": {
                     "type": "string",
-                    "enum": ["roster", "project_progress", "attendance", "other"],
+                    "description": (
+                        "Free-form snake_case business classification (e.g. roster, "
+                        "project_progress, attendance, sales_pipeline, inventory). "
+                        "Propose the value that best describes the upload — the system "
+                        "does not enforce a fixed vocabulary."
+                    ),
                 },
                 "write_mode": {
                     "type": "string",
@@ -460,9 +465,11 @@ Tool order for a NEW table (no catalog entry yet):
 3. list_existing_tables — check for existing tables
 4. create_catalog_entry — infer table_name, human_label, business_type, write_mode,
    primary_keys, and match_columns from the upload content. Use snake_case for table_name.
-   For HR employee uploads: business_type=roster, infer an employee-id column as primary_key.
-   For attendance records: business_type=attendance.
-   For project data: business_type=project_progress.
+   `business_type` is FREE-FORM snake_case: propose whatever label best describes the
+   upload (e.g. roster, project_progress, attendance, sales_pipeline, inventory,
+   customer_feedback, …). Do not feel constrained to a fixed menu; pick the value a
+   human analyst would use to categorise this file. Reuse an existing label from
+   get_workspace_catalog when the upload clearly belongs to that category.
 5. describe_table_schema — verify the entry was created (should return {found: true})
 6. build_diff_preview — compute the write impact from the real target table state
 7. generate_write_sql_draft — draft the SQL
@@ -2756,11 +2763,10 @@ class WriteIngestionAgentRuntime:
         *,
         tool_trace: list[dict[str, Any]],
     ) -> None:
-        _VALID_BUSINESS_TYPES = {"roster", "project_progress", "attendance", "other"}
         existing = raw_output.get("agent_guess")
         if isinstance(existing, dict):
             bt = str(existing.get("business_type") or "").strip()
-            if bt not in _VALID_BUSINESS_TYPES:
+            if not bt:
                 existing["business_type"] = "other"
             raw_conf = existing.get("confidence")
             try:
@@ -2775,7 +2781,7 @@ class WriteIngestionAgentRuntime:
         for item in reversed(tool_trace):
             result = item.get("result") if isinstance(item.get("result"), dict) else {}
             bt = str(result.get("business_type") or "").strip()
-            if bt in _VALID_BUSINESS_TYPES:
+            if bt:
                 inferred_type = bt
                 break
         raw_output["agent_guess"] = {
@@ -2786,9 +2792,15 @@ class WriteIngestionAgentRuntime:
 
     @staticmethod
     def _normalize_raw_plan_output(raw_output: dict[str, Any]) -> None:
-        """Coerce obvious field-level issues before Pydantic validation."""
+        """Coerce field-level issues before Pydantic validation.
+
+        Only execution-coupled enums (write_mode, time_grain, recommended_action)
+        are normalised against a fixed set, because downstream SQL generation
+        branches on those exact values. The free-form `business_type` is no
+        longer coerced — the agent is trusted to propose whatever value best
+        describes the upload.
+        """
         _VALID_STATUSES = {"awaiting_catalog_setup", "awaiting_user_approval"}
-        _VALID_BUSINESS_TYPES = {"roster", "project_progress", "attendance", "other"}
         _VALID_ACTIONS = {"update_existing", "time_partitioned_new_table", "new_table", "cancel"}
         _VALID_TIME_GRAINS = {"none", "month", "quarter", "year"}
         _VALID_WRITE_MODES = {"update_existing", "time_partitioned_new_table", "new_table"}
@@ -2805,8 +2817,8 @@ class WriteIngestionAgentRuntime:
         # Normalize suggested_catalog_seed if present
         seed = raw_output.get("suggested_catalog_seed")
         if isinstance(seed, dict):
-            bt = str(seed.get("business_type") or "other").strip()
-            if bt not in _VALID_BUSINESS_TYPES:
+            bt = str(seed.get("business_type") or "").strip()
+            if not bt:
                 seed["business_type"] = "other"
             wm = str(seed.get("write_mode") or "new_table").strip()
             if wm not in _VALID_WRITE_MODES:
@@ -2822,8 +2834,8 @@ class WriteIngestionAgentRuntime:
         # Normalize proposal if present
         proposal = raw_output.get("proposal")
         if isinstance(proposal, dict):
-            bt = str(proposal.get("business_type") or "other").strip()
-            if bt not in _VALID_BUSINESS_TYPES:
+            bt = str(proposal.get("business_type") or "").strip()
+            if not bt:
                 proposal["business_type"] = "other"
             ra = str(proposal.get("recommended_action") or "update_existing").strip()
             if ra not in _VALID_ACTIONS:

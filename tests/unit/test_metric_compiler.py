@@ -31,14 +31,31 @@ def test_metric_compiler_generates_explainable_sql() -> None:
     assert compiled.explain["metric_source"]["entity"] == "workforce"
 
 
-def test_metric_compiler_parses_intent_to_query_ast() -> None:
+def test_metric_compiler_parses_exact_metric_name_to_query_ast() -> None:
+    """IntentParser now only accepts exact matches against name/label/synonym.
+
+    Group-by and filters are no longer extracted from the intent string —
+    the BI agent is responsible for passing them explicitly via tool args.
+    """
     registry = get_semantic_registry()
     parser = IntentParser(registry)
 
-    query_ast = parser.parse("按部门看离职率")
+    query_ast = parser.parse("attrition_rate")
 
     assert query_ast.metric == "attrition_rate"
-    assert query_ast.group_by == ["department"]
+    assert query_ast.group_by == []
+    assert query_ast.filters == []
+
+
+def test_metric_compiler_rejects_unrecognised_intent_text() -> None:
+    """Free-form keyword phrases no longer map to metrics."""
+    registry = get_semantic_registry()
+    parser = IntentParser(registry)
+
+    with pytest.raises(MetricCompileError) as exc_info:
+        parser.parse("按部门看离职率")
+
+    assert exc_info.value.code == "INTENT_NOT_UNDERSTOOD"
 
 
 def test_metric_compiler_returns_structured_error_for_unknown_metric() -> None:

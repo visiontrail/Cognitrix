@@ -20,10 +20,16 @@ def test_chart_strategy_defaults_to_recharts_for_simple_query() -> None:
     assert spec["engine"] == "recharts"
     assert spec["chart_type"] == "bar"
     assert spec["config"]["xKey"] == "department"
-    assert spec["route"]["complexity_score"] < router.COMPLEXITY_THRESHOLD
+    assert "complexity_score" not in spec["route"]
 
 
-def test_chart_strategy_switches_to_echarts_for_complex_query() -> None:
+def test_chart_strategy_respects_caller_supplied_chart_type() -> None:
+    """The router no longer overrides chart_type based on row counts or keywords.
+
+    When the caller (the agent) supplies a chart_type the router must honour it
+    — engine selection follows from the chart_type, not from heuristic
+    complexity scoring.
+    """
     router = ChartStrategyRouter()
     rows = [{"department": f"D-{index:02d}", "metric_value": index} for index in range(1, 21)]
 
@@ -32,17 +38,19 @@ def test_chart_strategy_switches_to_echarts_for_complex_query() -> None:
         intent="show trend distribution top departments",
         rows=rows,
         group_by=["department", "project"],
+        chart_type="line",
     )
 
     assert spec["engine"] == "echarts"
-    assert spec["chart_type"] in {"line", "bar"}
+    assert spec["chart_type"] == "line"
     assert "option" in spec["config"]
     option = spec["config"]["option"]
     assert option["xAxis"]["type"] == "category"
     assert len(option["series"][0]["data"]) == len(rows)
 
 
-def test_chart_strategy_uses_negative_bar_for_negative_metrics() -> None:
+def test_chart_strategy_uses_negative_bar_default_for_negative_metrics() -> None:
+    """Negative-value defaults still apply when the caller did not pick a type."""
     router = ChartStrategyRouter()
     rows = [
         {"department": "HR", "metric_value": -3},
@@ -75,5 +83,6 @@ def test_chart_strategy_returns_explainable_route_reason() -> None:
     )
 
     assert decision.reasons
-    assert any("selected_engine" in item for item in decision.reasons)
-    assert isinstance(decision.complexity_score, int)
+    assert any("engine=" in item for item in decision.reasons)
+    assert decision.chart_type == "bar"
+    assert decision.engine == "recharts"

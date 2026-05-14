@@ -1604,8 +1604,6 @@ class AgentRuntime:
             "data": rows,
             "config": config,
             "route": {
-                "complexity_score": len(rows) + (3 if series_key else 1),
-                "threshold": self.router.COMPLEXITY_THRESHOLD,
                 "reasons": ["claude_agent_sdk"],
                 "selected_engine": engine,
             },
@@ -1667,8 +1665,6 @@ class AgentRuntime:
             "data": [],
             "config": {},
             "route": {
-                "complexity_score": 0,
-                "threshold": self.router.COMPLEXITY_THRESHOLD,
                 "reasons": ["agent_no_answer"],
                 "selected_engine": "recharts",
             },

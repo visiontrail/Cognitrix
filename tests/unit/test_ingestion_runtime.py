@@ -198,22 +198,38 @@ def test_recover_proposal_from_completed_tool_trace_without_structured_output() 
     assert recovered.human_approval.mechanism == "frontend_approval_card"
 
 
-def test_normalize_raw_plan_output_injects_defaults_for_catalog_setup() -> None:
+def test_normalize_raw_plan_output_preserves_free_form_business_type() -> None:
+    """`business_type` is now free-form; only execution-coupled enums are coerced."""
     raw: dict = {
         "status": "awaiting_catalog_setup",
         "suggested_catalog_seed": {
             "table_name": "employees",
             "human_label": "Employees",
-            "business_type": "INVALID",
+            "business_type": "sales_pipeline",
             "write_mode": "INVALID",
             "time_grain": "INVALID",
         },
     }
     WriteIngestionAgentRuntime._normalize_raw_plan_output(raw)  # noqa: SLF001
     seed = raw["suggested_catalog_seed"]
-    assert seed["business_type"] == "other"
+    assert seed["business_type"] == "sales_pipeline"
     assert seed["write_mode"] == "new_table"
     assert seed["time_grain"] == "none"
+
+
+def test_normalize_raw_plan_output_fills_empty_business_type() -> None:
+    raw: dict = {
+        "status": "awaiting_catalog_setup",
+        "suggested_catalog_seed": {
+            "table_name": "employees",
+            "human_label": "Employees",
+            "business_type": "",
+            "write_mode": "new_table",
+            "time_grain": "none",
+        },
+    }
+    WriteIngestionAgentRuntime._normalize_raw_plan_output(raw)  # noqa: SLF001
+    assert raw["suggested_catalog_seed"]["business_type"] == "other"
 
 
 def test_inject_agent_guess_fills_missing_guess() -> None:
@@ -224,10 +240,11 @@ def test_inject_agent_guess_fills_missing_guess() -> None:
     assert raw["agent_guess"]["confidence"] == 0.5
 
 
-def test_inject_agent_guess_repairs_invalid_business_type() -> None:
-    raw: dict = {"agent_guess": {"business_type": "WRONG", "confidence": 0.9}}
+def test_inject_agent_guess_preserves_free_form_business_type() -> None:
+    """Agent-proposed business_type values pass through unchanged."""
+    raw: dict = {"agent_guess": {"business_type": "customer_feedback", "confidence": 0.9}}
     WriteIngestionAgentRuntime._inject_agent_guess_if_missing(raw, tool_trace=[])  # noqa: SLF001
-    assert raw["agent_guess"]["business_type"] == "other"
+    assert raw["agent_guess"]["business_type"] == "customer_feedback"
     assert raw["agent_guess"]["confidence"] == 0.9
 
 

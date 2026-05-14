@@ -24,8 +24,6 @@ from urllib import request as urllib_request
 
 logger = logging.getLogger("cognitrix.schema_inference")
 
-# Threshold: run inference when more than this fraction of columns are unrecognized
-INFERENCE_THRESHOLD = 0.4
 # Max sample values sent per column to the LLM (keeps prompt small)
 _MAX_SAMPLE_VALUES = 5
 
@@ -228,8 +226,12 @@ def load_schema_overlay(*, meta_dir: Path, batch_id: str) -> dict[str, Any] | No
 
 
 def should_run_inference(unrecognized_columns: list[str], total_columns: int) -> bool:
-    """Return True when a significant fraction of columns are unrecognized."""
-    if total_columns == 0:
-        return False
-    ratio = len(unrecognized_columns) / total_columns
-    return ratio >= INFERENCE_THRESHOLD
+    """Return True whenever any column needs LLM-driven canonicalisation.
+
+    The previous implementation gated inference behind an arbitrary 40%
+    threshold. Any unrecognised column is now enough to trigger the LLM,
+    letting the model decide what to canonicalise rather than relying on a
+    magic ratio.
+    """
+    _ = total_columns
+    return bool(unrecognized_columns)

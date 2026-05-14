@@ -8,60 +8,19 @@ from typing import Any
 class ChartRouteDecision:
     engine: str
     chart_type: str
-    complexity_score: int
     reasons: list[str]
 
 
 class ChartStrategyRouter:
-    COMPLEXITY_THRESHOLD = 6
-    COMPLEXITY_KEYWORDS = (
-        "trend",
-        "走势",
-        "distribution",
-        "分布",
-        "heatmap",
-        "热力",
-        "scatter",
-        "散点",
-        "clustering",
-        "cluster",
-        "聚类",
-        "correlation",
-        "相关",
-        "compare",
-        "对比",
-        "top",
-        "treemap",
-        "树图",
-        "矩形树图",
-        "sunburst",
-        "旭日",
-        "sankey",
-        "桑基",
-        "radar",
-        "雷达",
-        "funnel",
-        "漏斗",
-        "multiple funnel",
-        "multiple funnels",
-        "funnel-mutiple",
-        "funnel-multiple",
-        "多漏斗",
-        "gauge",
-        "仪表盘",
-        "boxplot",
-        "箱线",
-        "graph",
-        "关系图",
-        "网络图",
-        "negative",
-        "负数",
-        "正负",
-        "盈亏",
-        "差异",
-        "变化量",
-        "净变化",
-    )
+    """Thin chart routing for the legacy `/semantic/query` endpoint.
+
+    The primary BI flow runs through the Claude Agent SDK, which lets the model
+    pick `chart_type`/`engine` directly based on its understanding of the
+    question and the returned data. This router only exists for callers that
+    do not go through the agent (legacy semantic query). It deliberately makes
+    no keyword-, threshold-, or row-count-based decisions: when the caller
+    supplies a `chart_type`, we trust it; otherwise we default to a bar chart.
+    """
 
     def route(
         self,
@@ -69,26 +28,18 @@ class ChartStrategyRouter:
         intent: str,
         rows: list[dict[str, Any]],
         group_by: list[str],
+        chart_type: str | None = None,
+        engine: str | None = None,
     ) -> ChartRouteDecision:
-        score, reasons = self._score_complexity(intent=intent, rows=rows, group_by=group_by)
-        has_negative_value = self._has_negative_metric(rows)
-        engine = "echarts" if score >= self.COMPLEXITY_THRESHOLD or has_negative_value else "recharts"
-        chart_type = self._pick_chart_type(
-            engine=engine,
-            rows=rows,
-            group_by=group_by,
-            has_negative_value=has_negative_value,
+        _ = intent
+        resolved_chart_type = (chart_type or "").strip() or self._default_chart_type(
+            rows=rows, group_by=group_by
         )
-        if has_negative_value:
-            reasons.append("negative_metric_value")
-        reasons.append(
-            f"complexity_score={score}, threshold={self.COMPLEXITY_THRESHOLD}, selected_engine={engine}"
-        )
+        resolved_engine = (engine or "").strip() or self._engine_for_chart_type(resolved_chart_type)
         return ChartRouteDecision(
-            engine=engine,
-            chart_type=chart_type,
-            complexity_score=score,
-            reasons=reasons,
+            engine=resolved_engine,
+            chart_type=resolved_chart_type,
+            reasons=[f"chart_type={resolved_chart_type}", f"engine={resolved_engine}"],
         )
 
     def build_spec(
@@ -98,18 +49,24 @@ class ChartStrategyRouter:
         intent: str,
         rows: list[dict[str, Any]],
         group_by: list[str],
+        chart_type: str | None = None,
+        engine: str | None = None,
     ) -> dict[str, Any]:
-        decision = self.route(intent=intent, rows=rows, group_by=group_by)
+        decision = self.route(
+            intent=intent,
+            rows=rows,
+            group_by=group_by,
+            chart_type=chart_type,
+            engine=engine,
+        )
         normalized_rows, x_key = self._normalize_rows(rows=rows, group_by=group_by)
 
-        base = {
+        base: dict[str, Any] = {
             "engine": decision.engine,
             "chart_type": decision.chart_type,
             "title": metric,
             "data": normalized_rows,
             "route": {
-                "complexity_score": decision.complexity_score,
-                "threshold": self.COMPLEXITY_THRESHOLD,
                 "reasons": decision.reasons,
                 "selected_engine": decision.engine,
             },
@@ -137,7 +94,7 @@ class ChartStrategyRouter:
             "series": [
                 {
                     "name": metric,
-                    "type": "line" if len(categories) > 10 else "bar",
+                    "type": decision.chart_type if decision.chart_type in {"line", "bar"} else "bar",
                     "smooth": True,
                     "data": values,
                 }
@@ -146,62 +103,25 @@ class ChartStrategyRouter:
         base["config"] = {"option": option}
         return base
 
-    def _score_complexity(
+    def _default_chart_type(
         self,
         *,
-        intent: str,
         rows: list[dict[str, Any]],
         group_by: list[str],
-    ) -> tuple[int, list[str]]:
-        score = 0
-        reasons: list[str] = []
-
-        row_count = len(rows)
-        if row_count > 12:
-            score += 2
-            reasons.append("result_rows>12")
-        if row_count > 50:
-            score += 2
-            reasons.append("result_rows>50")
-        if row_count > 200:
-            score += 2
-            reasons.append("result_rows>200")
-
-        if len(group_by) >= 2:
-            score += 2
-            reasons.append("multi_dimension_group_by")
-
-        if group_by:
-            unique_values = {str(row.get(group_by[0], "")) for row in rows}
-            if len(unique_values) > 8:
-                score += 2
-                reasons.append("high_category_cardinality")
-
-        lowered_intent = intent.lower()
-        if any(keyword in lowered_intent for keyword in self.COMPLEXITY_KEYWORDS):
-            score += 2
-            reasons.append("complex_intent_keyword")
-
-        if not reasons:
-            reasons.append("simple_query_shape")
-
-        return score, reasons
-
-    def _pick_chart_type(
-        self,
-        *,
-        engine: str,
-        rows: list[dict[str, Any]],
-        group_by: list[str],
-        has_negative_value: bool = False,
     ) -> str:
-        if has_negative_value and group_by:
+        if self._has_negative_metric(rows) and group_by:
             return "negative_bar"
-        if engine == "echarts":
-            return "line" if len(rows) > 10 else "bar"
         if not group_by:
             return "single_value"
         return "bar"
+
+    @staticmethod
+    def _engine_for_chart_type(chart_type: str) -> str:
+        # Recharts owns only the simple, default chart shapes. Any explicit
+        # request for a richer type (line, scatter, treemap, heatmap, …) goes
+        # to ECharts so we honour the caller's intent without second-guessing.
+        recharts_supported = {"bar", "table", "single_value"}
+        return "recharts" if chart_type in recharts_supported else "echarts"
 
     def _normalize_rows(
         self,
@@ -221,7 +141,6 @@ class ChartStrategyRouter:
                     normalized.append(row)
             return normalized, x_key
 
-        # Ensure frontend can always render an empty state without null checks.
         return [], (group_by[0] if group_by else "label")
 
     def _has_negative_metric(self, rows: list[dict[str, Any]]) -> bool:

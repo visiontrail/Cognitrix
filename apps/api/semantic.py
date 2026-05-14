@@ -119,104 +119,64 @@ class CompiledQuery:
 
 
 class IntentParser:
-    GROUP_BY_HINTS = {
-        "department": "department",
-        "部门": "department",
-        "manager": "manager",
-        "经理": "manager",
-        "project": "project",
-        "项目": "project",
-        "region": "region",
-        "地区": "region",
-    }
+    """Resolve free-form intent strings to a semantic metric AST.
 
-    FILTER_PATTERNS = [
-        ("department", re.compile(r"(?:department|dept|部门)\s*[:=：]\s*([\w\-\u4e00-\u9fff]+)", re.IGNORECASE)),
-        ("status", re.compile(r"(?:status|状态)\s*[:=：]\s*([\w\-\u4e00-\u9fff]+)", re.IGNORECASE)),
-        ("project", re.compile(r"(?:project|项目)\s*[:=：]\s*([\w\-\u4e00-\u9fff]+)", re.IGNORECASE)),
-    ]
+    The parser deliberately performs no keyword extraction or fuzzy scoring:
+    upstream callers (the BI agent) are responsible for picking the metric
+    name from `get_metric_catalog` and supplying `group_by` / `filters`
+    through structured tool arguments. This parser only handles the legacy
+    `/semantic/query` endpoint, where it accepts an exact metric name,
+    label, or synonym match. Anything ambiguous is rejected so callers must
+    disambiguate rather than rely on rule-based guesswork.
+    """
 
     def __init__(self, registry: SemanticRegistry) -> None:
         self.registry = registry
 
     def parse(self, intent: str) -> SemanticQueryAST:
-        normalized = intent.strip().lower()
+        normalized = intent.strip()
         if not normalized:
             raise MetricCompileError(
                 code="EMPTY_INTENT",
                 message="Intent cannot be empty",
             )
 
-        metric = self._best_metric_match(normalized)
-        entity = self.registry.entities[metric.entity]
+        metric = self._exact_metric_match(normalized)
+        return SemanticQueryAST(metric=metric.name, group_by=[], filters=[])
 
-        group_by = self._parse_group_by(normalized=normalized, entity=entity)
-        filters = self._parse_filters(normalized=normalized, entity=entity)
-
-        return SemanticQueryAST(metric=metric.name, group_by=group_by, filters=filters)
-
-    def _best_metric_match(self, normalized: str) -> MetricDefinition:
-        best_metric: MetricDefinition | None = None
-        best_score = 0
+    def _exact_metric_match(self, intent: str) -> MetricDefinition:
+        lowered = intent.lower()
+        matches: list[MetricDefinition] = []
 
         for metric in self.registry.metrics.values():
-            score = self._score_metric(metric=metric, normalized=normalized)
-            if score > best_score:
-                best_score = score
-                best_metric = metric
+            if metric.name.lower() == lowered:
+                return metric
+            if metric.label and metric.label.lower() == lowered:
+                matches.append(metric)
+                continue
+            for synonym in metric.synonyms:
+                if synonym.strip().lower() == lowered:
+                    matches.append(metric)
+                    break
 
-        if not best_metric:
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
             raise MetricCompileError(
-                code="INTENT_NOT_UNDERSTOOD",
-                message="Unable to map intent to a known metric",
+                code="INTENT_AMBIGUOUS",
+                message=(
+                    "Intent matches multiple metrics; pass the canonical metric "
+                    "name explicitly via tool arguments."
+                ),
+                details=sorted({metric.name for metric in matches}),
             )
-        return best_metric
-
-    def _score_metric(self, *, metric: MetricDefinition, normalized: str) -> int:
-        score = 0
-        canonical = metric.name.replace("_", " ").lower()
-        if metric.name.lower() in normalized:
-            score += 6
-        if canonical in normalized:
-            score += 4
-
-        label = metric.label.lower()
-        if label and label in normalized:
-            score += 5
-
-        for synonym in metric.synonyms:
-            token = synonym.lower().strip()
-            if token and token in normalized:
-                score += 3
-
-        return score
-
-    def _parse_group_by(self, *, normalized: str, entity: EntityDefinition) -> list[str]:
-        group_by: list[str] = []
-
-        for keyword, dimension in self.GROUP_BY_HINTS.items():
-            if keyword in normalized and dimension in entity.dimension_names and dimension not in group_by:
-                group_by.append(dimension)
-
-        if "按部门" in normalized and "department" in entity.dimension_names and "department" not in group_by:
-            group_by.append("department")
-        if "按项目" in normalized and "project" in entity.dimension_names and "project" not in group_by:
-            group_by.append("project")
-
-        return group_by
-
-    def _parse_filters(self, *, normalized: str, entity: EntityDefinition) -> list[QueryFilter]:
-        filters: list[QueryFilter] = []
-
-        for field_name, pattern in self.FILTER_PATTERNS:
-            match = pattern.search(normalized)
-            if not match:
-                continue
-            if field_name not in entity.dimension_names:
-                continue
-            filters.append(QueryFilter(field=field_name, op="eq", value=match.group(1)))
-
-        return filters
+        raise MetricCompileError(
+            code="INTENT_NOT_UNDERSTOOD",
+            message=(
+                "Unable to map intent to a known metric. Use get_metric_catalog "
+                "and supply the exact metric name plus explicit group_by/filters."
+            ),
+        )
 
 
 class MetricCompiler:

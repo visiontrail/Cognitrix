@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# Reference business_type vocabulary surfaced to the agent in prompts. The
+# ingestion agent is free to propose new values; this tuple is advisory only.
 BUSINESS_TYPES = ("roster", "project_progress", "attendance", "other")
 PROPOSAL_ACTIONS = ("update_existing", "time_partitioned_new_table", "new_table", "cancel")
 TIME_GRAINS = ("none", "month", "quarter", "year")
@@ -54,7 +56,7 @@ class IngestionPlanRequest(BaseModel):
 
 
 class IngestionCatalogSetupSeed(BaseModel):
-    business_type: Literal["roster", "project_progress", "attendance", "other"] = "other"
+    business_type: str = "other"
     table_name: str = Field(min_length=1, max_length=128)
     human_label: str = Field(min_length=1, max_length=120)
     write_mode: Literal["update_existing", "time_partitioned_new_table", "new_table"] = "new_table"
@@ -130,7 +132,7 @@ class DiffPreview(BaseModel):
 
 
 class IngestionAgentGuess(BaseModel):
-    business_type: Literal["roster", "project_progress", "attendance", "other"]
+    business_type: str
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str = Field(default="", max_length=1000)
 
@@ -142,7 +144,7 @@ class IngestionSetupQuestion(BaseModel):
 
 
 class IngestionProposalPayload(BaseModel):
-    business_type: Literal["roster", "project_progress", "attendance", "other"]
+    business_type: str
     confidence: float = Field(ge=0.0, le=1.0)
     recommended_action: Literal[
         "update_existing",

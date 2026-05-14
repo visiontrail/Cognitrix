@@ -23,9 +23,14 @@ from .data_policy import filter_schema_columns, redact_rows
 from .datasets import SAFE_IDENTIFIER_RE, get_dataset_service
 from .workspaces import WorkspaceError, get_workspace_service
 
+# `BUSINESS_TYPES` is an advisory vocabulary surfaced to the agent in prompts;
+# the catalog accepts any free-form snake_case string the agent proposes.
 BUSINESS_TYPES = ("roster", "project_progress", "attendance", "other")
+# `WRITE_MODES` and `TIME_GRAINS` ARE enforced — downstream SQL generation
+# branches on these exact values, so unknown values would be unexecutable.
 WRITE_MODES = ("update_existing", "time_partitioned_new_table", "new_table", "append_only")
 TIME_GRAINS = ("none", "month", "quarter", "year")
+BUSINESS_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 TABLE_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 logger = logging.getLogger("cognitrix.table_catalog")
 
@@ -47,7 +52,7 @@ class TableCatalogError(Exception):
 class TableCatalogEntryUpdateRequest(BaseModel):
     table_name: str | None = Field(default=None, min_length=1, max_length=128)
     human_label: str | None = Field(default=None, min_length=1, max_length=120)
-    business_type: Literal["roster", "project_progress", "attendance", "other"] | None = None
+    business_type: str | None = None
     write_mode: Literal[
         "update_existing",
         "time_partitioned_new_table",
@@ -69,6 +74,20 @@ class TableCatalogEntryUpdateRequest(BaseModel):
         if not TABLE_NAME_PATTERN.match(normalized):
             raise ValueError("table_name must be a valid SQL identifier")
         return normalized.lower()
+
+    @field_validator("business_type")
+    @classmethod
+    def validate_business_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("business_type cannot be empty")
+        if not BUSINESS_TYPE_PATTERN.match(normalized):
+            raise ValueError(
+                "business_type must be snake_case ASCII (a-z, 0-9, _; start with a letter)"
+            )
+        return normalized
 
     @field_validator("human_label")
     @classmethod
@@ -262,7 +281,7 @@ class TableCatalogService:
         self,
         *,
         workspace_id: str,
-        business_type: Literal["roster", "project_progress", "attendance", "other"],
+        business_type: str,
     ) -> dict[str, Any] | None:
         normalized_workspace_id = workspace_id.strip()
 
@@ -561,7 +580,7 @@ async def list_table_catalog_entries(
 @router.get("/active-target")
 async def get_active_catalog_target(
     workspace_id: str,
-    business_type: Literal["roster", "project_progress", "attendance", "other"],
+    business_type: str,
     identity: AuthIdentity = Depends(require_permission("workspaces:read")),
 ) -> dict[str, Any]:
     _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="viewer")

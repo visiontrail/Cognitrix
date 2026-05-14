@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartPreview } from "@/components/charts/chart-preview";
+import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/charts/kpi-options";
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { isRecord } from "@/lib/utils";
 import type { ChartSpec, ChartType, KnownChartType } from "@/types/chart";
@@ -184,16 +185,10 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
   if (chartType === "single_value" || chartType === "gauge") {
     const yKey = configuredYKey ?? inferYKey(rows, null);
     const value = rows.length > 0 && yKey ? asNumber(rows[0]?.[yKey]) : 0;
-    return {
-      title: { text: title, left: "center" },
-      series: [
-        {
-          type: "gauge",
-          detail: { formatter: "{value}" },
-          data: [{ value, name: configuredYKey ?? yKey ?? "value" }],
-        },
-      ],
-    };
+    const name = configuredYKey ?? yKey ?? "value";
+    return chartType === "gauge"
+      ? buildGaugeFallbackOption({ title, value, name })
+      : buildSingleValueFallbackOption({ title, value, name });
   }
 
   if (!FALLBACK_OPTION_TYPES.has(chartType as KnownChartType)) {

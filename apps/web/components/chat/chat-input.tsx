@@ -1099,7 +1099,7 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     );
   }
 
-  if (type === "gauge" || type === "single_value") {
+  if (type === "gauge") {
     return (
       <>
         <path d="M88 126 A72 72 0 0 1 232 126" fill="none" stroke="#d9d3c4" strokeWidth="18" strokeLinecap="round" />
@@ -1107,6 +1107,17 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
         <line x1="160" y1="126" x2="198" y2="82" stroke="#4d4c48" strokeWidth="5" strokeLinecap="round" />
         <circle cx="160" cy="126" r="8" fill="#4d4c48" />
         <text x="160" y="158" textAnchor="middle" fontSize="26" fontWeight="700" fill="#141413">76</text>
+      </>
+    );
+  }
+
+  if (type === "single_value") {
+    return (
+      <>
+        <rect x="72" y="42" width="176" height="96" rx="8" fill="#faf9f5" stroke="#d9d3c4" strokeWidth="2" />
+        <rect x="72" y="42" width="6" height="96" rx="3" fill="#4b7f8c" />
+        <text x="160" y="94" textAnchor="middle" fontSize="42" fontWeight="800" fill="#141413">76</text>
+        <text x="160" y="120" textAnchor="middle" fontSize="14" fontWeight="600" fill="#777066">metric_value</text>
       </>
     );
   }

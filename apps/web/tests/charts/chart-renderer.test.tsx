@@ -140,6 +140,44 @@ describe("ChartRenderer", () => {
     expect(data[1]).toMatchObject({ value: 3 });
   });
 
+  it("renders single_value as a KPI card and gauge as a dial", async () => {
+    const { rerender } = render(
+      <ChartRenderer
+        spec={{
+          engine: "echarts",
+          chart_type: "single_value",
+          title: "Headcount",
+          data: [{ metric_value: 76 }],
+          config: { yKey: "metric_value" }
+        }}
+      />
+    );
+
+    await waitFor(() => expect(setOptionMock).toHaveBeenCalled());
+    const singleValueOption = setOptionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(singleValueOption.series).toEqual([]);
+    expect(singleValueOption.graphic).toEqual(expect.any(Array));
+
+    setOptionMock.mockClear();
+    rerender(
+      <ChartRenderer
+        spec={{
+          engine: "echarts",
+          chart_type: "gauge",
+          title: "Completion",
+          data: [{ metric_value: 76 }],
+          config: { yKey: "metric_value" }
+        }}
+      />
+    );
+
+    await waitFor(() => expect(setOptionMock).toHaveBeenCalled());
+    const gaugeOption = setOptionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const series = gaugeOption.series as Array<Record<string, unknown>>;
+    expect(series[0]).toMatchObject({ type: "gauge" });
+    expect(gaugeOption.graphic).toBeUndefined();
+  });
+
   it("builds and registers a scatter clustering option", async () => {
     render(
       <ChartRenderer

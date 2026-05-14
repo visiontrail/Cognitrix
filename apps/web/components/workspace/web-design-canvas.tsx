@@ -10,6 +10,7 @@ import {
   Eye,
   Heading1,
   Heading2,
+  ImageDown,
   Minus,
   PanelLeft,
   Plus,
@@ -24,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { cn } from "@/lib/utils";
+import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
 import { extractChartRows } from "@/lib/workspace/chart-rows";
 import { publishWorkspace, fetchPublishHistory, fetchUsersByIds, type PublishHistoryItem, type VisibilityMode, type VisibilityPayload } from "@/lib/workspace/publish";
@@ -677,6 +679,8 @@ function GridZone({
   maxRows: number;
 }) {
   const { t } = useI18n();
+  const chartCaptureRef = useRef<HTMLDivElement>(null);
+  const [isCopying, setIsCopying] = useState(false);
   if (!node) return null;
   const handleDragStart = (event: DragEvent<HTMLElement>) => {
     if (preview) {
@@ -686,6 +690,26 @@ function GridZone({
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(WEB_DESIGN_ZONE_MIME, zone.id);
     event.dataTransfer.setData("text/plain", zone.id);
+  };
+  const handleCopyAsPng = async () => {
+    if (!chartCaptureRef.current) {
+      toast.error(t("chat.toast.chartAssetNotFound"));
+      return;
+    }
+    if (!canCopyPngToClipboard()) {
+      toast.error(t("chat.toast.clipboardImageUnsupported"));
+      return;
+    }
+
+    setIsCopying(true);
+    try {
+      await copyElementAsPngToClipboard(chartCaptureRef.current);
+      toast.success(t("chat.toast.chartCopiedAsPng"));
+    } catch {
+      toast.error(t("chat.toast.chartCopyFailed"));
+    } finally {
+      setIsCopying(false);
+    }
   };
 
   return (
@@ -768,19 +792,38 @@ function GridZone({
               </Tooltip>
             </div>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="h-5 w-5" onClick={onRemove}>
-                <Trash2 className="h-3 w-3 text-red-400" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t("workspace.webDesign.aria.removeZone")}</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-5 w-5"
+                  onClick={handleCopyAsPng}
+                  disabled={isCopying}
+                  aria-label={t("chat.duplicate")}
+                >
+                  <ImageDown className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("chat.duplicate")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className="h-5 w-5" onClick={onRemove}>
+                  <Trash2 className="h-3 w-3 text-red-400" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("workspace.webDesign.aria.removeZone")}</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       ) : (
         <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold">{node.data.title}</div>
       )}
-      <ChartPreview spec={node.data.spec} height={Math.max(180, zone.rowSpan * 260)} />
+      <div ref={chartCaptureRef} className="bg-parchment">
+        <ChartPreview spec={node.data.spec} height={Math.max(180, zone.rowSpan * 260)} />
+      </div>
     </section>
   );
 }

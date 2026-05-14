@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { toBlob } from "html-to-image";
 import { LayoutDashboard, Copy, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -18,6 +17,7 @@ import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
 
@@ -105,25 +105,14 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
       toast.error(t("chat.toast.chartAssetNotFound"));
       return;
     }
-    if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
+    if (!canCopyPngToClipboard()) {
       toast.error(t("chat.toast.clipboardImageUnsupported"));
       return;
     }
 
     setIsCopying(true);
     try {
-      const blob = await toBlob(chartCaptureRef.current, {
-        backgroundColor: "#f5f0e8",
-        pixelRatio: 2,
-      });
-      if (!blob) {
-        throw new Error("png_export_failed");
-      }
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "image/png": blob,
-        }),
-      ]);
+      await copyElementAsPngToClipboard(chartCaptureRef.current);
       toast.success(t("chat.toast.chartCopiedAsPng"));
     } catch {
       toast.error(t("chat.toast.chartCopyFailed"));

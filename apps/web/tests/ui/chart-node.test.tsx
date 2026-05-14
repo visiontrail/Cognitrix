@@ -1,12 +1,26 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { ChartNode } from "../../components/workspace/nodes/chart-node";
 import { useWorkspaceStore } from "../../stores/workspace-store";
 import type { ChartNodeData, WorkspaceNode } from "../../types/workspace";
+
+const toBlobMock = vi.fn();
+const clipboardWriteMock = vi.fn();
+
+vi.mock("html-to-image", () => ({
+  toBlob: (...args: unknown[]) => toBlobMock(...args),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
 
 const tableNodeData: ChartNodeData = {
   type: "chart",
@@ -48,6 +62,25 @@ function renderChartNode(data: ChartNodeData) {
 
 describe("ChartNode", () => {
   beforeEach(() => {
+    toBlobMock.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    clipboardWriteMock.mockResolvedValue(undefined);
+    class ClipboardItemMock {
+      constructor(public readonly items: Record<string, Blob>) {}
+    }
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: clipboardWriteMock,
+      },
+    });
+    Object.defineProperty(window, "ClipboardItem", {
+      configurable: true,
+      value: ClipboardItemMock,
+    });
+    Object.defineProperty(globalThis, "ClipboardItem", {
+      configurable: true,
+      value: ClipboardItemMock,
+    });
     useWorkspaceStore.setState({
       activeWorkspaceId: "ws-test",
       nodes: [
@@ -71,6 +104,8 @@ describe("ChartNode", () => {
   });
 
   afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
     useWorkspaceStore.setState({
       workspaces: [],
       activeWorkspaceId: null,
@@ -91,6 +126,23 @@ describe("ChartNode", () => {
       expect(state.nodes).toHaveLength(0);
       expect(state.edges).toHaveLength(0);
       expect(state.hasUnsavedChanges).toBe(true);
+    });
+  });
+
+  it("copies the rendered canvas chart to the clipboard as a PNG", async () => {
+    renderChartNode(tableNodeData);
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy as PNG image" }));
+
+    await waitFor(() => {
+      expect(toBlobMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        expect.objectContaining({
+          backgroundColor: "#f5f0e8",
+          pixelRatio: 2,
+        })
+      );
+      expect(clipboardWriteMock).toHaveBeenCalledTimes(1);
     });
   });
 });

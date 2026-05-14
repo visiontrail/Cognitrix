@@ -11,6 +11,13 @@ import { DEFAULT_CANVAS_FORMAT } from "../../lib/workspace/canvas-formats";
 import { useWorkspaceStore } from "../../stores/workspace-store";
 import type { WorkspaceNode } from "../../types/workspace";
 
+const toBlobMock = vi.fn();
+const clipboardWriteMock = vi.fn();
+
+vi.mock("html-to-image", () => ({
+  toBlob: (...args: unknown[]) => toBlobMock(...args),
+}));
+
 vi.mock("@/components/charts/chart-preview", () => ({
   ChartPreview: () => <div data-testid="chart-preview" />,
 }));
@@ -61,6 +68,25 @@ function renderWithProviders(ui: React.ReactElement) {
 
 describe("WebDesignCanvas state", () => {
   beforeEach(() => {
+    toBlobMock.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    clipboardWriteMock.mockResolvedValue(undefined);
+    class ClipboardItemMock {
+      constructor(public readonly items: Record<string, Blob>) {}
+    }
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: clipboardWriteMock,
+      },
+    });
+    Object.defineProperty(window, "ClipboardItem", {
+      configurable: true,
+      value: ClipboardItemMock,
+    });
+    Object.defineProperty(globalThis, "ClipboardItem", {
+      configurable: true,
+      value: ClipboardItemMock,
+    });
     useWorkspaceStore.setState({
       activeWorkspaceId: "ws-test",
       nodes: [chartNode],
@@ -84,6 +110,8 @@ describe("WebDesignCanvas state", () => {
   });
 
   afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
     useWorkspaceStore.setState({
       workspaces: [],
       activeWorkspaceId: null,
@@ -166,6 +194,24 @@ describe("WebDesignCanvas state", () => {
     await userEvent.click(screen.getByRole("button", { name: "Decrease row span" }));
 
     expect(useWorkspaceStore.getState().webDesign.zones[0].rowSpan).toBe(1);
+  });
+
+  it("copies a Web Page Design chart zone to the clipboard as a PNG", async () => {
+    useWorkspaceStore.getState().placeWebDesignZone("node-chart", 0, 0);
+    renderWithProviders(<WebDesignCanvas />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy as PNG image" }));
+
+    await waitFor(() => {
+      expect(toBlobMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        expect.objectContaining({
+          backgroundColor: "#f5f0e8",
+          pixelRatio: 2,
+        })
+      );
+      expect(clipboardWriteMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("keeps sidebar nesting at two levels", () => {

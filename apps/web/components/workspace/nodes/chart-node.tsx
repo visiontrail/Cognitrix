@@ -1,16 +1,18 @@
 "use client";
 
-import { memo, useState, useCallback } from "react";
+import { memo, useRef, useState, useCallback } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { GripVertical, Trash2, Pencil, Check, X, Copy } from "lucide-react";
+import { GripVertical, Trash2, Pencil, Check, X, Copy, ImageDown } from "lucide-react";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { generateId } from "@/lib/utils";
+import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
 import { ResizableNode } from "./resizable-node";
 
@@ -23,6 +25,7 @@ const CHART_NODE_HEADER_HEIGHT = 48;
 function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
   const { t } = useI18n();
   const nodeData = data as unknown as ChartNodeData;
+  const chartCaptureRef = useRef<HTMLDivElement>(null);
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const removeNode = useWorkspaceStore((s) => s.removeNode);
   const addNode = useWorkspaceStore((s) => s.addNode);
@@ -30,6 +33,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(nodeData.title);
+  const [isCopying, setIsCopying] = useState(false);
 
   const handleSaveTitle = useCallback(() => {
     updateNode(id, { data: { ...nodeData, title: editTitle } as any });
@@ -56,6 +60,27 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
       data: { ...nodeData, width: duplicateWidth, height: duplicateHeight },
     });
   }, [id, nodeData, nodes, addNode]);
+
+  const handleCopyAsPng = useCallback(async () => {
+    if (!chartCaptureRef.current) {
+      toast.error(t("chat.toast.chartAssetNotFound"));
+      return;
+    }
+    if (!canCopyPngToClipboard()) {
+      toast.error(t("chat.toast.clipboardImageUnsupported"));
+      return;
+    }
+
+    setIsCopying(true);
+    try {
+      await copyElementAsPngToClipboard(chartCaptureRef.current);
+      toast.success(t("chat.toast.chartCopiedAsPng"));
+    } catch {
+      toast.error(t("chat.toast.chartCopyFailed"));
+    } finally {
+      setIsCopying(false);
+    }
+  }, [t]);
 
   const nodeWidth = width ?? nodeData.width ?? DEFAULT_CHART_NODE_WIDTH;
   const nodeHeight = height ?? nodeData.height ?? DEFAULT_CHART_NODE_HEIGHT;
@@ -137,6 +162,20 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
               <Button
                 variant="ghost"
                 size="icon-sm"
+                onClick={handleCopyAsPng}
+                disabled={isCopying}
+                aria-label={t("chat.duplicate")}
+              >
+                <ImageDown className="w-3 h-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("chat.duplicate")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 onClick={handleDuplicate}
                 aria-label={t("workspace.node.duplicateChart", { title: nodeData.title })}
               >
@@ -166,7 +205,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
       </div>
 
       {/* Chart */}
-      <div className="p-1">
+      <div ref={chartCaptureRef} className="p-1 bg-parchment">
         <ChartPreview
           spec={nodeData.spec}
           height={chartHeight}

@@ -3098,29 +3098,39 @@ class WriteIngestionAgentRuntime:
         requested_by: str,
         message: str | None,
     ) -> str:
-        return json.dumps(
-            {
-                "task": "Build the next write ingestion lifecycle output.",
-                "workspace_id": workspace_id,
-                "job_id": job_id,
-                "upload_id": upload_id,
-                "requested_by": requested_by,
-                "user_message": message or "",
-                "required_tool_sequence": [
-                    "inspect_upload",
-                    "If inspect_upload.sheet_summary.structured_candidates exists, use the recommended_catalog_seed and primary_table columns from that candidate instead of raw Excel headers",
-                    "get_workspace_catalog",
-                    "list_existing_tables",
-                    "IF no catalog entry exists → call create_catalog_entry to create one (infer schema from upload columns)",
-                    "describe_table_schema — verify the catalog entry exists; if {found:false} after create_catalog_entry → return awaiting_catalog_setup",
-                    "build_diff_preview only when describe_table_schema returned {found:true}; pass workspace_id, upload_id, target_table, action_mode, match_columns, and the inferred column_mapping",
-                    "generate_write_sql_draft only when describe_table_schema returned {found:true}",
-                    "return awaiting_user_approval with complete proposal; proposal.candidate_actions and human_approval.options must match build_diff_preview.candidate_actions",
-                ],
-                "available_proposal_actions": DEFAULT_ACTION_OPTIONS,
-            },
-            ensure_ascii=False,
-        )
+        user_instruction_hint = (
+            "IMPORTANT: The user has provided a custom instruction: "
+            f'"{message}". '
+            "Search get_workspace_catalog and list_existing_tables results for a table whose "
+            "human_label, table_name, or description matches the user's intent. "
+            "If a matching existing table is found, set target_table to that table's name and "
+            "use update_existing as the recommended action — do NOT call create_catalog_entry. "
+            "Only create a new catalog entry if no matching table exists."
+        ) if message and message.strip() else None
+        prompt: dict[str, Any] = {
+            "task": "Build the next write ingestion lifecycle output.",
+            "workspace_id": workspace_id,
+            "job_id": job_id,
+            "upload_id": upload_id,
+            "requested_by": requested_by,
+            "user_message": message or "",
+            "required_tool_sequence": [
+                "inspect_upload",
+                "If inspect_upload.sheet_summary.structured_candidates exists, use the recommended_catalog_seed and primary_table columns from that candidate instead of raw Excel headers",
+                "get_workspace_catalog",
+                "list_existing_tables",
+                "IF user_message references an existing table by name or label → use that table as target_table with update_existing action; skip create_catalog_entry",
+                "IF no matching existing catalog entry → call create_catalog_entry to create one (infer schema from upload columns)",
+                "describe_table_schema — verify the catalog entry exists; if {found:false} after create_catalog_entry → return awaiting_catalog_setup",
+                "build_diff_preview only when describe_table_schema returned {found:true}; pass workspace_id, upload_id, target_table, action_mode, match_columns, and the inferred column_mapping",
+                "generate_write_sql_draft only when describe_table_schema returned {found:true}",
+                "return awaiting_user_approval with complete proposal; proposal.candidate_actions and human_approval.options must match build_diff_preview.candidate_actions",
+            ],
+            "available_proposal_actions": DEFAULT_ACTION_OPTIONS,
+        }
+        if user_instruction_hint:
+            prompt["user_instruction_guidance"] = user_instruction_hint
+        return json.dumps(prompt, ensure_ascii=False)
 
     @staticmethod
     def _consume_ingestion_sdk_message(

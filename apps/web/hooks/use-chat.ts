@@ -183,6 +183,17 @@ export function useSendMessage() {
                   pending: pendingApproval,
                 });
           if (!resolvedAction) {
+            if (trimmedContent) {
+              useChatStore.getState().clearPendingIngestionApproval(sessionId);
+              return await runIngestionRePlanningWithInstruction({
+                sessionId,
+                workspaceId,
+                pending: pendingApproval,
+                instruction: trimmedContent,
+                signal: abortController.signal,
+                t,
+              });
+            }
             throw new Error(
               t("chat.ingestion.awaitingApprovalInvalidChoice", {
                 options: formatPendingApprovalOptions({
@@ -790,6 +801,116 @@ async function runIngestionConversationResponse({
       streamIngestionPlan({ workspaceId, jobId: upload.jobId, conversationId: sessionId, message: content, signal }),
       messageId,
     );
+    traceHasError = planHasError;
+    if (!planPayload) {
+      throw new Error(planErrorMessage ?? t("chat.requestFailed"));
+    }
+
+    const plan = mapPlanLikePayload(planPayload);
+
+    store.endTrace(messageId, traceHasError ? "error" : "final");
+
+    const trace = useChatStore.getState().traceByMessageId[messageId];
+    const traceSteps = trace?.steps ?? [];
+    const toolCallCount = traceSteps.filter((s) => s.kind === "tool").length;
+    const durationMs = trace ? (trace.endedAt ?? Date.now()) - trace.startedAt : 0;
+
+    if (plan?.status === "awaiting_catalog_setup") {
+      useChatStore.getState().setPendingIngestionSetup(sessionId, { upload, plan });
+    } else if (plan?.status === "awaiting_user_approval") {
+      useChatStore.getState().setPendingIngestionApproval(sessionId, { upload, plan });
+    }
+
+    const assistantMessage: ChatMessage = {
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      content: buildIngestionSummaryMessage({
+        upload,
+        plan,
+        approvalResult: null,
+        executionResult: null,
+        t,
+      }),
+      timestamp: new Date().toISOString(),
+      traceSummary:
+        traceSteps.length > 0
+          ? { stepCount: toolCallCount, durationMs, status: traceHasError ? "error" : "ok" }
+          : undefined,
+    };
+    return {
+      assistantMessage,
+      chartAsset: undefined,
+      preAppended: true,
+    };
+  } catch (err) {
+    if (isAbortError(err)) {
+      store.endTrace(messageId, "closed");
+      return {
+        assistantMessage: buildStoppedAssistantMessage({ sessionId, messageId, t }),
+        chartAsset: undefined,
+        preAppended: true,
+      };
+    }
+    store.endTrace(messageId, "error");
+    removePlaceholder();
+    throw err;
+  }
+}
+
+async function runIngestionRePlanningWithInstruction({
+  sessionId,
+  workspaceId,
+  pending,
+  instruction,
+  signal,
+  t,
+}: {
+  sessionId: string;
+  workspaceId: string;
+  pending: PendingIngestionApproval;
+  instruction: string;
+  signal?: AbortSignal;
+  t: TranslateFn;
+}): Promise<AssistantResponse> {
+  const messageId = `msg-${generateId()}`;
+  const traceStartedAt = Date.now();
+  const store = useChatStore.getState();
+  store.startTrace(messageId, traceStartedAt);
+
+  const placeholder: ChatMessage = {
+    id: messageId,
+    sessionId,
+    role: "assistant",
+    content: "",
+    timestamp: new Date().toISOString(),
+  };
+  store.appendMessage(sessionId, placeholder);
+
+  const removePlaceholder = () => {
+    useChatStore.setState((s) => ({
+      messagesBySession: {
+        ...s.messagesBySession,
+        [sessionId]: (s.messagesBySession[sessionId] ?? []).filter((m) => m.id !== messageId),
+      },
+    }));
+  };
+
+  let traceHasError = false;
+  const upload = pending.upload;
+
+  try {
+    const { decisionPayload: planPayload, hasError: planHasError, errorMessage: planErrorMessage } =
+      await consumeIngestionStreamIntoTrace(
+        streamIngestionPlan({
+          workspaceId,
+          jobId: upload.jobId,
+          conversationId: sessionId,
+          message: instruction,
+          signal,
+        }),
+        messageId,
+      );
     traceHasError = planHasError;
     if (!planPayload) {
       throw new Error(planErrorMessage ?? t("chat.requestFailed"));

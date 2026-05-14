@@ -251,6 +251,7 @@ FINAL_ANSWER_OUTPUT_SCHEMA: dict[str, Any] = {
                 "radar",
                 "treemap",
                 "funnel",
+                "multiple_funnel",
                 "radialBar",
                 "composed",
                 "heatmap",
@@ -1517,7 +1518,7 @@ class AgentRuntime:
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "scatter_clustering", "treemap", "heatmap", "gauge", "sankey", "sunburst",
+        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "scatter_clustering", "treemap", "multiple_funnel", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -1568,7 +1569,7 @@ class AgentRuntime:
             # Normalise echarts chart_type to a valid catalog value
             echarts_catalog = {
                 "bar", "negative_bar", "line", "pie", "area", "grouped_bar", "stacked_bar", "stacked_line", "scatter", "scatter_clustering", "treemap", "heatmap",
-                "radar", "funnel", "gauge", "sankey", "sunburst",
+                "radar", "funnel", "multiple_funnel", "gauge", "sankey", "sunburst",
                 "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud", "table",
             }
             echarts_ct = chart_type if chart_type in echarts_catalog else "bar"
@@ -1627,6 +1628,16 @@ class AgentRuntime:
             "scatter-cluster": "scatter_clustering",
             "clustered_scatter": "scatter_clustering",
             "clustered-scatter": "scatter_clustering",
+            "funnelmutiple": "multiple_funnel",
+            "funnel-mutiple": "multiple_funnel",
+            "funnel_mutiple": "multiple_funnel",
+            "funnelmultiple": "multiple_funnel",
+            "funnel-multiple": "multiple_funnel",
+            "funnel_multiple": "multiple_funnel",
+            "multiplefunnel": "multiple_funnel",
+            "multiple-funnel": "multiple_funnel",
+            "multiple-funnels": "multiple_funnel",
+            "multiple_funnels": "multiple_funnel",
         }
         aliased = aliases.get(chart_type.lower())
         if aliased:
@@ -2392,6 +2403,8 @@ def _build_echarts_option(
         return _echarts_radar_option(rows=rows, x_key=x_key, y_key=y_key, metric_name=metric_name)
     if chart_type == "funnel":
         return _echarts_funnel_option(rows=rows, x_key=x_key, y_key=y_key)
+    if chart_type == "multiple_funnel":
+        return _echarts_multiple_funnel_option(rows=rows, x_key=x_key, y_key=y_key, title=title)
     if chart_type == "gauge":
         return _echarts_gauge_option(rows=rows, y_key=y_key, title=title)
     if chart_type == "sankey":
@@ -2876,6 +2889,68 @@ def _echarts_funnel_option(
         "tooltip": {"trigger": "item"},
         "legend": {},
         "series": [{"type": "funnel", "left": "10%", "width": "80%", "data": data, "label": {"show": True, "position": "inside"}}],
+    }
+
+
+def _echarts_multiple_funnel_option(
+    *,
+    rows: list[dict[str, Any]],
+    x_key: str,
+    y_key: str,
+    title: str,
+) -> dict[str, Any]:
+    data = [
+        {"name": str(row.get(x_key, f"stage-{index + 1}")), "value": _coerce_chart_number(row.get(y_key, 0))}
+        for index, row in enumerate(rows)
+    ]
+    legend_data = [item["name"] for item in data]
+
+    return {
+        "title": {"text": title, "left": "left", "top": "bottom"},
+        "tooltip": {"trigger": "item", "formatter": "{a}<br/>{b}: {c}"},
+        "legend": {"orient": "vertical", "left": "left", "data": legend_data},
+        "series": [
+            {
+                "name": "Funnel",
+                "type": "funnel",
+                "width": "40%",
+                "height": "45%",
+                "left": "5%",
+                "top": "50%",
+                "data": data,
+            },
+            {
+                "name": "Pyramid",
+                "type": "funnel",
+                "width": "40%",
+                "height": "45%",
+                "left": "5%",
+                "top": "5%",
+                "sort": "ascending",
+                "data": data,
+            },
+            {
+                "name": "Funnel",
+                "type": "funnel",
+                "width": "40%",
+                "height": "45%",
+                "left": "55%",
+                "top": "5%",
+                "label": {"position": "left"},
+                "data": data,
+            },
+            {
+                "name": "Pyramid",
+                "type": "funnel",
+                "width": "40%",
+                "height": "45%",
+                "left": "55%",
+                "top": "50%",
+                "sort": "ascending",
+                "label": {"position": "left"},
+                "data": data,
+            },
+        ],
     }
 
 

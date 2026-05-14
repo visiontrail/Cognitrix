@@ -941,6 +941,23 @@ function ChartExampleShape({ type }: { type: QueryChartType }) {
     );
   }
 
+  if (type === "multiple_funnel") {
+    return (
+      <>
+        <path d="M42 34 H138 L122 58 H58 Z" fill="#4b7f8c" />
+        <path d="M58 64 H122 L112 88 H68 Z" fill="#c96442" />
+        <path d="M70 94 H110 L102 118 H78 Z" fill="#9bb7a5" />
+        <path d="M58 148 H122 L110 124 H70 Z" fill="#4b7f8c" opacity="0.75" />
+        <path d="M42 174 H138 L122 150 H58 Z" fill="#c96442" opacity="0.75" />
+        <path d="M182 34 H278 L262 58 H198 Z" fill="#4b7f8c" />
+        <path d="M198 64 H262 L252 88 H208 Z" fill="#c96442" />
+        <path d="M210 94 H250 L242 118 H218 Z" fill="#9bb7a5" />
+        <path d="M198 148 H262 L250 124 H210 Z" fill="#4b7f8c" opacity="0.75" />
+        <path d="M182 174 H278 L262 150 H198 Z" fill="#c96442" opacity="0.75" />
+      </>
+    );
+  }
+
   if (type === "radar") {
     return (
       <>

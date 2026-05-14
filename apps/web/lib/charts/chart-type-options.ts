@@ -14,6 +14,7 @@ export type QueryChartType = Extract<
   | "scatter_clustering"
   | "pie"
   | "funnel"
+  | "multiple_funnel"
   | "radar"
   | "treemap"
   | "sunburst"
@@ -120,6 +121,15 @@ const QUERY_CHART_TYPE_DEFINITIONS: ChartTypeOptionDefinition[] = [
     type: "funnel",
     label: { "en-US": "Funnel", "zh-CN": "漏斗图" },
     description: { "en-US": "Show pipeline or conversion stages.", "zh-CN": "展示流程或转化阶段。" },
+    group: { "en-US": "Process", "zh-CN": "流程" },
+  },
+  {
+    type: "multiple_funnel",
+    label: { "en-US": "Multiple funnels", "zh-CN": "多漏斗图" },
+    description: {
+      "en-US": "Compare funnel and pyramid stage views in one canvas.",
+      "zh-CN": "在同一画布中对照漏斗与金字塔阶段视图。",
+    },
     group: { "en-US": "Process", "zh-CN": "流程" },
   },
   {

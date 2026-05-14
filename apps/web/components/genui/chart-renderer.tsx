@@ -61,6 +61,7 @@ const SUPPORTED_CHART_TYPES = new Set<KnownChartType>([
   "scatter_clustering",
   "radar",
   "funnel",
+  "multiple_funnel",
   "radialBar",
   "composed",
   "gauge",
@@ -115,6 +116,16 @@ const CHART_TYPE_ALIASES: Record<string, KnownChartType> = {
   "radial_bar": "radialBar",
   "wordcloud": "wordCloud",
   "word_cloud": "wordCloud",
+  "funnelmutiple": "multiple_funnel",
+  "funnel-mutiple": "multiple_funnel",
+  "funnel_mutiple": "multiple_funnel",
+  "funnelmultiple": "multiple_funnel",
+  "funnel-multiple": "multiple_funnel",
+  "funnel_multiple": "multiple_funnel",
+  "multiplefunnel": "multiple_funnel",
+  "multiple-funnel": "multiple_funnel",
+  "multiple-funnels": "multiple_funnel",
+  "multiple_funnels": "multiple_funnel",
 };
 const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "bar",
@@ -129,6 +140,7 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "scatter_clustering",
   "radar",
   "funnel",
+  "multiple_funnel",
   "treemap",
   "single_value",
   "gauge",
@@ -252,6 +264,43 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
             name: String(row[xKey] ?? `item-${index + 1}`),
             value: asNumber(row[yKey]),
           })),
+        },
+      ],
+    };
+  }
+
+  if (chartType === "multiple_funnel") {
+    const data = rows.map((row, index) => ({
+      name: String(row[xKey] ?? `item-${index + 1}`),
+      value: asNumber(row[yKey]),
+    }));
+    return {
+      title: { text: title, left: "left", top: "bottom" },
+      tooltip: { trigger: "item", formatter: "{a}<br/>{b}: {c}" },
+      legend: { orient: "vertical", left: "left", data: data.map((item) => item.name) },
+      series: [
+        { name: "Funnel", type: "funnel", width: "40%", height: "45%", left: "5%", top: "50%", data },
+        { name: "Pyramid", type: "funnel", width: "40%", height: "45%", left: "5%", top: "5%", sort: "ascending", data },
+        {
+          name: "Funnel",
+          type: "funnel",
+          width: "40%",
+          height: "45%",
+          left: "55%",
+          top: "5%",
+          label: { position: "left" },
+          data,
+        },
+        {
+          name: "Pyramid",
+          type: "funnel",
+          width: "40%",
+          height: "45%",
+          left: "55%",
+          top: "50%",
+          sort: "ascending",
+          label: { position: "left" },
+          data,
         },
       ],
     };

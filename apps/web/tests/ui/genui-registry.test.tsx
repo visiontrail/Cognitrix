@@ -24,7 +24,7 @@ describe("GenUI registry", () => {
         }}
       />
     );
-    expect(screen.getByTestId("recharts-bar-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-chart")).toBeInTheDocument();
 
     render(
       <GenUIRegistry
@@ -37,6 +37,6 @@ describe("GenUI registry", () => {
         }}
       />
     );
-    expect(screen.getByTestId("chart-error")).toBeInTheDocument();
+    expect(screen.getByText("Unsupported chart spec format")).toBeInTheDocument();
   });
 });

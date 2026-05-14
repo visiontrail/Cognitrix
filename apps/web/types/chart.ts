@@ -11,6 +11,7 @@ export type KnownChartType =
   | "scatter_clustering"
   | "radar"
   | "funnel"
+  | "multiple_funnel"
   | "radialBar"
   | "composed"
   | "gauge"

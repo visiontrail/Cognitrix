@@ -601,6 +601,78 @@ def test_agent_runtime_retries_fresh_session_when_claude_resume_is_missing(
     assert result.ai_state["turn_count"] == 2
 
 
+def test_agent_runtime_builds_multiple_funnel_echarts_spec(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"stage": "Show", "conversion": 100},
+                {"stage": "Click", "conversion": 80},
+                {"stage": "Visit", "conversion": 60},
+                {"stage": "Inquiry", "conversion": 30},
+                {"stage": "Order", "conversion": 10},
+            ],
+        )
+
+        runtime = get_agent_runtime()
+        rows = [
+            {"stage": "Show", "metric_value": 100},
+            {"stage": "Click", "metric_value": 80},
+            {"stage": "Visit", "metric_value": 60},
+            {"stage": "Inquiry", "metric_value": 30},
+            {"stage": "Order", "metric_value": 10},
+        ]
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [
+                    _sql_tool_call(
+                        rows,
+                        'SELECT "stage", "metric_value" FROM dataset',
+                    )
+                ],
+                "final_answer": {
+                    "chart_type": "funnel",
+                    "title": "阶段转化多漏斗",
+                    "x_key": "stage",
+                    "y_key": "metric_value",
+                    "series_key": None,
+                    "metric_name": "conversion",
+                    "rows": rows,
+                    "conclusion": "转化随阶段推进递减。",
+                    "scope": "按转化阶段统计",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-multiple-funnel",
+                request_id="agent-runtime-req-multiple-funnel",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请用 ECharts funnel-mutiple 展示阶段转化",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                preferred_chart_type="funnel-mutiple",
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["engine"] == "echarts"
+    assert result.spec["chart_type"] == "multiple_funnel"
+    option = result.spec["config"]["option"]
+    assert option["legend"]["data"] == ["Show", "Click", "Visit", "Inquiry", "Order"]
+    assert len(option["series"]) == 4
+    assert all(item["type"] == "funnel" for item in option["series"])
+    assert option["series"][1]["sort"] == "ascending"
+    assert option["series"][3]["label"]["position"] == "left"
+
+
 def test_agent_runtime_builds_stacked_line_echarts_spec(monkeypatch, tmp_path: Path) -> None:
     set_agent_env(monkeypatch, tmp_path)
 

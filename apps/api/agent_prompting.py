@@ -71,6 +71,8 @@ def build_agent_system_prompt() -> str:
         "use when the user asks for clustering / 聚类 on two numeric variables.\n"
         "- `pie` — show proportion / share of a whole (≤ 10 slices ideal).\n"
         "- `funnel` — show conversion / pipeline stages.\n"
+        "- `multiple_funnel` — ECharts multiple-funnel layout with four funnel/pyramid views; "
+        "use when the user asks for funnel-mutiple, multiple funnels, or 多漏斗图.\n"
         "- `radar` — compare multiple dimensions for a few items.\n"
         "\n"
         "**Hierarchy & flow:**\n"

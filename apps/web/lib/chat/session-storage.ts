@@ -54,3 +54,14 @@ export function safeSaveToStorage<T>(key: string, value: T): void {
     // Ignore storage failures, UI should still function in memory.
   }
 }
+
+export function safeRemoveFromStorage(key: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Best-effort; mirroring safeSaveToStorage.
+  }
+}

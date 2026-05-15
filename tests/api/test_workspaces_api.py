@@ -169,3 +169,154 @@ def test_viewer_cannot_manage_workspace_members(monkeypatch, tmp_path: Path) -> 
             json={"user_id": "carol", "role": "viewer"},
         )
         expect_error_code(viewer_add_member, "WORKSPACE_FORBIDDEN", status_code=403)
+
+
+def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
+    """DELETE /workspaces/{id} must hard-delete the workspace and every row
+    in dependent ingestion + catalog tables, plus clean up DuckDB / upload
+    files on disk."""
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    import sqlite3 as _sqlite
+    from apps.api.workspaces import get_workspace_service
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
+
+        create_response = client.post(
+            "/workspaces",
+            json={"name": "Cascade Workspace"},
+            headers=owner_headers,
+        )
+        assert create_response.status_code == 200
+        workspace_id = create_response.json()["workspace_id"]
+
+        # Seed every workspace-keyed table with at least one row, plus the
+        # filesystem artifacts (DuckDB file + uploads directory) the cascade
+        # should reap.
+        service = get_workspace_service()
+        with service._connect() as conn:  # noqa: SLF001
+            conn.execute(
+                "INSERT INTO table_catalog (id, workspace_id, table_name, human_label, business_type, "
+                "write_mode, time_grain, primary_keys, match_columns, is_active_target, description, "
+                "created_by, updated_by) VALUES ('cat-1', ?, 'employees', 'Employees', 'roster', "
+                "'new_table', 'none', '[]', '[]', 1, '', 'alice', 'alice')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO table_column_metadata (workspace_id, table_name, column_name, ordinal_position) "
+                "VALUES (?, 'employees', 'employee_id', 1)",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ingestion_uploads (id, workspace_id, uploaded_by, file_name, storage_path, "
+                "size_bytes, file_hash) VALUES ('up-1', ?, 'alice', 'f.xlsx', '/tmp/f.xlsx', 0, 'h')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ingestion_jobs (id, workspace_id, upload_id, created_by, status) "
+                "VALUES ('job-1', ?, 'up-1', 'alice', 'awaiting_user_approval')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ingestion_proposals (id, job_id, workspace_id, proposal_version, "
+                "proposal_json, recommended_action) VALUES ('prop-1', 'job-1', ?, 1, '{}', 'update_existing')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ingestion_executions (id, job_id, proposal_id, workspace_id, executed_by, "
+                "execution_mode, validated_sql, status) VALUES ('exec-1', 'job-1', 'prop-1', ?, 'alice', "
+                "'update_existing', 'MERGE ...', 'succeeded')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ingestion_events (id, job_id, event_type, payload) "
+                "VALUES ('evt-1', 'job-1', 'planning', '{}')",
+            )
+            conn.commit()
+
+        # Create the per-workspace filesystem artefacts the deletion should reap.
+        upload_dir = tmp_path / "uploads"
+        duckdb_dir = upload_dir / "agentic_ingestion" / "duckdb"
+        duckdb_dir.mkdir(parents=True, exist_ok=True)
+        duckdb_file = duckdb_dir / f"{workspace_id}.duckdb"
+        duckdb_file.write_bytes(b"fake-duckdb")
+        uploads_root = upload_dir / "agentic_ingestion" / "raw" / workspace_id / "up-1"
+        uploads_root.mkdir(parents=True, exist_ok=True)
+        (uploads_root / "f.xlsx").write_bytes(b"fake-excel")
+
+        # No confirmation provided — backward compat path still deletes.
+        delete_response = client.request(
+            "DELETE",
+            f"/workspaces/{workspace_id}",
+            headers=owner_headers,
+        )
+        assert delete_response.status_code == 200, delete_response.text
+        body = delete_response.json()
+        assert body["status"] == "deleted"
+        counts = body["deleted_counts"]
+        # Every cascaded table must report exactly the rows we seeded.
+        assert counts["ingestion_executions"] == 1
+        assert counts["ingestion_proposals"] == 1
+        assert counts["ingestion_events"] == 1
+        assert counts["ingestion_jobs"] == 1
+        assert counts["ingestion_uploads"] == 1
+        assert counts["table_column_metadata"] == 1
+        assert counts["table_catalog"] == 1
+        assert counts["workspace_members"] == 1
+        assert counts["workspaces"] == 1
+
+        # SQL state: no row of the deleted workspace_id remains anywhere.
+        with service._connect() as conn:  # noqa: SLF001
+            assert conn.execute("SELECT COUNT(*) FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM table_catalog WHERE workspace_id = ?", (workspace_id,)).fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM ingestion_jobs WHERE workspace_id = ?", (workspace_id,)).fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM ingestion_events").fetchone()[0] == 0
+
+        # Filesystem state.
+        assert not duckdb_file.exists()
+        assert not (upload_dir / "agentic_ingestion" / "raw" / workspace_id).exists()
+
+        # And the workspace is gone from the API listing.
+        list_response = client.get("/workspaces", headers=owner_headers)
+        assert list_response.status_code == 200
+        assert list_response.json()["count"] == 0
+
+
+def test_delete_workspace_confirm_name_mismatch_rejects(monkeypatch, tmp_path: Path) -> None:
+    """Typed-confirmation guardrail: when a wrong name is supplied, the
+    delete must be rejected with WORKSPACE_DELETE_CONFIRM_MISMATCH and
+    nothing on disk or in SQL is touched."""
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
+        create_response = client.post(
+            "/workspaces",
+            json={"name": "Guarded Workspace"},
+            headers=owner_headers,
+        )
+        assert create_response.status_code == 200
+        workspace_id = create_response.json()["workspace_id"]
+
+        bad_confirm = client.request(
+            "DELETE",
+            f"/workspaces/{workspace_id}",
+            headers=owner_headers,
+            json={"confirm_workspace_name": "Not The Right Name"},
+        )
+        expect_error_code(bad_confirm, "WORKSPACE_DELETE_CONFIRM_MISMATCH", status_code=422)
+
+        # Workspace still listed because nothing was deleted.
+        listing = client.get("/workspaces", headers=owner_headers).json()
+        assert listing["count"] == 1
+
+        # Correct confirmation goes through.
+        good_confirm = client.request(
+            "DELETE",
+            f"/workspaces/{workspace_id}",
+            headers=owner_headers,
+            json={"confirm_workspace_name": "Guarded Workspace"},
+        )
+        assert good_confirm.status_code == 200
+        assert good_confirm.json()["status"] == "deleted"

@@ -24,6 +24,13 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -86,6 +93,19 @@ export function GlobalSidebar() {
   const createWorkspace = useCreateWorkspace();
   const deleteWorkspace = useDeleteWorkspace();
 
+  // Typed-confirmation modal for hard-delete. The user must retype the
+  // workspace name; the server-side guardrail will also reject mismatches,
+  // but we shortcut the round-trip here to keep the UX honest.
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const deleteConfirmInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (deleteConfirmTarget) {
+      setDeleteConfirmInput("");
+      requestAnimationFrame(() => deleteConfirmInputRef.current?.focus());
+    }
+  }, [deleteConfirmTarget?.id]);
+
   const handleNewChat = () => {
     createSession.mutate(undefined);
     if (activePanel === "workspace") setActivePanel("both");
@@ -114,6 +134,7 @@ export function GlobalSidebar() {
   };
 
   return (
+    <>
     <aside className="flex flex-col w-sidebar min-w-sidebar border-r border-border-cream bg-ivory h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-cream">
@@ -247,7 +268,11 @@ export function GlobalSidebar() {
                     title={ws.title}
                     subtitle={t("sidebar.itemCount", { count: ws.nodeCount })}
                     onClick={() => handleSelectWorkspace(ws.id)}
-                    onDelete={canDeleteWorkspace(ws.role) ? () => deleteWorkspace.mutate(ws.id) : undefined}
+                    onDelete={
+                      canDeleteWorkspace(ws.role)
+                        ? () => setDeleteConfirmTarget({ id: ws.id, title: ws.title })
+                        : undefined
+                    }
                     deleteAriaLabel={
                       canDeleteWorkspace(ws.role)
                         ? t("sidebar.deleteWorkspace", { title: ws.title })
@@ -339,6 +364,80 @@ export function GlobalSidebar() {
         </DropdownMenu>
       </div>
     </aside>
+    <Dialog
+      open={deleteConfirmTarget !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          setDeleteConfirmTarget(null);
+          setDeleteConfirmInput("");
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("workspace.delete.confirmTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("workspace.delete.confirmBody", { title: deleteConfirmTarget?.title ?? "" })}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <label
+            htmlFor="workspace-delete-confirm-input"
+            className="text-caption text-stone-gray"
+          >
+            {t("workspace.delete.confirmPromptLabel")}
+          </label>
+          <input
+            id="workspace-delete-confirm-input"
+            ref={deleteConfirmInputRef}
+            value={deleteConfirmInput}
+            onChange={(e) => setDeleteConfirmInput(e.target.value)}
+            placeholder={t("workspace.delete.confirmInputPlaceholder")}
+            className="w-full rounded-subtle border border-border-cream bg-warm-sand/40 px-3 py-2 text-body-sm text-near-black focus:outline-none focus:ring-2 focus:ring-error-crimson/40"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => {
+              setDeleteConfirmTarget(null);
+              setDeleteConfirmInput("");
+            }}
+            disabled={deleteWorkspace.isPending}
+          >
+            {t("workspace.delete.cancelButton")}
+          </Button>
+          <Button
+            variant="destructive"
+            type="button"
+            disabled={
+              !deleteConfirmTarget ||
+              deleteConfirmInput.trim() !== (deleteConfirmTarget?.title ?? "").trim() ||
+              deleteWorkspace.isPending
+            }
+            onClick={() => {
+              if (!deleteConfirmTarget) return;
+              deleteWorkspace.mutate(
+                {
+                  workspaceId: deleteConfirmTarget.id,
+                  confirmWorkspaceName: deleteConfirmTarget.title,
+                },
+                {
+                  onSettled: () => {
+                    setDeleteConfirmTarget(null);
+                    setDeleteConfirmInput("");
+                  },
+                }
+              );
+            }}
+          >
+            {t("workspace.delete.confirmButton")}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

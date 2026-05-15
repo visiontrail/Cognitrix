@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import shutil
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -10,17 +12,21 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from .agentic_ingestion.schema import initialize_sqlite_schema
+from .audit import get_audit_logger
 from .auth import AuthIdentity, get_current_identity, require_permission
 from .config import get_settings
+from .datasets import DuckDBSessionManager
 from .published_pages import (
     PublishWorkspaceRequest,
     get_published_page_store,
     get_snapshot_writer,
 )
+
+logger = logging.getLogger("cognitrix.workspaces")
 
 SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent
 ROLE_RANK: dict[str, int] = {
@@ -393,10 +399,41 @@ class WorkspaceService:
                 "updated_at": now,
             }
 
-    def deactivate_workspace(self, *, workspace_id: str, actor_user_id: str) -> dict[str, str]:
+    def deactivate_workspace(
+        self,
+        *,
+        workspace_id: str,
+        actor_user_id: str,
+        confirm_workspace_name: str | None = None,
+    ) -> dict[str, object]:
+        """Hard-delete a workspace and every piece of state attached to it.
+
+        Cascade order is fixed to satisfy the implicit FK graph in the SQLite
+        schema. Filesystem cleanup (workspace DuckDB file, uploaded raw files,
+        snapshot directory) runs AFTER the SQL transaction commits — failures
+        there are logged but do not roll back the SQL state, because by then
+        the rows are gone and a partial filesystem leak is preferable to a
+        zombie workspace whose UI listing is gone but whose data lingers.
+
+        ``confirm_workspace_name`` is the typed-confirmation guardrail. When
+        provided, it must equal the workspace's current ``name``; otherwise we
+        reject before touching anything. Callers (e.g. the sidebar delete
+        flow) are expected to pass it; legacy callers that omit it still get
+        the deletion (backward compat) but lose the safety net.
+        """
         normalized_workspace_id = workspace_id.strip()
         normalized_actor = actor_user_id.strip()
-        updated_at = _utc_now()
+        deleted_at = _utc_now()
+        normalized_confirm = (
+            confirm_workspace_name.strip() if confirm_workspace_name is not None else None
+        )
+
+        settings = get_settings()
+        upload_dir = settings.upload_dir
+        duckdb_file_path: Path | None = None
+        uploads_dir_to_remove: Path | None = None
+        deleted_counts: dict[str, int] = {}
+        workspace_name = ""
 
         with self._lock, self._connect() as conn:
             actor_member = self._get_member(
@@ -413,7 +450,7 @@ class WorkspaceService:
 
             workspace_row = conn.execute(
                 """
-                SELECT id, status
+                SELECT id, name, status
                 FROM workspaces
                 WHERE id = ?
                 """,
@@ -425,21 +462,165 @@ class WorkspaceService:
                     message="Workspace not found",
                     status_code=404,
                 )
+            workspace_name = str(workspace_row["name"])
 
-            conn.execute(
-                """
-                UPDATE workspaces
-                SET status = 'inactive', updated_at = ?
-                WHERE id = ?
-                """,
-                (updated_at, normalized_workspace_id),
+            if normalized_confirm is not None and normalized_confirm != workspace_name:
+                raise WorkspaceError(
+                    code="WORKSPACE_DELETE_CONFIRM_MISMATCH",
+                    message=(
+                        "Confirmation does not match the workspace name. "
+                        f"Type the workspace name '{workspace_name}' to confirm."
+                    ),
+                    status_code=422,
+                )
+
+            # Filesystem targets — resolve while we still know the workspace exists.
+            duckdb_file_path = DuckDBSessionManager(upload_dir).workspace_db_path(
+                normalized_workspace_id
             )
-            conn.commit()
+            uploads_dir_to_remove = (
+                upload_dir / "agentic_ingestion" / "raw" / normalized_workspace_id
+            ).resolve()
+
+            # Cascade DELETE order: leaves first, parents last. Each step is a
+            # plain DELETE that runs in the surrounding transaction. We capture
+            # rowcounts for the audit event.
+            cascade_plan: list[tuple[str, str]] = [
+                # ingestion_executions → ingestion_proposals → ingestion_jobs
+                (
+                    "ingestion_executions",
+                    "DELETE FROM ingestion_executions WHERE workspace_id = ?",
+                ),
+                (
+                    "ingestion_proposals",
+                    "DELETE FROM ingestion_proposals WHERE workspace_id = ?",
+                ),
+                (
+                    "ingestion_events",
+                    "DELETE FROM ingestion_events WHERE job_id IN ("
+                    "SELECT id FROM ingestion_jobs WHERE workspace_id = ?)",
+                ),
+                (
+                    "ingestion_jobs",
+                    "DELETE FROM ingestion_jobs WHERE workspace_id = ?",
+                ),
+                (
+                    "ingestion_uploads",
+                    "DELETE FROM ingestion_uploads WHERE workspace_id = ?",
+                ),
+                (
+                    "table_column_metadata",
+                    "DELETE FROM table_column_metadata WHERE workspace_id = ?",
+                ),
+                (
+                    "table_catalog",
+                    "DELETE FROM table_catalog WHERE workspace_id = ?",
+                ),
+                (
+                    "published_pages",
+                    "DELETE FROM published_pages WHERE workspace_id = ?",
+                ),
+                (
+                    "workspace_invites",
+                    "DELETE FROM workspace_invites WHERE workspace_id = ?",
+                ),
+                (
+                    "workspace_members",
+                    "DELETE FROM workspace_members WHERE workspace_id = ?",
+                ),
+                (
+                    "workspaces",
+                    "DELETE FROM workspaces WHERE id = ?",
+                ),
+            ]
+            try:
+                conn.execute("BEGIN")
+                for table_name, sql in cascade_plan:
+                    try:
+                        cursor = conn.execute(sql, (normalized_workspace_id,))
+                        deleted_counts[table_name] = int(cursor.rowcount or 0)
+                    except sqlite3.OperationalError as exc:
+                        # Tolerate missing tables (e.g. published_pages absent in a
+                        # fresh dev DB before that migration ran) — the rest of the
+                        # cascade still needs to commit.
+                        if "no such table" in str(exc).lower():
+                            deleted_counts[table_name] = 0
+                            logger.debug(
+                                "workspace_delete_skipped_missing_table table=%s workspace_id=%s",
+                                table_name,
+                                normalized_workspace_id,
+                            )
+                            continue
+                        raise
+                conn.execute("COMMIT")
+            except sqlite3.DatabaseError:
+                conn.execute("ROLLBACK")
+                raise
+
+        # Filesystem cleanup — best-effort after SQL commit. Log everything for
+        # an operator to chase down leaks; do not raise.
+        if duckdb_file_path is not None and duckdb_file_path.exists():
+            try:
+                duckdb_file_path.unlink()
+                logger.info(
+                    "workspace_delete_duckdb_removed workspace_id=%s path=%s",
+                    normalized_workspace_id,
+                    duckdb_file_path,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "workspace_delete_duckdb_remove_failed workspace_id=%s path=%s error=%s",
+                    normalized_workspace_id,
+                    duckdb_file_path,
+                    exc,
+                )
+
+        if uploads_dir_to_remove is not None and uploads_dir_to_remove.exists():
+            try:
+                shutil.rmtree(uploads_dir_to_remove)
+                logger.info(
+                    "workspace_delete_uploads_removed workspace_id=%s path=%s",
+                    normalized_workspace_id,
+                    uploads_dir_to_remove,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "workspace_delete_uploads_remove_failed workspace_id=%s path=%s error=%s",
+                    normalized_workspace_id,
+                    uploads_dir_to_remove,
+                    exc,
+                )
+
+        try:
+            get_audit_logger().log(
+                event_type="workspace_lifecycle",
+                action="workspace.delete",
+                status="ok",
+                user_id=normalized_actor,
+                resource=normalized_workspace_id,
+                detail={
+                    "workspace_name": workspace_name,
+                    "deleted_counts": deleted_counts,
+                    "duckdb_file_existed": bool(
+                        duckdb_file_path and not duckdb_file_path.exists()
+                    ),
+                    "uploads_dir_existed": bool(
+                        uploads_dir_to_remove and not uploads_dir_to_remove.exists()
+                    ),
+                },
+            )
+        except Exception as audit_exc:  # noqa: BLE001 — audit is best-effort
+            logger.warning(
+                "workspace_delete_audit_failed workspace_id=%s error=%s",
+                normalized_workspace_id,
+                audit_exc,
+            )
 
         return {
             "workspace_id": normalized_workspace_id,
-            "status": "inactive",
-            "updated_at": updated_at,
+            "status": "deleted",
+            "deleted_at": deleted_at,
+            "deleted_counts": deleted_counts,
         }
 
     def add_member(
@@ -836,16 +1017,26 @@ async def rename_workspace(
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
+class DeleteWorkspaceRequest(BaseModel):
+    """Optional body for DELETE /workspaces/{id} carrying the typed
+    confirmation. Backward-compatible: callers that send no body still get
+    the deletion (with no name guardrail), so old clients keep working."""
+
+    confirm_workspace_name: str | None = None
+
+
 @router.delete("/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
+    request: DeleteWorkspaceRequest | None = Body(default=None),
     identity: AuthIdentity = Depends(require_permission("workspaces:manage")),
-) -> dict[str, str]:
+) -> dict[str, object]:
     service = get_workspace_service()
     try:
         return service.deactivate_workspace(
             workspace_id=workspace_id,
             actor_user_id=identity.user_id,
+            confirm_workspace_name=request.confirm_workspace_name if request else None,
         )
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc

@@ -89,11 +89,19 @@ export async function createWorkspace(title?: string, _description?: string): Pr
   return workspace;
 }
 
-export async function deleteWorkspace(workspaceId: string): Promise<void> {
+export async function deleteWorkspace(
+  workspaceId: string,
+  options?: { confirmWorkspaceName?: string },
+): Promise<void> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const body =
+    options?.confirmWorkspaceName !== undefined
+      ? JSON.stringify({ confirm_workspace_name: options.confirmWorkspaceName })
+      : undefined;
   const response = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "DELETE",
-    headers,
+    headers: body ? { "Content-Type": "application/json", ...headers } : headers,
+    body,
   });
   const payload = await readPayload(response);
   if (!response.ok) {

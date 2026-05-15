@@ -7,6 +7,12 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useI18n } from "@/lib/i18n/context";
 import { refreshWorkspaceCatalog, workspaceCatalogQueryKey } from "@/lib/workspace/query-keys";
+import {
+  chatStorageKeyForWorkspace,
+  safeRemoveFromStorage,
+  traceStorageKeyForWorkspace,
+} from "@/lib/chat/session-storage";
+import { useSession } from "@/lib/auth/use-session";
 import type { WorkspaceSnapshot } from "@/types/workspace";
 import * as api from "@/lib/workspace/api";
 
@@ -110,18 +116,44 @@ export function useDeleteWorkspace() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const removeWorkspace = useWorkspaceStore((s) => s.removeWorkspace);
+  const { user } = useSession();
 
   return useMutation({
-    mutationFn: (workspaceId: string) => api.deleteWorkspace(workspaceId),
-    onSuccess: (_, workspaceId) => {
+    // Accepts either a bare workspace id (legacy callers) or an object that
+    // includes the typed confirmation. The server-side guardrail rejects a
+    // mismatched name with WORKSPACE_DELETE_CONFIRM_MISMATCH so we surface
+    // that as a user-visible toast.
+    mutationFn: (input: string | { workspaceId: string; confirmWorkspaceName?: string }) => {
+      if (typeof input === "string") {
+        return api.deleteWorkspace(input).then(() => input);
+      }
+      return api
+        .deleteWorkspace(input.workspaceId, { confirmWorkspaceName: input.confirmWorkspaceName })
+        .then(() => input.workspaceId);
+    },
+    onSuccess: (workspaceId) => {
       removeWorkspace(workspaceId);
+      // Drop the workspace-scoped chat + trace caches from localStorage so the
+      // deleted workspace's sessions don't linger on this device. Server-side
+      // SQL/FS state is already gone (hard delete cascade).
+      const userId = user?.id;
+      if (userId) {
+        safeRemoveFromStorage(chatStorageKeyForWorkspace(userId, workspaceId));
+        safeRemoveFromStorage(traceStorageKeyForWorkspace(userId, workspaceId));
+      }
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       toast.success(t("workspace.toast.deleted"));
     },
     onError: (error) => {
-      if (error instanceof api.WorkspaceApiError && error.status === 403) {
-        toast.error(t("workspace.toast.deleteForbidden"));
-        return;
+      if (error instanceof api.WorkspaceApiError) {
+        if (error.status === 403) {
+          toast.error(t("workspace.toast.deleteForbidden"));
+          return;
+        }
+        if (error.code === "WORKSPACE_DELETE_CONFIRM_MISMATCH") {
+          toast.error(t("workspace.toast.deleteConfirmMismatch"));
+          return;
+        }
       }
       toast.error(t("workspace.toast.deleteFailed"));
     },

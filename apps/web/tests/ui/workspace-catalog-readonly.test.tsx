@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 const deleteMutateAsync = vi.fn();
 const refetchPreview = vi.fn();
@@ -91,10 +92,18 @@ vi.mock("../../hooks/use-workspace", () => ({
         offset: 0,
         hasMore: false,
         columns: [
-          { name: "employee_id", type: "VARCHAR", nullable: true, primaryKey: false },
+          {
+            name: "c_1",
+            type: "VARCHAR",
+            nullable: true,
+            primaryKey: false,
+            label: "员工姓名",
+            originalName: "姓名",
+            description: "员工姓名",
+          },
           { name: "department", type: "VARCHAR", nullable: true, primaryKey: false },
         ],
-        rows: [{ employee_id: "E001", department: "HR" }],
+        rows: [{ c_1: "E001", department: "HR" }],
       },
     };
   },
@@ -106,6 +115,14 @@ vi.mock("../../hooks/use-workspace", () => ({
 
 import { WorkspaceCatalogReadonly } from "../../components/workspace/workspace-catalog-readonly";
 
+function renderCatalog(workspaceId: string) {
+  return render(
+    <TooltipProvider>
+      <WorkspaceCatalogReadonly workspaceId={workspaceId} />
+    </TooltipProvider>
+  );
+}
+
 describe("WorkspaceCatalogReadonly", () => {
   beforeEach(() => {
     deleteMutateAsync.mockReset();
@@ -114,7 +131,7 @@ describe("WorkspaceCatalogReadonly", () => {
   });
 
   it("renders business-purpose catalog entries for a workspace", async () => {
-    render(<WorkspaceCatalogReadonly workspaceId="ws-1" />);
+    renderCatalog("ws-1");
 
     expect(await screen.findByText("Employees Roster")).toBeInTheDocument();
     expect(screen.getByText("Stores employee master data.")).toBeInTheDocument();
@@ -126,7 +143,7 @@ describe("WorkspaceCatalogReadonly", () => {
   });
 
   it("deletes a catalog entry after confirmation", async () => {
-    render(<WorkspaceCatalogReadonly workspaceId="ws-1" />);
+    renderCatalog("ws-1");
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Delete table intent: Employees Roster" })
@@ -142,21 +159,22 @@ describe("WorkspaceCatalogReadonly", () => {
   });
 
   it("opens a raw data preview when a catalog entry is clicked", async () => {
-    render(<WorkspaceCatalogReadonly workspaceId="ws-1" />);
+    renderCatalog("ws-1");
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Open raw data for Employees Roster" })
     );
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText("employee_id")).toBeInTheDocument();
+    expect(screen.getByText("员工姓名")).toBeInTheDocument();
+    expect(screen.getByText("c_1 · VARCHAR")).toBeInTheDocument();
     expect(screen.getByText("VARCHAR")).toBeInTheDocument();
     expect(screen.getByText("E001")).toBeInTheDocument();
     expect(screen.getByText("HR")).toBeInTheDocument();
   });
 
   it("renders empty state when workspace has no catalog entries", async () => {
-    render(<WorkspaceCatalogReadonly workspaceId="ws-empty" />);
+    renderCatalog("ws-empty");
 
     expect(
       await screen.findByText("No table intents yet. Start by listing the business tables you expect to upload.")

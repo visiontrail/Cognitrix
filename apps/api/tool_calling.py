@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ import duckdb
 from pydantic import BaseModel, Field
 
 from .agent_logging import format_agent_debug_blocks
+from .column_metadata import enrich_column_with_metadata, load_table_column_metadata
 from .config import get_settings
 from .data_policy import (
     filter_schema_columns,
@@ -42,6 +44,7 @@ from .semantic import (
     get_semantic_registry,
 )
 from .views import SaveViewInput, ViewStorageError, get_view_storage_service
+from .workspaces import get_workspace_service
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 logger = logging.getLogger("cognitrix.tool_calling")
@@ -735,13 +738,17 @@ class ToolCallingService:
                 retryable=True,
             ) from exc
 
+        column_metadata = self._load_column_metadata(context=context, table=table)
         typed_columns = [
-            {
-                "name": str(item[1]),
-                "type": str(item[2]),
-                "nullable": not bool(item[3]),
-                "primary_key": bool(item[5]),
-            }
+            enrich_column_with_metadata(
+                {
+                    "name": str(item[1]),
+                    "type": str(item[2]),
+                    "nullable": not bool(item[3]),
+                    "primary_key": bool(item[5]),
+                },
+                column_metadata,
+            )
             for item in column_rows
         ]
         safe_columns = filter_schema_columns(typed_columns, role=context.role)
@@ -1204,6 +1211,27 @@ class ToolCallingService:
             for item in columns
             if isinstance(item, dict) and str(item.get("name", "")).strip()
         }
+
+    @staticmethod
+    def _load_column_metadata(*, context: ToolContext, table: str) -> dict[str, dict[str, Any]]:
+        if not context.workspace_id:
+            return {}
+        try:
+            db_path = get_workspace_service().db_path
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                return load_table_column_metadata(
+                    conn,
+                    workspace_id=context.workspace_id,
+                    table_names=[table, context.dataset_table],
+                )
+        except sqlite3.Error:
+            logger.exception(
+                "column_metadata_load_failed workspace_id=%s table=%s",
+                context.workspace_id,
+                table,
+            )
+            return {}
 
 
 def _parse_filters(raw_filters: Any) -> list[QueryFilter]:

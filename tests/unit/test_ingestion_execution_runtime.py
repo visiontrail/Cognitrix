@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
-from apps.api.agentic_ingestion.models import DiffPreview, IngestionProposalPayload
+from apps.api.agentic_ingestion.models import DiffPreview, IngestionExecutionAgentOutput, IngestionProposalPayload
 from apps.api.agentic_ingestion.runtime import IngestionPlanningError, SQLWriteValidator, WriteIngestionAgentRuntime
 
 
@@ -147,3 +148,77 @@ def test_prepare_dataframe_for_staging_serializes_mixed_temporal_values() -> Non
     prepared = runtime._prepare_dataframe_for_staging(dataframe)  # noqa: SLF001
 
     assert prepared["snapshot_at"].tolist() == ["2024-01-02 03:04:05", "45292", None]
+
+
+def test_build_column_metadata_uses_non_english_source_headers() -> None:
+    class FakeSession:
+        proposal_payload = IngestionProposalPayload(
+            business_type="roster",
+            confidence=0.9,
+            recommended_action="new_table",
+            candidate_actions=["new_table", "cancel"],
+            target_table="employee_roster",
+            time_grain="none",
+            match_columns=[],
+            column_mapping={},
+            diff_preview=DiffPreview(
+                predicted_insert_count=1,
+                predicted_update_count=0,
+                predicted_conflict_count=0,
+            ),
+            risks=[],
+            sql_draft="",
+        )
+        raw_header_mapping = {"姓名": "c_1", "部门": "c_2"}
+
+    metadata = WriteIngestionAgentRuntime._build_column_metadata_for_receipt(  # noqa: SLF001
+        session=FakeSession(),  # type: ignore[arg-type]
+        target_schema={
+            "columns": [
+                {"name": "c_1", "type": "VARCHAR"},
+                {"name": "c_2", "type": "VARCHAR"},
+            ]
+        },
+    )
+
+    assert metadata[0]["name"] == "c_1"
+    assert metadata[0]["original_name"] == "姓名"
+    assert metadata[0]["description"] == "姓名"
+
+
+def test_execution_output_uses_canonical_tool_receipt_metadata() -> None:
+    output = IngestionExecutionAgentOutput(
+        status="executed",
+        approved_action="new_table",
+        target_table="employee_roster",
+        executed_sql="",
+        receipt={
+            "success": True,
+            "target_table": "employee_roster",
+        },
+    )
+    session = SimpleNamespace(
+        executed_sql="CREATE TABLE employee_roster AS SELECT c_1 FROM staging_abc AS s",
+        write_receipt={
+            "success": True,
+            "target_table": "employee_roster",
+            "executed_sql": "CREATE TABLE employee_roster AS SELECT c_1 FROM staging_abc AS s",
+            "column_metadata": [
+                {
+                    "name": "c_1",
+                    "type": "VARCHAR",
+                    "original_name": "姓名",
+                    "description": "姓名",
+                    "ordinal_position": 0,
+                }
+            ],
+        },
+    )
+
+    WriteIngestionAgentRuntime._attach_canonical_write_receipt(  # noqa: SLF001
+        output=output,
+        session=session,  # type: ignore[arg-type]
+    )
+
+    assert output.executed_sql.startswith("CREATE TABLE employee_roster")
+    assert output.receipt["column_metadata"][0]["original_name"] == "姓名"

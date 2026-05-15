@@ -640,12 +640,12 @@ function ColumnMentionPicker({
                   onSelect(item);
                 }}
               >
-                <code className="min-w-0 flex-1 truncate font-mono text-body-sm font-medium text-terracotta">
-                  @{item.columnName}
-                </code>
-                {item.columnLabel !== item.columnName ? (
-                  <span className="shrink-0 text-caption text-stone-gray">{item.columnLabel}</span>
-                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-body-sm font-medium text-near-black">@{item.columnLabel}</p>
+                  {item.columnLabel !== item.columnName ? (
+                    <code className="block truncate font-mono text-[11px] text-terracotta">@{item.columnName}</code>
+                  ) : null}
+                </div>
                 <span className="shrink-0 rounded-full bg-parchment px-2 py-0.5 text-[10px] font-medium text-olive-gray">
                   {item.tableLabel}
                 </span>

@@ -44,7 +44,7 @@ export function useWorkspaceColumns(workspaceId: string | null): ColumnMentionIt
       tableName: entry.tableName,
       tableLabel: entry.humanLabel || entry.tableName,
       columnName: col.name,
-      columnLabel: col.label || col.name,
+      columnLabel: col.description || col.originalName || col.label || col.name,
       columnType: col.type,
     }));
   });

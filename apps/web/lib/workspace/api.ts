@@ -281,12 +281,17 @@ function mapTableCatalogDataPreview(
 }
 
 function mapTableCatalogDataColumn(value: Record<string, unknown>): TableCatalogDataColumn {
+  const description = asOptionalString(value.description);
+  const originalName = asOptionalString(value.original_name);
+  const label = description || originalName || asOptionalString(value.label);
   return {
     name: asString(value.name),
     type: asString(value.type),
     nullable: Boolean(value.nullable),
     primaryKey: Boolean(value.primary_key),
-    label: asOptionalString(value.label),
+    label,
+    originalName,
+    description,
   };
 }
 

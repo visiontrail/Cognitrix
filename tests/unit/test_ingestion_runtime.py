@@ -170,6 +170,15 @@ def test_recover_proposal_from_completed_tool_trace_without_structured_output() 
         },
         {
             "tool_name": "build_diff_preview",
+            "arguments": {
+                "target_table": "employee_roster",
+                "action_mode": "update_existing",
+                "match_columns": ["employee_id"],
+                "column_mapping": {
+                    "工号": "employee_id",
+                    "姓名": "employee_name",
+                },
+            },
             "result": {
                 "predicted_insert_count": 0,
                 "predicted_update_count": 30,
@@ -194,6 +203,8 @@ def test_recover_proposal_from_completed_tool_trace_without_structured_output() 
     assert recovered.proposal is not None
     assert recovered.proposal.recommended_action == "update_existing"
     assert recovered.proposal.target_table == "employee_roster"
+    assert recovered.proposal.column_mapping["工号"] == "employee_id"
+    assert recovered.proposal.column_mapping["姓名"] == "employee_name"
     assert recovered.proposal.diff_preview.predicted_update_count == 30
     assert recovered.human_approval.mechanism == "frontend_approval_card"
 
@@ -451,6 +462,16 @@ def test_post_run_recovery_prefers_proposal_when_catalog_is_populated() -> None:
         },
         {
             "tool_name": "build_diff_preview",
+            "arguments": {
+                "target_table": "employee_roster",
+                "action_mode": "update_existing",
+                "match_columns": ["employee_id"],
+                "column_mapping": {
+                    "员工编号": "employee_id",
+                    "姓名": "employee_name",
+                    "部门": "department",
+                },
+            },
             "result": {
                 "predicted_insert_count": 0,
                 "predicted_update_count": 30,
@@ -478,6 +499,8 @@ def test_post_run_recovery_prefers_proposal_when_catalog_is_populated() -> None:
     assert recovered.proposal is not None
     assert recovered.proposal.recommended_action == "update_existing"
     assert recovered.proposal.target_table == "employee_roster"
+    assert recovered.proposal.column_mapping["员工编号"] == "employee_id"
+    assert recovered.proposal.column_mapping["姓名"] == "employee_name"
 
 
 def test_normalize_raw_plan_output_injects_diff_preview_for_proposal() -> None:

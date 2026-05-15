@@ -61,6 +61,23 @@ CREATE TABLE IF NOT EXISTS table_catalog (
 CREATE INDEX IF NOT EXISTS idx_table_catalog_workspace_business
     ON table_catalog(workspace_id, business_type, is_active_target);
 
+CREATE TABLE IF NOT EXISTS table_column_metadata (
+    workspace_id TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    original_name TEXT,
+    description TEXT,
+    data_type TEXT,
+    ordinal_position INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (workspace_id, table_name, column_name),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_table_column_metadata_table
+    ON table_column_metadata(workspace_id, table_name, ordinal_position);
+
 CREATE TABLE IF NOT EXISTS ingestion_uploads (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,

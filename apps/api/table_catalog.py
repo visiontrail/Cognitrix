@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .agentic_ingestion.schema import initialize_sqlite_schema
 from .auth import AuthIdentity, require_permission
+from .column_metadata import enrich_column_with_metadata, load_table_column_metadata
 from .config import get_settings
 from .data_policy import filter_schema_columns, redact_rows
 from .datasets import SAFE_IDENTIFIER_RE, get_dataset_service
@@ -375,8 +376,14 @@ class TableCatalogService:
                 status_code=500,
             ) from exc
 
+        column_metadata: dict[str, dict[str, Any]] = {}
         column_labels: dict[str, str] = {}
         with self._lock, self._connect() as sqlite_conn:
+            column_metadata = load_table_column_metadata(
+                sqlite_conn,
+                workspace_id=workspace_id,
+                table_names=[resolved_table, table_name],
+            )
             label_row = sqlite_conn.execute(
                 """
                 SELECT proposal_json FROM ingestion_proposals
@@ -392,15 +399,31 @@ class TableCatalogService:
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     pass
 
+        typed_columns = []
+        for item in column_rows:
+            column_name = str(item[1])
+            fallback_label = column_labels.get(column_name)
+            typed_column = enrich_column_with_metadata(
+                {
+                    "name": column_name,
+                    "type": str(item[2]),
+                    "nullable": not bool(item[3]),
+                    "primary_key": bool(item[5]),
+                    "label": fallback_label,
+                    "original_name": fallback_label,
+                    "description": fallback_label,
+                },
+                column_metadata,
+            )
+            typed_columns.append(typed_column)
         typed_columns = [
             {
-                "name": str(item[1]),
-                "type": str(item[2]),
-                "nullable": not bool(item[3]),
-                "primary_key": bool(item[5]),
-                "label": column_labels.get(str(item[1])),
+                **column,
+                "label": column.get("label") or None,
+                "original_name": column.get("original_name") or None,
+                "description": column.get("description") or None,
             }
-            for item in column_rows
+            for column in typed_columns
         ]
         safe_columns = filter_schema_columns(typed_columns, role=actor_role)
         safe_column_names = [str(item["name"]) for item in safe_columns]

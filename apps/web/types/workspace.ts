@@ -177,6 +177,8 @@ export type TableCatalogDataColumn = {
   nullable: boolean;
   primaryKey: boolean;
   label?: string;
+  originalName?: string;
+  description?: string;
 };
 
 export type TableCatalogDataPreview = {

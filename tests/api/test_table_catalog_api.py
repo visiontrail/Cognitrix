@@ -264,6 +264,93 @@ def test_table_catalog_data_preview_reads_workspace_duckdb(monkeypatch, tmp_path
         ]
 
 
+def test_table_catalog_data_preview_includes_column_descriptions(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    db_path = tmp_path / "workspace-state.db"
+
+    with TestClient(app) as client:
+        owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
+        workspace_response = client.post(
+            "/workspaces",
+            json={"name": "Column Description Catalog"},
+            headers=owner_headers,
+        )
+        assert workspace_response.status_code == 200
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        catalog_id = _insert_catalog_entry(
+            db_path,
+            workspace_id=workspace_id,
+            table_name="employee_master",
+            human_label="Employee Master",
+        )
+
+        duck_path = get_settings().upload_dir / "agentic_ingestion" / "duckdb" / f"{workspace_id}.duckdb"
+        duck_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(duck_path))
+        try:
+            conn.execute('CREATE TABLE employee_master (c_1 VARCHAR, c_2 VARCHAR)')
+            conn.execute("INSERT INTO employee_master VALUES ('张三', '研发')")
+        finally:
+            conn.close()
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO table_column_metadata (
+                    workspace_id, table_name, column_name, original_name, description,
+                    data_type, ordinal_position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    workspace_id,
+                    "employee_master",
+                    "c_1",
+                    "姓名",
+                    "员工姓名",
+                    "VARCHAR",
+                    0,
+                    workspace_id,
+                    "employee_master",
+                    "c_2",
+                    "部门",
+                    "所属部门",
+                    "VARCHAR",
+                    1,
+                ),
+            )
+
+        preview_response = client.get(
+            f"/workspaces/{workspace_id}/catalog/{catalog_id}/data",
+            headers=owner_headers,
+        )
+        assert preview_response.status_code == 200
+        columns = preview_response.json()["columns"]
+        assert columns[0]["name"] == "c_1"
+        assert columns[0]["original_name"] == "姓名"
+        assert columns[0]["description"] == "员工姓名"
+        assert columns[0]["label"] == "员工姓名"
+
+        describe_response = client.post(
+            "/chat/tool-call",
+            headers=owner_headers,
+            json={
+                "conversation_id": "column-description-conv",
+                "request_id": "column-description-describe",
+                "idempotency_key": "column-description-describe",
+                "user_id": "alice",
+                "project_id": "north",
+                "workspace_id": workspace_id,
+                "dataset_table": "employee_master",
+                "tool": {"name": "describe_table", "arguments": {"table": "employee_master"}},
+            },
+        )
+        assert describe_response.status_code == 200
+        describe_columns = describe_response.json()["result"]["columns"]
+        assert describe_columns[0]["name"] == "c_1"
+        assert describe_columns[0]["description"] == "员工姓名"
+
+
 def test_table_catalog_data_preview_resolves_recent_execution_table(
     monkeypatch,
     tmp_path: Path,

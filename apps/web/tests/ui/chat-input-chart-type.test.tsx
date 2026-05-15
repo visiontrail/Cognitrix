@@ -8,10 +8,19 @@ import { I18nProvider } from "../../lib/i18n/context";
 import { I18N_STORAGE_KEY } from "../../lib/i18n/dictionary";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
+import { useWorkspaceStore } from "../../stores/workspace-store";
 
-const { mutate, stopChatResponseMock } = vi.hoisted(() => ({
+const { mutate, stopChatResponseMock, workspaceColumns } = vi.hoisted(() => ({
   mutate: vi.fn(),
   stopChatResponseMock: vi.fn(),
+  workspaceColumns: [] as Array<{
+    id: string;
+    tableName: string;
+    tableLabel: string;
+    columnName: string;
+    columnLabel: string;
+    columnType: string;
+  }>,
 }));
 
 vi.mock("../../hooks/use-chat", () => ({
@@ -21,7 +30,7 @@ vi.mock("../../hooks/use-chat", () => ({
 }));
 
 vi.mock("../../hooks/use-workspace-columns", () => ({
-  useWorkspaceColumns: () => [],
+  useWorkspaceColumns: () => workspaceColumns,
 }));
 
 describe("ChatInput chart type picker", () => {
@@ -36,6 +45,8 @@ describe("ChatInput chart type picker", () => {
       isSending: false,
       sendingBySession: {},
     });
+    useWorkspaceStore.setState({ activeWorkspaceId: null });
+    workspaceColumns.splice(0, workspaceColumns.length);
   });
 
   it("localizes chart type suggestions after switching to Chinese", async () => {
@@ -91,6 +102,31 @@ describe("ChatInput chart type picker", () => {
         preferredChartType: "stacked_bar",
       })
     );
+  });
+
+  it("shows human-readable column labels in @ suggestions while inserting physical names", async () => {
+    const user = userEvent.setup();
+    workspaceColumns.push({
+      id: "employee_master.c_1",
+      tableName: "employee_master",
+      tableLabel: "员工主数据",
+      columnName: "c_1",
+      columnLabel: "员工姓名",
+      columnType: "VARCHAR",
+    });
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-1" });
+
+    render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    const input = screen.getByLabelText("Chat Input");
+    await user.type(input, "@");
+
+    expect(screen.getByRole("listbox", { name: "Column mention picker" })).toBeInTheDocument();
+    expect(screen.getByText("@员工姓名")).toBeInTheDocument();
+    expect(screen.getByText("@c_1")).toBeInTheDocument();
+
+    await user.keyboard("{Enter}");
+    expect(input).toHaveValue("@c_1 ");
   });
 
   it("scrolls the chart type list as keyboard selection moves", async () => {

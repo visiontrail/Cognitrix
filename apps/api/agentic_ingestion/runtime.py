@@ -35,6 +35,7 @@ from claude_agent_sdk import (
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
+from ..column_metadata import upsert_table_column_metadata
 from ..config import get_settings
 from .models import (
     IngestionAgentPlanOutput,
@@ -1716,6 +1717,13 @@ class WriteIngestionAgentRuntime:
                     proposal_payload=proposal_payload,
                     approved_action=approved_action,
                 )
+                self._sync_column_metadata_from_execution(
+                    conn=conn,
+                    workspace_id=normalized_workspace_id,
+                    table_name=target_table,
+                    receipt=receipt,
+                    proposal_payload=proposal_payload,
+                )
             final_job_status = "succeeded" if execution_status == "succeeded" else "failed"
             self._set_job_status(
                 conn=conn,
@@ -1934,6 +1942,13 @@ class WriteIngestionAgentRuntime:
                             requested_by=normalized_executed_by,
                             proposal_payload=proposal_payload,
                             approved_action=approved_action,
+                        )
+                        self._sync_column_metadata_from_execution(
+                            conn=conn,
+                            workspace_id=normalized_workspace_id,
+                            table_name=target_table,
+                            receipt=receipt,
+                            proposal_payload=proposal_payload,
                         )
                     final_job_status = "succeeded" if execution_status == "succeeded" else "failed"
                     self._set_job_status(
@@ -2215,11 +2230,24 @@ class WriteIngestionAgentRuntime:
                     message="Execution agent reported success without calling execute_approved_write",
                     status_code=502,
                 )
-            if not output.executed_sql and session.executed_sql:
-                output.executed_sql = session.executed_sql
-            if not output.receipt:
-                output.receipt = dict(session.write_receipt)
+            self._attach_canonical_write_receipt(output=output, session=session)
         return output, tool_trace
+
+    @staticmethod
+    def _attach_canonical_write_receipt(
+        *,
+        output: IngestionExecutionAgentOutput,
+        session: IngestionExecutionSession,
+    ) -> None:
+        if output.status != "executed" or session.write_receipt is None:
+            return
+        canonical_receipt = dict(session.write_receipt)
+        output.receipt = {**dict(output.receipt), **canonical_receipt}
+        executed_sql = str(
+            canonical_receipt.get("executed_sql") or output.executed_sql or session.executed_sql or ""
+        ).strip()
+        if executed_sql:
+            output.executed_sql = executed_sql
 
     def _build_execution_sdk_options(
         self,
@@ -3283,6 +3311,18 @@ class WriteIngestionAgentRuntime:
         if not isinstance(proposal, dict):
             return agent_output
 
+        upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
+        upload_columns, _normalized_columns, structured_column_mode = self._proposal_columns_from_upload_info(
+            upload_info
+        )
+        traced_column_mapping = self._column_mapping_from_build_diff_trace(
+            tool_trace=tool_trace,
+            upload_columns=upload_columns,
+            structured_column_mode=structured_column_mode,
+        )
+        if traced_column_mapping:
+            proposal["column_mapping"] = traced_column_mapping
+
         diff_result = self._latest_tool_result(tool_trace, "build_diff_preview")
         recomputed_diff = self._recompute_diff_preview_from_proposal(
             conn=conn,
@@ -3612,10 +3652,17 @@ class WriteIngestionAgentRuntime:
             except (TypeError, ValueError):
                 return 0
 
-        column_mapping: dict[str, str] = {}
-        for index, raw_column in enumerate(upload_columns):
-            normalized = raw_column if structured_column_mode else self._normalize_identifier(raw_column)
-            column_mapping[raw_column] = normalized or f"c_{index + 1}"
+        column_mapping = (
+            self._column_mapping_from_build_diff_trace(
+                tool_trace=tool_trace,
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+            or self._fallback_column_mapping_from_upload_columns(
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+        )
 
         proposal_payload = {
             "business_type": business_type,
@@ -3846,10 +3893,17 @@ class WriteIngestionAgentRuntime:
             except (TypeError, ValueError):
                 return 0
 
-        column_mapping: dict[str, str] = {}
-        for index, raw_column in enumerate(upload_columns):
-            normalized = raw_column if structured_column_mode else self._normalize_identifier(raw_column)
-            column_mapping[raw_column] = normalized or f"c_{index + 1}"
+        column_mapping = (
+            self._column_mapping_from_build_diff_trace(
+                tool_trace=tool_trace,
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+            or self._fallback_column_mapping_from_upload_columns(
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+        )
 
         proposal_payload = {
             "business_type": business_type,
@@ -3914,6 +3968,70 @@ class WriteIngestionAgentRuntime:
             if candidate and candidate not in normalized_columns:
                 normalized_columns.append(candidate)
         return upload_columns, normalized_columns, False
+
+    def _column_mapping_from_build_diff_trace(
+        self,
+        *,
+        tool_trace: list[dict[str, Any]],
+        upload_columns: list[str],
+        structured_column_mode: bool,
+    ) -> dict[str, str]:
+        build_diff_item = self._latest_tool_trace_item(tool_trace, names={"build_diff_preview"})
+        arguments = build_diff_item.get("arguments") if isinstance(build_diff_item, dict) else {}
+        raw_mapping = arguments.get("column_mapping") if isinstance(arguments, dict) else None
+        if not isinstance(raw_mapping, dict):
+            return {}
+        return self._normalize_proposal_column_mapping(
+            raw_mapping=raw_mapping,
+            upload_columns=upload_columns,
+            structured_column_mode=structured_column_mode,
+        )
+
+    def _fallback_column_mapping_from_upload_columns(
+        self,
+        *,
+        upload_columns: list[str],
+        structured_column_mode: bool,
+    ) -> dict[str, str]:
+        return self._normalize_proposal_column_mapping(
+            raw_mapping={},
+            upload_columns=upload_columns,
+            structured_column_mode=structured_column_mode,
+        )
+
+    def _normalize_proposal_column_mapping(
+        self,
+        *,
+        raw_mapping: dict[Any, Any],
+        upload_columns: list[str],
+        structured_column_mode: bool,
+    ) -> dict[str, str]:
+        mapped_by_header = {
+            str(key).strip(): str(value).strip().lower()
+            for key, value in raw_mapping.items()
+            if str(key).strip() and str(value).strip()
+        }
+        ordered_headers = [str(item).strip() for item in upload_columns if str(item).strip()]
+        if not ordered_headers:
+            ordered_headers = list(mapped_by_header.keys())
+
+        result: dict[str, str] = {}
+        used_targets: set[str] = set()
+        for index, raw_column in enumerate(ordered_headers):
+            target = mapped_by_header.get(raw_column)
+            if not target:
+                target = raw_column if structured_column_mode else self._normalize_identifier(raw_column)
+            if not target or not SAFE_IDENTIFIER_RE.match(target):
+                target = f"c_{index + 1}"
+
+            base = target
+            seq = 2
+            while target in used_targets:
+                target = f"{base}_{seq}"
+                seq += 1
+            used_targets.add(target)
+            result[raw_column] = target
+        return result
 
     def _run_tool(
         self,
@@ -4882,6 +5000,19 @@ class WriteIngestionAgentRuntime:
         else:
             inserted_rows = rows_after if not target_exists_before else inserted_rows
         affected_rows = inserted_rows + updated_rows
+        target_schema_after = self._duckdb_table_profile(
+            conn=session.duckdb_conn,
+            table_name=session.target_table,
+        )
+        column_metadata = self._build_column_metadata_for_receipt(
+            session=session,
+            target_schema=target_schema_after,
+        )
+        self._apply_duckdb_column_comments(
+            conn=session.duckdb_conn,
+            table_name=session.target_table,
+            columns=column_metadata,
+        )
         receipt = {
             "success": True,
             "workspace_id": session.workspace_id,
@@ -4903,15 +5034,81 @@ class WriteIngestionAgentRuntime:
             "updated_rows": updated_rows,
             "affected_rows": affected_rows,
             "target_exists_before": target_exists_before,
-            "target_schema_after": self._duckdb_table_profile(
-                conn=session.duckdb_conn,
-                table_name=session.target_table,
-            ),
+            "target_schema_after": target_schema_after,
+            "column_metadata": column_metadata,
             "finished_at": _utc_now(),
         }
         session.executed_sql = validated_sql
         session.write_receipt = dict(receipt)
         return receipt
+
+    @staticmethod
+    def _build_column_metadata_for_receipt(
+        *,
+        session: IngestionExecutionSession,
+        target_schema: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        original_by_target: dict[str, str] = {}
+        for original, target in (session.proposal_payload.column_mapping or {}).items():
+            original_text = str(original).strip()
+            target_text = str(target).strip()
+            if original_text and target_text:
+                original_by_target[target_text] = original_text
+        for original, target in (session.raw_header_mapping or {}).items():
+            original_text = str(original).strip()
+            target_text = str(target).strip()
+            if original_text and target_text:
+                original_by_target.setdefault(target_text, original_text)
+
+        columns = target_schema.get("columns")
+        if not isinstance(columns, list):
+            return []
+
+        metadata: list[dict[str, Any]] = []
+        for index, column in enumerate(columns):
+            if not isinstance(column, dict):
+                continue
+            column_name = str(column.get("name") or "").strip()
+            if not column_name:
+                continue
+            original_name = original_by_target.get(column_name)
+            metadata.append(
+                {
+                    "name": column_name,
+                    "type": str(column.get("type") or ""),
+                    "original_name": original_name,
+                    "description": original_name,
+                    "ordinal_position": index,
+                }
+            )
+        return metadata
+
+    @staticmethod
+    def _apply_duckdb_column_comments(
+        *,
+        conn: duckdb.DuckDBPyConnection,
+        table_name: str,
+        columns: list[dict[str, Any]],
+    ) -> None:
+        if not SAFE_IDENTIFIER_RE.match(table_name):
+            return
+        for column in columns:
+            column_name = str(column.get("name") or "").strip()
+            description = str(column.get("description") or column.get("original_name") or "").strip()
+            if not column_name or not description or not SAFE_IDENTIFIER_RE.match(column_name):
+                continue
+            escaped_description = description.replace("'", "''")
+            try:
+                conn.execute(
+                    f"COMMENT ON COLUMN {table_name}.{column_name} IS '{escaped_description}'"
+                )
+            except duckdb.Error:
+                logger.warning(
+                    "duckdb_column_comment_failed table=%s column=%s",
+                    table_name,
+                    column_name,
+                    exc_info=True,
+                )
 
     @staticmethod
     def _duckdb_table_exists(
@@ -5342,6 +5539,82 @@ class WriteIngestionAgentRuntime:
                 catalog_id,
                 workspace_id,
             ),
+        )
+
+    def _sync_column_metadata_from_execution(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        table_name: str,
+        receipt: dict[str, Any],
+        proposal_payload: IngestionProposalPayload,
+    ) -> None:
+        raw_columns = receipt.get("column_metadata")
+        if not isinstance(raw_columns, list):
+            raw_columns = []
+        trace_receipt: dict[str, Any] = {}
+        tool_trace = receipt.get("tool_trace")
+        if isinstance(tool_trace, list):
+            trace_receipt = self._latest_tool_result(tool_trace, "execute_approved_write")
+            if not raw_columns and isinstance(trace_receipt.get("column_metadata"), list):
+                raw_columns = trace_receipt["column_metadata"]
+
+        columns: list[dict[str, Any]] = []
+        for index, item in enumerate(raw_columns):
+            if not isinstance(item, dict):
+                continue
+            column_name = str(item.get("name") or "").strip()
+            if not column_name:
+                continue
+            original_name = str(item.get("original_name") or item.get("description") or "").strip()
+            columns.append(
+                {
+                    "name": column_name,
+                    "type": str(item.get("type") or item.get("data_type") or ""),
+                    "original_name": original_name or None,
+                    "description": str(item.get("description") or original_name or "").strip() or None,
+                    "ordinal_position": int(item.get("ordinal_position") or index),
+                }
+            )
+
+        if not columns:
+            schema_after = receipt.get("target_schema_after")
+            if not isinstance(schema_after, dict):
+                schema_after = trace_receipt.get("target_schema_after")
+            schema_columns = schema_after.get("columns") if isinstance(schema_after, dict) else None
+            target_to_original = {
+                str(target).strip(): str(original).strip()
+                for original, target in proposal_payload.column_mapping.items()
+                if str(original).strip() and str(target).strip()
+            }
+            if isinstance(schema_columns, list):
+                for index, item in enumerate(schema_columns):
+                    if not isinstance(item, dict):
+                        continue
+                    column_name = str(item.get("name") or "").strip()
+                    if not column_name:
+                        continue
+                    original_name = target_to_original.get(column_name)
+                    columns.append(
+                        {
+                            "name": column_name,
+                            "type": str(item.get("type") or ""),
+                            "original_name": original_name,
+                            "description": original_name,
+                            "ordinal_position": index,
+                        }
+                    )
+
+        if not columns:
+            return
+
+        upsert_table_column_metadata(
+            conn,
+            workspace_id=workspace_id,
+            table_name=table_name,
+            columns=columns,
+            updated_at=_utc_now(),
         )
 
     def _set_job_status(

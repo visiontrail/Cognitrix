@@ -240,10 +240,10 @@ export function WorkspaceCatalogReadonly({
                             className="min-w-36 whitespace-nowrap border-b border-r border-border-cream px-3 py-2 align-top"
                           >
                             <span className="block text-label font-medium text-near-black">
-                              {column.label ?? column.name}
+                              {getColumnDisplayName(column)}
                             </span>
                             <span className="block pt-0.5 text-[11px] uppercase text-stone-gray">
-                              {column.label
+                              {getColumnDisplayName(column) !== column.name
                                 ? `${column.name} · ${column.type || t("workspace.catalog.dataPreviewUnknownType")}`
                                 : (column.type || t("workspace.catalog.dataPreviewUnknownType"))}
                             </span>
@@ -364,6 +364,10 @@ export function WorkspaceCatalogReadonly({
 }
 
 const PREVIEW_LIMIT = 100;
+
+function getColumnDisplayName(column: { name: string; label?: string; originalName?: string; description?: string }) {
+  return column.description || column.originalName || column.label || column.name;
+}
 
 function formatCellValue(value: unknown): string {
   if (value === null || typeof value === "undefined") {

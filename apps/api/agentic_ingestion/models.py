@@ -181,8 +181,19 @@ class IngestionAgentPlanOutput(BaseModel):
     agent_guess: IngestionAgentGuess
     setup_questions: list[IngestionSetupQuestion] = Field(default_factory=list)
     suggested_catalog_seed: IngestionCatalogSetupSeed | None = None
+    # Single-table case: agent returns `proposal`.
+    # Multi-table decomposition: agent returns `proposals` (one entry per target table).
+    # `effective_proposals()` collapses both shapes to a single list.
     proposal: IngestionProposalPayload | None = None
+    proposals: list[IngestionProposalPayload] = Field(default_factory=list)
     human_approval: IngestionHumanApprovalRequest
+
+    def effective_proposals(self) -> list[IngestionProposalPayload]:
+        if self.proposals:
+            return list(self.proposals)
+        if self.proposal is not None:
+            return [self.proposal]
+        return []
 
 
 class IngestionExecutionAgentOutput(BaseModel):

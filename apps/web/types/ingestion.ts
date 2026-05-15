@@ -93,12 +93,24 @@ export type IngestionPlanAwaitingSetup = {
   toolTrace: Record<string, unknown>[];
 };
 
+export type IngestionPlanProposalEntry = {
+  proposalId: string;
+  proposal: IngestionProposal;
+};
+
 export type IngestionPlanAwaitingApproval = {
   status: "awaiting_user_approval";
   workspaceId: string;
   jobId: string;
+  // Primary (first) proposal — kept for backward compat with single-proposal
+  // consumers (chat input, summary message, existing tests).
   proposalId: string;
   proposal: IngestionProposal;
+  // Full list. For a single-table plan, length === 1 and entries[0] mirrors
+  // `proposalId`/`proposal`. For a multi-table decomposition (e.g. one Excel
+  // split into a dimension table + a long-format fact table), length > 1 and
+  // the UI must walk through them in order.
+  proposals: IngestionPlanProposalEntry[];
   humanApproval: IngestionHumanApproval;
   route: IngestionAgentRoute;
   toolTrace: Record<string, unknown>[];

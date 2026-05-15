@@ -518,3 +518,229 @@ def test_normalize_raw_plan_output_injects_diff_preview_for_proposal() -> None:
         "predicted_update_count": 0,
         "predicted_conflict_count": 0,
     }
+
+
+def test_recover_proposals_from_multi_table_draft_calls() -> None:
+    """Multi-table decomposition: 2 generate_write_sql_draft calls → 2 proposals."""
+    runtime = WriteIngestionAgentRuntime()
+    tool_trace = [
+        {
+            "tool_name": "inspect_upload",
+            "result": {
+                "column_summary": {"all_columns": ["project_code", "project_name", "employee_name"]},
+            },
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "arguments": {"table_name": "project_catalog"},
+            "result": {
+                "table_name": "project_catalog",
+                "business_type": "project_catalog",
+                "match_columns": ["project_code"],
+                "time_grain": "none",
+            },
+        },
+        {
+            "tool_name": "build_diff_preview",
+            "arguments": {
+                "target_table": "project_catalog",
+                "action_mode": "new_table",
+                "column_mapping": {"project_code": "project_code", "project_name": "project_name"},
+            },
+            "result": {
+                "predicted_insert_count": 21,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+            },
+        },
+        {
+            "tool_name": "generate_write_sql_draft",
+            "arguments": {
+                "target_table": "project_catalog",
+                "action_mode": "new_table",
+                "match_columns": ["project_code"],
+            },
+            "result": {"sql_draft": "CREATE TABLE project_catalog AS SELECT ..."},
+        },
+        {
+            "tool_name": "describe_table_schema",
+            "arguments": {"table_name": "personnel_project_allocation"},
+            "result": {
+                "table_name": "personnel_project_allocation",
+                "business_type": "project_assignment",
+                "match_columns": ["employee_name", "project_code"],
+                "time_grain": "none",
+            },
+        },
+        {
+            "tool_name": "build_diff_preview",
+            "arguments": {
+                "target_table": "personnel_project_allocation",
+                "action_mode": "new_table",
+                "column_mapping": {"employee_name": "employee_name", "project_code": "project_code"},
+            },
+            "result": {
+                "predicted_insert_count": 200,
+                "predicted_update_count": 0,
+                "predicted_conflict_count": 0,
+            },
+        },
+        {
+            "tool_name": "generate_write_sql_draft",
+            "arguments": {
+                "target_table": "personnel_project_allocation",
+                "action_mode": "new_table",
+                "match_columns": ["employee_name", "project_code"],
+            },
+            "result": {"sql_draft": "CREATE TABLE personnel_project_allocation AS SELECT ..."},
+        },
+    ]
+
+    recovered = runtime._recover_proposal_from_tool_trace(tool_trace=tool_trace)  # noqa: SLF001
+
+    assert recovered is not None
+    assert recovered.status == "awaiting_user_approval"
+    # Multi-proposal shape: `proposal` is None, `proposals` has both entries in order.
+    assert recovered.proposal is None
+    assert len(recovered.proposals) == 2
+    assert recovered.proposals[0].target_table == "project_catalog"
+    assert recovered.proposals[0].business_type == "project_catalog"
+    assert recovered.proposals[0].diff_preview.predicted_insert_count == 21
+    assert recovered.proposals[1].target_table == "personnel_project_allocation"
+    assert recovered.proposals[1].business_type == "project_assignment"
+    assert recovered.proposals[1].diff_preview.predicted_insert_count == 200
+    # effective_proposals() collapses both shapes to a list — multi yields both.
+    effective = recovered.effective_proposals()
+    assert [p.target_table for p in effective] == ["project_catalog", "personnel_project_allocation"]
+
+
+def test_rollback_catalog_entries_only_deletes_newly_inserted_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rollback must DELETE catalog entries flagged was_inserted=True and leave
+    untouched any entries that were merely updated by an upsert."""
+    _set_runtime_env(monkeypatch, tmp_path)
+    from apps.api.db_migrations import apply_migrations
+    apply_migrations()
+    runtime = WriteIngestionAgentRuntime()
+    workspace_id = "ws-1"
+    job_id = "job-1"
+    with runtime._connect() as conn:  # noqa: SLF001
+        conn.execute("INSERT OR IGNORE INTO users (id, email, display_name) VALUES ('u-1', 'u-1@local.invalid', 'u-1')")
+        conn.execute(
+            "INSERT OR IGNORE INTO workspaces (id, name, slug, owner_user_id) VALUES (?, 'ws1', 'ws1', 'u-1')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_uploads (id, workspace_id, uploaded_by, file_name, storage_path, size_bytes, file_hash) "
+            "VALUES ('up-1', ?, 'u-1', 'f.xlsx', '/tmp/f.xlsx', 0, 'h')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_jobs (id, workspace_id, upload_id, created_by, status) VALUES (?, ?, 'up-1', 'u-1', 'planning')",
+            (job_id, workspace_id),
+        )
+        # Pre-existing entry that should survive rollback.
+        conn.execute(
+            "INSERT INTO table_catalog (id, workspace_id, table_name, human_label, business_type, "
+            "write_mode, time_grain, primary_keys, match_columns, is_active_target, description, "
+            "created_by, updated_by) VALUES ('survivor-id', ?, 'survivor', 'Survivor', 'roster', "
+            "'new_table', 'none', '[]', '[]', 1, '', 'u-1', 'u-1')",
+            (workspace_id,),
+        )
+        # Entry the agent will pretend to have created during this run.
+        conn.execute(
+            "INSERT INTO table_catalog (id, workspace_id, table_name, human_label, business_type, "
+            "write_mode, time_grain, primary_keys, match_columns, is_active_target, description, "
+            "created_by, updated_by) VALUES ('victim-id', ?, 'victim', 'Victim', 'project_catalog', "
+            "'new_table', 'none', '[]', '[]', 1, '', 'u-1', 'u-1')",
+            (workspace_id,),
+        )
+        conn.commit()
+
+        tool_trace = [
+            {
+                "tool_name": "create_catalog_entry",
+                "arguments": {"workspace_id": workspace_id, "table_name": "victim"},
+                "result": {
+                    "was_inserted": True,
+                    "created": True,
+                    "catalog_entry_id": "victim-id",
+                    "table_name": "victim",
+                    "business_type": "project_catalog",
+                },
+            },
+            {
+                "tool_name": "create_catalog_entry",
+                "arguments": {"workspace_id": workspace_id, "table_name": "survivor"},
+                "result": {
+                    "was_inserted": False,
+                    "created": False,
+                    "catalog_entry_id": "survivor-id",
+                    "table_name": "survivor",
+                    "business_type": "roster",
+                },
+            },
+        ]
+        rolled = runtime._rollback_catalog_entries_from_trace(  # noqa: SLF001
+            conn=conn,
+            workspace_id=workspace_id,
+            job_id=job_id,
+            tool_trace=tool_trace,
+            reason="test",
+        )
+        assert [r["catalog_entry_id"] for r in rolled] == ["victim-id"]
+        remaining = {
+            str(r["id"]) for r in conn.execute(
+                "SELECT id FROM table_catalog WHERE workspace_id = ?", (workspace_id,)
+            ).fetchall()
+        }
+        assert remaining == {"survivor-id"}
+
+
+def test_create_catalog_entry_accepts_free_form_business_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After dropping the CHECK constraint, free-form snake_case business_type
+    values like 'project_assignment' must round-trip to the table_catalog row
+    instead of being silently coerced to 'other'."""
+    _set_runtime_env(monkeypatch, tmp_path)
+    from apps.api.db_migrations import apply_migrations
+    apply_migrations()
+    runtime = WriteIngestionAgentRuntime()
+    workspace_id = "ws-1"
+    job_id = "job-1"
+    with runtime._connect() as conn:  # noqa: SLF001
+        conn.execute("INSERT OR IGNORE INTO users (id, email, display_name) VALUES ('u-1', 'u-1@local.invalid', 'u-1')")
+        conn.execute(
+            "INSERT OR IGNORE INTO workspaces (id, name, slug, owner_user_id) VALUES (?, 'ws1', 'ws1', 'u-1')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_uploads (id, workspace_id, uploaded_by, file_name, storage_path, "
+            "size_bytes, file_hash, sheet_summary, column_summary, sample_preview) "
+            "VALUES ('up-1', ?, 'u-1', 'f.xlsx', '/tmp/f.xlsx', 0, 'h', '{}', '{}', '[]')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_jobs (id, workspace_id, upload_id, created_by, status) VALUES (?, ?, 'up-1', 'u-1', 'planning')",
+            (job_id, workspace_id),
+        )
+        conn.commit()
+
+        result = runtime._tool_create_catalog_entry(  # noqa: SLF001
+            conn=conn,
+            job_id=job_id,
+            arguments={
+                "workspace_id": workspace_id,
+                "table_name": "personnel_project_allocation",
+                "human_label": "人员项目投入分配表",
+                "business_type": "project_assignment",
+                "write_mode": "new_table",
+                "primary_keys": ["employee_name", "project_code"],
+                "match_columns": ["employee_name", "project_code"],
+            },
+        )
+        assert result["business_type"] == "project_assignment"
+        assert result["was_inserted"] is True
+        row = conn.execute(
+            "SELECT business_type FROM table_catalog WHERE id = ?",
+            (result["catalog_entry_id"],),
+        ).fetchone()
+        assert str(row["business_type"]) == "project_assignment"

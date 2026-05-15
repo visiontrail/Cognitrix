@@ -1032,7 +1032,23 @@ async function runIngestionApprovalResponse({
     throw err;
   }
 
-  useChatStore.getState().clearPendingIngestionApproval(sessionId);
+  // Advance the multi-proposal queue: drop the proposal we just acted on, and
+  // either set the next proposal as pending or clear if this was the last one.
+  // Cancel advances too — the user can cancel each proposal individually if
+  // they want to bail on the whole plan.
+  const remainingAfterCurrent = plan.proposals.slice(1);
+  if (remainingAfterCurrent.length === 0) {
+    useChatStore.getState().clearPendingIngestionApproval(sessionId);
+  } else {
+    const nextHead = remainingAfterCurrent[0];
+    const nextPlan: IngestionPlanAwaitingApproval = {
+      ...plan,
+      proposalId: nextHead.proposalId,
+      proposal: nextHead.proposal,
+      proposals: remainingAfterCurrent,
+    };
+    useChatStore.getState().setPendingIngestionApproval(sessionId, { upload: pending.upload, plan: nextPlan });
+  }
 
   let executionResult: IngestionExecuteResult | null = null;
   let traceHasError = false;

@@ -376,12 +376,33 @@ export function mapPlanLikePayload(payload: unknown): IngestionPlanResult {
     };
   }
 
+  const primaryProposalId = asString(record.proposal_id);
+  const primaryProposal = mapProposal(asRecord(record.proposal_json));
+  const rawProposals = Array.isArray(record.proposals) ? record.proposals : [];
+  let proposalEntries = rawProposals
+    .map((entry) => asRecord(entry))
+    .map((entry) => {
+      const id = asString(entry.proposal_id);
+      if (!id) return null;
+      return {
+        proposalId: id,
+        proposal: mapProposal(asRecord(entry.proposal_json)),
+      };
+    })
+    .filter((value): value is { proposalId: string; proposal: IngestionProposal } => value !== null);
+  // Backward compat: if the server didn't emit a `proposals` array, build a
+  // singleton from the legacy proposal_id / proposal_json pair.
+  if (proposalEntries.length === 0 && primaryProposalId) {
+    proposalEntries = [{ proposalId: primaryProposalId, proposal: primaryProposal }];
+  }
+
   return {
     status: "awaiting_user_approval",
     workspaceId: asString(record.workspace_id),
     jobId: asString(record.job_id),
-    proposalId: asString(record.proposal_id),
-    proposal: mapProposal(asRecord(record.proposal_json)),
+    proposalId: primaryProposalId || proposalEntries[0]?.proposalId || "",
+    proposal: proposalEntries[0]?.proposal ?? primaryProposal,
+    proposals: proposalEntries,
     humanApproval: mapHumanApproval(record.human_approval, "proposal_approval"),
     route: {
       route: asString(asRecord(record.route).route),

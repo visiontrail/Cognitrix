@@ -107,6 +107,84 @@ def _run_migration_sql(conn: sqlite3.Connection, sql_path: Path) -> None:
                 raise
 
 
+def _relax_business_type_constraint(conn: sqlite3.Connection) -> None:
+    """Drop the closed-vocabulary CHECK on table_catalog.business_type.
+
+    The original schema restricted business_type to
+    {roster, project_progress, attendance, other}. The Write Ingestion Agent
+    is now allowed to propose free-form snake_case labels (project_assignment,
+    sales_pipeline, …). SQLite has no in-place CHECK drop, so rebuild the
+    table inside a single transaction. Idempotent: returns immediately if the
+    current schema no longer contains the closed CHECK list.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'table_catalog'"
+    ).fetchone()
+    if row is None:
+        return
+    schema_sql = str(row["sql"] or "")
+    if "business_type" not in schema_sql:
+        return
+    # The closed-vocabulary signature is the literal IN-list on business_type.
+    if "business_type IN ('roster'" not in schema_sql:
+        return
+
+    logger.info("relaxing table_catalog.business_type CHECK constraint")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            CREATE TABLE table_catalog__relaxed (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                human_label TEXT NOT NULL,
+                business_type TEXT NOT NULL,
+                write_mode TEXT NOT NULL CHECK (write_mode IN (
+                    'update_existing', 'time_partitioned_new_table', 'new_table', 'append_only'
+                )),
+                time_grain TEXT NOT NULL CHECK (time_grain IN ('none', 'month', 'quarter', 'year')),
+                primary_keys TEXT NOT NULL DEFAULT '[]',
+                match_columns TEXT NOT NULL DEFAULT '[]',
+                is_active_target INTEGER NOT NULL DEFAULT 1,
+                description TEXT NOT NULL DEFAULT '',
+                created_by TEXT NOT NULL,
+                updated_by TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+                FOREIGN KEY (created_by) REFERENCES users(id),
+                FOREIGN KEY (updated_by) REFERENCES users(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO table_catalog__relaxed (
+                id, workspace_id, table_name, human_label, business_type, write_mode,
+                time_grain, primary_keys, match_columns, is_active_target, description,
+                created_by, updated_by, created_at, updated_at
+            )
+            SELECT id, workspace_id, table_name, human_label, business_type, write_mode,
+                   time_grain, primary_keys, match_columns, is_active_target, description,
+                   created_by, updated_by, created_at, updated_at
+            FROM table_catalog
+            """
+        )
+        conn.execute("DROP INDEX IF EXISTS idx_table_catalog_workspace_business")
+        conn.execute("DROP TABLE table_catalog")
+        conn.execute("ALTER TABLE table_catalog__relaxed RENAME TO table_catalog")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_table_catalog_workspace_business "
+            "ON table_catalog(workspace_id, business_type, is_active_target)"
+        )
+        conn.execute("COMMIT")
+        logger.info("table_catalog business_type CHECK relaxed")
+    except sqlite3.DatabaseError:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def _seed_jobs(conn: sqlite3.Connection) -> None:
     for code, label_zh, label_en, sort_order in JOB_SEEDS:
         conn.execute(
@@ -172,6 +250,7 @@ def apply_migrations() -> None:
             _mark_applied(conn, migration_id)
             logger.info("migration_applied id=%s", migration_id)
 
+        _relax_business_type_constraint(conn)
         _seed_jobs(conn)
         _bootstrap_admin(conn)
     finally:

@@ -422,10 +422,19 @@ Allowed decisions:
 - awaiting_catalog_setup: fallback only — use this when create_catalog_entry fails or
   when you cannot determine enough schema information to create a catalog entry. Provide
   setup_questions and suggested_catalog_seed.
-- awaiting_user_approval: you have a catalog entry (either pre-existing or just created
-  via create_catalog_entry) and can produce a concrete write proposal. Include proposal
-  with business_type, confidence, recommended_action, candidate_actions, target_table,
-  match_columns, column_mapping, diff_preview, risks, explanation, and sql_draft.
+- awaiting_user_approval: you have one or more catalog entries (pre-existing or just
+  created via create_catalog_entry) and can produce concrete write proposals.
+
+  For a single target table, populate `proposal` (singular) with business_type,
+  confidence, recommended_action, candidate_actions, target_table, match_columns,
+  column_mapping, diff_preview, risks, explanation, and sql_draft.
+
+  For a multi-table decomposition (e.g. one dimension table + one long-format fact
+  table extracted from the same workbook), populate `proposals` (plural) with one
+  fully-specified proposal per target table, in the order the user should approve
+  them (dimensions first, facts last). Each entry in `proposals` must have every
+  field that a single `proposal` would have. When you use `proposals`, leave
+  `proposal` null. Never return both shapes at once.
 
 If catalog entries only contain business-purpose descriptions and no schema hints, use the
 upload itself to infer the likely keys, match columns, and write mode.
@@ -442,13 +451,14 @@ the file, then decide:
   from the observed column names and sample values.
 - human_readable_matrix or mixed_or_unknown — a human-readable layout (stacked
   metadata above a real header row, merged cells, multi-row titles, pivoted
-  layout, etc.). Do NOT try to ingest it as one flat table. Instead, in your
-  response explain how the sheet should be decomposed into multiple analysis-
-  ready tables (e.g., one or more dimension tables plus a long-format fact
-  table) and return awaiting_catalog_setup with setup_questions that describe
-  the decomposition you propose. Generate every table_name, human_label, and
-  description from the actual content you read in top_rows_preview — never
-  reuse a name from another file or a generic placeholder.
+  layout, etc.). Do NOT try to ingest it as one flat table. Decompose it into
+  multiple analysis-ready tables (e.g. one or more dimension tables plus a
+  long-format fact table) and emit ONE proposal per target table in the
+  `proposals` list — see "Tool order for a MULTI-TABLE decomposition" below.
+  Generate every table_name, human_label, and description from the actual
+  content you read in top_rows_preview — never reuse a name from another file
+  or a generic placeholder. Only fall back to awaiting_catalog_setup when even
+  the decomposition is too uncertain to commit to a write plan.
 
 NEVER copy a table name, human_label, business_type, or description from a
 prior example, a template, or the system prompt. Every naming decision must be
@@ -479,6 +489,16 @@ Tool order for a NEW table (no catalog entry yet):
 Tool order for an EXISTING table (catalog entry already present):
 inspect_upload → get_workspace_catalog → list_existing_tables → describe_table_schema →
 build_diff_preview → generate_write_sql_draft → return awaiting_user_approval.
+
+Tool order for a MULTI-TABLE decomposition (one Excel → 2+ analysis tables):
+inspect_upload → get_workspace_catalog → list_existing_tables.
+Then FOR EACH target table, in dependency order (dimensions first, facts last):
+  create_catalog_entry (if no matching entry yet) → describe_table_schema →
+  build_diff_preview → generate_write_sql_draft.
+Return awaiting_user_approval with the `proposals` list, one entry per table, in
+the same order you drafted them. Each proposal must include its own target_table,
+column_mapping (mapping the upload columns relevant to THAT table), diff_preview,
+and sql_draft. Do NOT collapse multiple targets into a single proposal.
 
 If describe_table_schema returns {found: false} after create_catalog_entry, return
 awaiting_catalog_setup as a fallback.
@@ -750,25 +770,62 @@ class WriteIngestionAgentRuntime:
                 payload={"status": "planning", "trigger": "ingestion_plan"},
             )
 
-            agent_output, tool_trace = self._run_planning_agent_loop(
-                conn=conn,
-                workspace_id=normalized_workspace_id,
-                job_id=normalized_job_id,
-                upload_id=str(job["upload_id"]),
-                requested_by=normalized_requested_by,
-                conversation_id=normalized_conversation_id,
-                message=message,
-            )
+            tool_trace_snapshot: list[dict[str, Any]] = []
+            try:
+                agent_output, tool_trace = self._run_planning_agent_loop(
+                    conn=conn,
+                    workspace_id=normalized_workspace_id,
+                    job_id=normalized_job_id,
+                    upload_id=str(job["upload_id"]),
+                    requested_by=normalized_requested_by,
+                    conversation_id=normalized_conversation_id,
+                    message=message,
+                    tool_trace_sink=tool_trace_snapshot,
+                )
+            except Exception as exc:
+                self._rollback_catalog_entries_from_trace(
+                    conn=conn,
+                    workspace_id=normalized_workspace_id,
+                    job_id=normalized_job_id,
+                    tool_trace=tool_trace_snapshot,
+                    reason=f"plan_run_error:{type(exc).__name__}",
+                )
+                self._set_job_status(
+                    conn=conn,
+                    job_id=normalized_job_id,
+                    status="uploaded",
+                    business_type_guess=None,
+                    agent_session_id=normalized_conversation_id,
+                )
+                conn.commit()
+                raise
             # Post-run recovery: the agent sometimes returns awaiting_user_approval with no
-            # proposal when the workspace catalog is empty (first upload scenario).  Detect
-            # this and synthesise an awaiting_catalog_setup output so the UI shows the
-            # catalog-setup card instead of a 502 error.
-            if agent_output.status != "awaiting_catalog_setup" and agent_output.proposal is None:
-                recovered = self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)
+            # proposal when the workspace catalog is empty (first upload), or stops short
+            # mid multi-table decomposition (created catalog entries but skipped the SQL
+            # draft stage). Try to recover a proposal list first, then fall back to
+            # synthesising an awaiting_catalog_setup output for the UI.
+            if (
+                agent_output.status != "awaiting_catalog_setup"
+                and not agent_output.effective_proposals()
+            ):
+                recovered = (
+                    self._recover_proposal_from_tool_trace(
+                        tool_trace=tool_trace,
+                        conn=conn,
+                        workspace_id=normalized_workspace_id,
+                    )
+                    or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)
+                )
                 if recovered is not None:
+                    reason = (
+                        "missing_proposal_tool_trace_recovered"
+                        if recovered.status != "awaiting_catalog_setup"
+                        else "missing_proposal_empty_catalog"
+                    )
                     logger.warning(
-                        "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=missing_proposal_empty_catalog",
+                        "ingestion_agent_output_recovered_from_tool_trace job_id=%s reason=%s",
                         normalized_job_id,
+                        reason,
                     )
                     agent_output = recovered
             agent_output = self._reconcile_plan_output_with_tool_trace(
@@ -852,65 +909,16 @@ class WriteIngestionAgentRuntime:
                 )
                 return setup_payload
 
-            if agent_output.proposal is None:
-                raise IngestionPlanningError(
-                    code="AGENT_PROPOSAL_REQUIRED",
-                    message="Agent output must include proposal for user approval",
-                    status_code=502,
-                )
-            proposal = self._normalize_agent_proposal(agent_output.proposal)
-            proposal_id = self._persist_proposal(
+            return self._finalize_awaiting_user_approval(
                 conn=conn,
                 workspace_id=normalized_workspace_id,
                 job_id=normalized_job_id,
-                proposal=proposal,
+                conversation_id=normalized_conversation_id,
+                agent_output=agent_output,
+                tool_trace=tool_trace,
+                route=route,
+                analysis_audit=analysis_audit,
             )
-            self._set_job_status(
-                conn=conn,
-                job_id=normalized_job_id,
-                status="awaiting_user_approval",
-                business_type_guess=proposal.business_type,
-                agent_session_id=normalized_conversation_id,
-            )
-            self._insert_event(
-                conn=conn,
-                job_id=normalized_job_id,
-                event_type="human_approval_requested",
-                payload=agent_output.human_approval.model_dump(mode="json"),
-            )
-            self._insert_event(
-                conn=conn,
-                job_id=normalized_job_id,
-                event_type="proposal_generated",
-                payload={
-                    "proposal_id": proposal_id,
-                    "recommended_action": proposal.recommended_action,
-                    "target_table": proposal.target_table,
-                    "human_approval": agent_output.human_approval.model_dump(mode="json"),
-                },
-            )
-            conn.commit()
-            logger.info(
-                "ingestion_plan_completed workspace_id=%s job_id=%s status=awaiting_user_approval proposal_id=%s target_table=%s recommended_action=%s",
-                normalized_workspace_id,
-                normalized_job_id,
-                proposal_id,
-                proposal.target_table or "",
-                proposal.recommended_action,
-            )
-
-            return {
-                "status": "awaiting_user_approval",
-                "workspace_id": normalized_workspace_id,
-                "job_id": normalized_job_id,
-                "proposal_id": proposal_id,
-                "proposal_json": proposal.model_dump(mode="json"),
-                "human_approval": agent_output.human_approval.model_dump(mode="json"),
-                "route": route.to_payload(),
-                "existing_tables": self._latest_tool_result(tool_trace, "list_existing_tables"),
-                "tool_trace": tool_trace,
-                "analysis_audit": analysis_audit,
-            }
 
     def confirm_setup(
         self,
@@ -974,6 +982,7 @@ class WriteIngestionAgentRuntime:
                 setup_seed=setup_seed,
                 upload_info=upload_info,
             )
+            catalog_entry.pop("_was_inserted", None)
             self._set_job_status(
                 conn=conn,
                 job_id=normalized_job_id,
@@ -1022,6 +1031,35 @@ class WriteIngestionAgentRuntime:
         normalized_conversation_id = (conversation_id or "").strip() or None
 
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+        tool_trace_snapshot: list[dict[str, Any]] = []
+        planning_succeeded: dict[str, bool] = {"value": False}
+
+        def _rollback_on_failure(reason: str) -> None:
+            if planning_succeeded["value"]:
+                return
+            try:
+                with self._connect() as rollback_conn:
+                    self._rollback_catalog_entries_from_trace(
+                        conn=rollback_conn,
+                        workspace_id=normalized_workspace_id,
+                        job_id=normalized_job_id,
+                        tool_trace=tool_trace_snapshot,
+                        reason=reason,
+                    )
+                    self._set_job_status(
+                        conn=rollback_conn,
+                        job_id=normalized_job_id,
+                        status="uploaded",
+                        business_type_guess=None,
+                        agent_session_id=normalized_conversation_id,
+                    )
+                    rollback_conn.commit()
+            except Exception:
+                logger.exception(
+                    "ingestion_rollback_failed job_id=%s reason=%s",
+                    normalized_job_id,
+                    reason,
+                )
 
         async def _run_and_finalize() -> None:
             try:
@@ -1066,7 +1104,8 @@ class WriteIngestionAgentRuntime:
                         payload={"status": "planning", "trigger": "ingestion_plan"},
                     )
 
-                    tool_trace_snapshot: list[dict[str, Any]] = []
+                    # tool_trace_snapshot is hoisted into _run_and_finalize scope so the
+                    # rollback path can see it even after `with conn` unwinds.
                     try:
                         agent_output, tool_trace = await self._run_planning_agent_loop_async(
                             conn=conn,
@@ -1082,7 +1121,11 @@ class WriteIngestionAgentRuntime:
                     except IngestionPlanningError as exc:
                         if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
                             recovered = (
-                                self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                                self._recover_proposal_from_tool_trace(
+                                    tool_trace=tool_trace_snapshot,
+                                    conn=conn,
+                                    workspace_id=normalized_workspace_id,
+                                )
                                 or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace_snapshot)
                             )
                             if recovered is not None:
@@ -1099,12 +1142,19 @@ class WriteIngestionAgentRuntime:
                             raise
 
                     # Post-run recovery: the agent sometimes completes all tools but returns
-                    # no structured output.  Try recovering a proposal first (catalog already
-                    # populated), then fall back to requesting catalog setup (empty catalog /
+                    # no structured output.  Try recovering proposals (single OR multi-table)
+                    # first, then fall back to requesting catalog setup (empty catalog /
                     # first-upload scenario).
-                    if agent_output.status != "awaiting_catalog_setup" and agent_output.proposal is None:
+                    if (
+                        agent_output.status != "awaiting_catalog_setup"
+                        and not agent_output.effective_proposals()
+                    ):
                         recovered = (
-                            self._recover_proposal_from_tool_trace(tool_trace=tool_trace)
+                            self._recover_proposal_from_tool_trace(
+                                tool_trace=tool_trace,
+                                conn=conn,
+                                workspace_id=normalized_workspace_id,
+                            )
                             or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace)
                         )
                         if recovered is not None:
@@ -1185,66 +1235,29 @@ class WriteIngestionAgentRuntime:
                         )
                         conn.commit()
                     else:
-                        if agent_output.proposal is None:
-                            raise IngestionPlanningError(
-                                code="AGENT_PROPOSAL_REQUIRED",
-                                message="Agent output must include proposal for user approval",
-                                status_code=502,
-                            )
-                        proposal = self._normalize_agent_proposal(agent_output.proposal)
-                        proposal_id = self._persist_proposal(
+                        decision_payload = self._finalize_awaiting_user_approval(
                             conn=conn,
                             workspace_id=normalized_workspace_id,
                             job_id=normalized_job_id,
-                            proposal=proposal,
+                            conversation_id=normalized_conversation_id,
+                            agent_output=agent_output,
+                            tool_trace=tool_trace,
+                            route=route,
+                            analysis_audit=analysis_audit,
                         )
-                        self._set_job_status(
-                            conn=conn,
-                            job_id=normalized_job_id,
-                            status="awaiting_user_approval",
-                            business_type_guess=proposal.business_type,
-                            agent_session_id=normalized_conversation_id,
-                        )
-                        self._insert_event(
-                            conn=conn,
-                            job_id=normalized_job_id,
-                            event_type="human_approval_requested",
-                            payload=agent_output.human_approval.model_dump(mode="json"),
-                        )
-                        self._insert_event(
-                            conn=conn,
-                            job_id=normalized_job_id,
-                            event_type="proposal_generated",
-                            payload={
-                                "proposal_id": proposal_id,
-                                "recommended_action": proposal.recommended_action,
-                                "target_table": proposal.target_table,
-                                "human_approval": agent_output.human_approval.model_dump(mode="json"),
-                            },
-                        )
-                        conn.commit()
-                        decision_payload = {
-                            "status": "awaiting_user_approval",
-                            "workspace_id": normalized_workspace_id,
-                            "job_id": normalized_job_id,
-                            "proposal_id": proposal_id,
-                            "proposal_json": proposal.model_dump(mode="json"),
-                            "human_approval": agent_output.human_approval.model_dump(mode="json"),
-                            "route": route.to_payload(),
-                            "existing_tables": self._latest_tool_result(tool_trace, "list_existing_tables"),
-                            "tool_trace": tool_trace,
-                            "analysis_audit": analysis_audit,
-                        }
 
                     event_queue.put_nowait(("decision", decision_payload))
+                    planning_succeeded["value"] = True
 
             except IngestionPlanningError as exc:
+                _rollback_on_failure(f"plan_error:{exc.code}")
                 event_queue.put_nowait(("error", {
                     "job_id": normalized_job_id,
                     "code": exc.code,
                     "message": exc.message,
                 }))
             except Exception as exc:
+                _rollback_on_failure(f"plan_unexpected:{type(exc).__name__}")
                 event_queue.put_nowait(("error", {
                     "job_id": normalized_job_id,
                     "code": "INGESTION_AI_UNAVAILABLE",
@@ -1319,6 +1332,7 @@ class WriteIngestionAgentRuntime:
                 setup_seed=setup_seed,
                 upload_info=upload_info,
             )
+            catalog_entry.pop("_was_inserted", None)
             self._set_job_status(
                 conn=conn,
                 job_id=normalized_job_id,
@@ -2589,6 +2603,7 @@ class WriteIngestionAgentRuntime:
         requested_by: str,
         conversation_id: str | None,
         message: str | None,
+        tool_trace_sink: list[dict[str, Any]] | None = None,
     ) -> tuple[IngestionAgentPlanOutput, list[dict[str, Any]]]:
         settings = get_settings()
         auth_token_source = settings.anthropic_auth_token or settings.ai_api_key
@@ -2599,7 +2614,7 @@ class WriteIngestionAgentRuntime:
                 status_code=503,
             )
 
-        tool_trace_snapshot: list[dict[str, Any]] = []
+        tool_trace_snapshot: list[dict[str, Any]] = tool_trace_sink if tool_trace_sink is not None else []
 
         async def runner() -> tuple[IngestionAgentPlanOutput, list[dict[str, Any]]]:
             return await self._run_planning_agent_loop_async(
@@ -2618,7 +2633,11 @@ class WriteIngestionAgentRuntime:
         except IngestionPlanningError as exc:
             if exc.code in RECOVERABLE_PLANNING_OUTPUT_CODES:
                 recovered = (
-                    self._recover_proposal_from_tool_trace(tool_trace=tool_trace_snapshot)
+                    self._recover_proposal_from_tool_trace(
+                        tool_trace=tool_trace_snapshot,
+                        conn=conn,
+                        workspace_id=workspace_id,
+                    )
                     or self._recover_catalog_setup_from_tool_trace(tool_trace=tool_trace_snapshot)
                 )
                 if recovered is not None:
@@ -3540,9 +3559,7 @@ class WriteIngestionAgentRuntime:
             upload_info
         )
 
-        business_type = str(schema.get("business_type") or "other").strip()
-        if business_type not in {"roster", "project_progress", "attendance", "other"}:
-            business_type = "other"
+        business_type = str(schema.get("business_type") or "other").strip() or "other"
         agent_guess_payload = {
             "business_type": business_type,
             "confidence": 0.55,
@@ -3810,54 +3827,246 @@ class WriteIngestionAgentRuntime:
         self,
         *,
         tool_trace: list[dict[str, Any]],
+        conn: sqlite3.Connection | None = None,
+        workspace_id: str | None = None,
     ) -> IngestionAgentPlanOutput | None:
-        """Recover a proposal from tool trace when the agent called generate_write_sql_draft
-        but did not produce valid structured output (e.g. non-Claude LLM ignoring json_schema)."""
-        draft_trace = self._latest_tool_trace_item(
-            tool_trace,
-            names={"generate_write_sql_draft"},
-        )
-        if draft_trace is None:
-            return None
+        """Recover one or more proposals from a tool trace.
 
-        schema = self._latest_tool_result(tool_trace, "describe_table_schema")
+        Handles three cases:
+        1. Single-table run that called ``generate_write_sql_draft`` once but
+           dropped the structured output — synthesize one proposal.
+        2. Multi-table decomposition where ``generate_write_sql_draft`` was
+           called once per target — synthesize one proposal per draft and
+           return them in ``proposals``.
+        3. Multi-table decomposition where the agent created catalog entries
+           via ``create_catalog_entry`` but never reached the SQL-draft stage —
+           synthesize a proposal per created entry using a recomputed
+           ``build_diff_preview`` (requires ``conn`` and ``workspace_id``).
+        """
         upload_info = self._latest_tool_result(tool_trace, "inspect_upload")
         upload_columns, normalized_columns, structured_column_mode = self._proposal_columns_from_upload_info(
             upload_info
         )
 
-        business_type = str(schema.get("business_type") or "other").strip()
-        if business_type not in {"roster", "project_progress", "attendance", "other"}:
-            business_type = "other"
+        draft_items = [
+            item
+            for item in tool_trace
+            if item.get("tool_name") == "generate_write_sql_draft"
+            and isinstance(item.get("arguments"), dict)
+        ]
+        if draft_items:
+            proposals = self._synthesize_proposals_from_draft_calls(
+                tool_trace=tool_trace,
+                draft_items=draft_items,
+                upload_columns=upload_columns,
+                normalized_columns=normalized_columns,
+                structured_column_mode=structured_column_mode,
+            )
+        elif conn is not None and workspace_id:
+            proposals = self._synthesize_proposals_from_catalog_entries(
+                conn=conn,
+                workspace_id=workspace_id,
+                tool_trace=tool_trace,
+                upload_info=upload_info,
+                upload_columns=upload_columns,
+                normalized_columns=normalized_columns,
+                structured_column_mode=structured_column_mode,
+            )
+        else:
+            return None
+
+        if not proposals:
+            return None
+
+        primary_business_type = proposals[0].get("business_type") or "other"
         agent_guess_payload = {
-            "business_type": business_type,
+            "business_type": primary_business_type,
             "confidence": 0.55,
             "reasoning": (
-                "Recovered from tool trace because the agent completed all tools "
-                "but did not return valid structured output."
+                "Recovered from tool trace because the agent completed its tools "
+                "but did not return a valid structured proposal."
             ),
         }
-
-        allowed_options = list(DEFAULT_ACTION_OPTIONS)
         human_approval_payload = {
             "required": True,
             "mechanism": "frontend_approval_card",
             "stage": "proposal_approval",
-            "question": "Please review the proposed ingestion action.",
-            "options": allowed_options,
-            "recommended_option": "update_existing",
+            "question": (
+                "Please review the proposed ingestion actions."
+                if len(proposals) > 1
+                else "Please review the proposed ingestion action."
+            ),
+            "options": list(DEFAULT_ACTION_OPTIONS),
+            "recommended_option": proposals[0].get("recommended_action") or "update_existing",
         }
+        try:
+            return IngestionAgentPlanOutput.model_validate(
+                {
+                    "status": "awaiting_user_approval",
+                    "agent_guess": agent_guess_payload,
+                    "proposal": proposals[0] if len(proposals) == 1 else None,
+                    "proposals": proposals if len(proposals) > 1 else [],
+                    "human_approval": human_approval_payload,
+                }
+            )
+        except Exception:
+            return None
 
-        diff_preview_result = self._latest_tool_result(tool_trace, "build_diff_preview")
-        draft_arguments = draft_trace.get("arguments") if isinstance(draft_trace.get("arguments"), dict) else {}
-        sql_payload = self._latest_tool_result(tool_trace, "generate_write_sql_draft")
+    def _synthesize_proposals_from_draft_calls(
+        self,
+        *,
+        tool_trace: list[dict[str, Any]],
+        draft_items: list[dict[str, Any]],
+        upload_columns: list[str],
+        normalized_columns: list[str],
+        structured_column_mode: bool,
+    ) -> list[dict[str, Any]]:
+        proposals: list[dict[str, Any]] = []
+        for draft_trace in draft_items:
+            draft_arguments = draft_trace.get("arguments") if isinstance(draft_trace.get("arguments"), dict) else {}
+            target_hint = str(draft_arguments.get("target_table") or "").strip().lower()
+            schema = self._lookup_schema_for_target(tool_trace, target_hint)
+            diff_preview_result = self._lookup_build_diff_for_target(tool_trace, target_hint)
+            sql_payload = self._lookup_sql_draft_result_for_target(tool_trace, target_hint, draft_trace)
+            proposal = self._build_recovered_proposal_payload(
+                draft_arguments=draft_arguments,
+                schema=schema,
+                diff_preview_result=diff_preview_result,
+                sql_payload=sql_payload,
+                upload_columns=upload_columns,
+                normalized_columns=normalized_columns,
+                structured_column_mode=structured_column_mode,
+                tool_trace=tool_trace,
+                explanation=(
+                    "Proposal recovered from tool trace because the agent completed all tools "
+                    "but did not return a valid structured proposal. Review before approving."
+                ),
+            )
+            if proposal is not None:
+                proposals.append(proposal)
+        return proposals
 
+    def _synthesize_proposals_from_catalog_entries(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        tool_trace: list[dict[str, Any]],
+        upload_info: dict[str, Any],
+        upload_columns: list[str],
+        normalized_columns: list[str],
+        structured_column_mode: bool,
+    ) -> list[dict[str, Any]]:
+        """Synthesize proposals from create_catalog_entry calls when the agent
+        stopped before running generate_write_sql_draft.
+
+        Multi-table decomposition path. Runs build_diff_preview in-process for
+        each created entry to get real predicted counts.
+        """
+        create_items = [
+            item
+            for item in tool_trace
+            if item.get("tool_name") == "create_catalog_entry"
+            and isinstance(item.get("arguments"), dict)
+            and isinstance(item.get("result"), dict)
+            and item["result"].get("created") is True
+        ]
+        if not create_items:
+            return []
+        if not isinstance(upload_info, dict) or not upload_info:
+            return []
+
+        proposals: list[dict[str, Any]] = []
+        for create_trace in create_items:
+            create_args = create_trace["arguments"]
+            create_result = create_trace["result"]
+            target_table = str(create_result.get("table_name") or create_args.get("table_name") or "").strip().lower()
+            if not target_table or not SAFE_IDENTIFIER_RE.match(target_table):
+                continue
+            business_type = str(create_result.get("business_type") or create_args.get("business_type") or "other").strip()
+            time_grain = str(create_result.get("time_grain") or create_args.get("time_grain") or "none").strip()
+            if time_grain not in {"none", "month", "quarter", "year"}:
+                time_grain = "none"
+            write_mode = str(create_result.get("write_mode") or create_args.get("write_mode") or "new_table").strip()
+            recommended_action = (
+                write_mode if write_mode in DEFAULT_ACTION_OPTIONS else "new_table"
+            )
+            match_columns: list[str] = []
+            for item in create_result.get("match_columns") or create_args.get("match_columns") or []:
+                normalized = self._normalize_identifier(str(item))
+                if normalized and normalized not in match_columns:
+                    match_columns.append(normalized)
+            column_mapping = self._fallback_column_mapping_from_upload_columns(
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+            try:
+                diff_preview_result = self._tool_build_diff_preview(
+                    conn=conn,
+                    workspace_id=workspace_id,
+                    upload_info=upload_info,
+                    target_table=target_table,
+                    match_columns=match_columns,
+                    action_mode=recommended_action,
+                    column_mapping=column_mapping,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ingestion_recover_diff_preview_failed target_table=%s error=%s",
+                    target_table,
+                    exc,
+                )
+                diff_preview_result = {}
+            candidate_actions = list(diff_preview_result.get("candidate_actions") or DEFAULT_ACTION_OPTIONS)
+            if "cancel" not in candidate_actions:
+                candidate_actions.append("cancel")
+            proposal_payload = {
+                "business_type": business_type or "other",
+                "confidence": 0.55,
+                "recommended_action": recommended_action,
+                "candidate_actions": candidate_actions,
+                "target_table": target_table,
+                "time_grain": time_grain,
+                "match_columns": match_columns,
+                "column_mapping": column_mapping,
+                "diff_preview": {
+                    "predicted_insert_count": self._as_non_negative_int(diff_preview_result.get("predicted_insert_count")),
+                    "predicted_update_count": self._as_non_negative_int(diff_preview_result.get("predicted_update_count")),
+                    "predicted_conflict_count": self._as_non_negative_int(diff_preview_result.get("predicted_conflict_count")),
+                },
+                "risks": [
+                    "Proposal recovered from catalog entries; review column mapping before approving.",
+                ],
+                "explanation": (
+                    "Proposal recovered because the agent created a catalog entry for this target table "
+                    "but did not draft write SQL. Confirm column mapping and counts before approving."
+                ),
+                "sql_draft": "",
+                "requires_catalog_setup": False,
+            }
+            proposals.append(proposal_payload)
+        return proposals
+
+    def _build_recovered_proposal_payload(
+        self,
+        *,
+        draft_arguments: dict[str, Any],
+        schema: dict[str, Any],
+        diff_preview_result: dict[str, Any],
+        sql_payload: dict[str, Any],
+        upload_columns: list[str],
+        normalized_columns: list[str],
+        structured_column_mode: bool,
+        tool_trace: list[dict[str, Any]],
+        explanation: str,
+    ) -> dict[str, Any] | None:
         target_table = str(draft_arguments.get("target_table") or schema.get("table_name") or "").strip().lower()
         if target_table and not SAFE_IDENTIFIER_RE.match(target_table):
             target_table = self._normalize_identifier(target_table)
         if not target_table:
-            target_table = None
+            return None
 
+        business_type = str(schema.get("business_type") or "other").strip() or "other"
         candidate_actions = list(DEFAULT_ACTION_OPTIONS) + ["cancel"]
         action_mode = str(draft_arguments.get("action_mode") or "update_existing").strip()
         recommended_action = action_mode if action_mode in candidate_actions else "update_existing"
@@ -3887,14 +4096,14 @@ class WriteIngestionAgentRuntime:
         if time_grain not in {"none", "month", "quarter", "year"}:
             time_grain = "none"
 
-        def _as_non_negative_int(value: Any) -> int:
-            try:
-                return max(int(value), 0)
-            except (TypeError, ValueError):
-                return 0
-
         column_mapping = (
-            self._column_mapping_from_build_diff_trace(
+            self._column_mapping_from_build_diff_trace_for_target(
+                tool_trace=tool_trace,
+                target_table=target_table,
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
+            )
+            or self._column_mapping_from_build_diff_trace(
                 tool_trace=tool_trace,
                 upload_columns=upload_columns,
                 structured_column_mode=structured_column_mode,
@@ -3905,7 +4114,7 @@ class WriteIngestionAgentRuntime:
             )
         )
 
-        proposal_payload = {
+        return {
             "business_type": business_type,
             "confidence": 0.6,
             "recommended_action": recommended_action,
@@ -3915,37 +4124,98 @@ class WriteIngestionAgentRuntime:
             "match_columns": match_columns,
             "column_mapping": column_mapping,
             "diff_preview": {
-                "predicted_insert_count": _as_non_negative_int(
-                    diff_preview_result.get("predicted_insert_count")
-                ),
-                "predicted_update_count": _as_non_negative_int(
-                    diff_preview_result.get("predicted_update_count")
-                ),
-                "predicted_conflict_count": _as_non_negative_int(
-                    diff_preview_result.get("predicted_conflict_count")
-                ),
+                "predicted_insert_count": self._as_non_negative_int(diff_preview_result.get("predicted_insert_count")),
+                "predicted_update_count": self._as_non_negative_int(diff_preview_result.get("predicted_update_count")),
+                "predicted_conflict_count": self._as_non_negative_int(diff_preview_result.get("predicted_conflict_count")),
             },
             "risks": [
                 "Proposal recovered from tool trace; verify column mapping before approving."
             ],
-            "explanation": (
-                "Proposal recovered from tool trace because the agent completed all tools "
-                "but did not return valid structured output. Review carefully before approving."
-            ),
+            "explanation": explanation,
             "sql_draft": str(sql_payload.get("sql_draft") or "").strip(),
             "requires_catalog_setup": False,
         }
-        try:
-            return IngestionAgentPlanOutput.model_validate(
-                {
-                    "status": "awaiting_user_approval",
-                    "agent_guess": agent_guess_payload,
-                    "proposal": proposal_payload,
-                    "human_approval": human_approval_payload,
-                }
+
+    def _lookup_schema_for_target(
+        self,
+        tool_trace: list[dict[str, Any]],
+        target_table: str,
+    ) -> dict[str, Any]:
+        target_table = (target_table or "").strip().lower()
+        for item in reversed(tool_trace):
+            if item.get("tool_name") != "describe_table_schema":
+                continue
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            args_table = str(args.get("table_name") or "").strip().lower()
+            result_table = str(result.get("table_name") or "").strip().lower()
+            if target_table and target_table in {args_table, result_table}:
+                return result
+        return self._latest_tool_result(tool_trace, "describe_table_schema")
+
+    def _lookup_build_diff_for_target(
+        self,
+        tool_trace: list[dict[str, Any]],
+        target_table: str,
+    ) -> dict[str, Any]:
+        target_table = (target_table or "").strip().lower()
+        for item in reversed(tool_trace):
+            if item.get("tool_name") != "build_diff_preview":
+                continue
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            args_table = str(args.get("target_table") or "").strip().lower()
+            if target_table and args_table == target_table:
+                result = item.get("result")
+                return result if isinstance(result, dict) else {}
+        return self._latest_tool_result(tool_trace, "build_diff_preview")
+
+    def _lookup_sql_draft_result_for_target(
+        self,
+        tool_trace: list[dict[str, Any]],
+        target_table: str,
+        draft_trace: dict[str, Any],
+    ) -> dict[str, Any]:
+        target_table = (target_table or "").strip().lower()
+        for item in reversed(tool_trace):
+            if item.get("tool_name") != "generate_write_sql_draft":
+                continue
+            if item is draft_trace:
+                result = item.get("result")
+                return result if isinstance(result, dict) else {}
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            args_table = str(args.get("target_table") or "").strip().lower()
+            if target_table and args_table == target_table:
+                result = item.get("result")
+                return result if isinstance(result, dict) else {}
+        return self._latest_tool_result(tool_trace, "generate_write_sql_draft")
+
+    def _column_mapping_from_build_diff_trace_for_target(
+        self,
+        *,
+        tool_trace: list[dict[str, Any]],
+        target_table: str,
+        upload_columns: list[str],
+        structured_column_mode: bool,
+    ) -> dict[str, str]:
+        target_table = (target_table or "").strip().lower()
+        if not target_table:
+            return {}
+        for item in reversed(tool_trace):
+            if item.get("tool_name") != "build_diff_preview":
+                continue
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            args_table = str(args.get("target_table") or "").strip().lower()
+            if args_table != target_table:
+                continue
+            raw_mapping = args.get("column_mapping") if isinstance(args.get("column_mapping"), dict) else None
+            if not raw_mapping:
+                continue
+            return self._normalize_proposal_column_mapping(
+                raw_mapping=raw_mapping,
+                upload_columns=upload_columns,
+                structured_column_mode=structured_column_mode,
             )
-        except Exception:
-            return None
+        return {}
 
     def _proposal_columns_from_upload_info(
         self,
@@ -5386,6 +5656,173 @@ class WriteIngestionAgentRuntime:
             result.append(lowered)
         return result
 
+    def _rollback_catalog_entries_from_trace(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        job_id: str,
+        tool_trace: list[dict[str, Any]],
+        reason: str,
+    ) -> list[dict[str, Any]]:
+        """Delete catalog entries that this planning run inserted.
+
+        Walks ``tool_trace`` for ``create_catalog_entry`` calls whose result
+        indicates a brand-new row landed (``was_inserted`` / legacy ``created``).
+        Updates of pre-existing entries are left alone — the prior state is
+        already lost, and re-running the agent will idempotently re-update.
+
+        Returns the list of entries that were rolled back, suitable for audit
+        logging. Safe to call on an empty trace (returns []).
+        """
+        rolled_back: list[dict[str, Any]] = []
+        for item in tool_trace:
+            if item.get("tool_name") != "create_catalog_entry":
+                continue
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            if not result:
+                continue
+            was_inserted = bool(result.get("was_inserted"))
+            if not was_inserted and result.get("created") is not True:
+                continue
+            entry_id = str(result.get("catalog_entry_id") or "").strip()
+            table_name = str(result.get("table_name") or "").strip().lower()
+            if not entry_id:
+                continue
+            row = conn.execute(
+                "DELETE FROM table_catalog WHERE id = ? AND workspace_id = ? RETURNING id, table_name, business_type",
+                (entry_id, workspace_id),
+            ).fetchone()
+            if row is None:
+                continue
+            rolled_back.append(
+                {
+                    "catalog_entry_id": str(row["id"]),
+                    "table_name": str(row["table_name"]),
+                    "business_type": str(row["business_type"]),
+                }
+            )
+            logger.warning(
+                "ingestion_catalog_entry_rolled_back job_id=%s workspace_id=%s catalog_entry_id=%s table_name=%s reason=%s",
+                job_id,
+                workspace_id,
+                entry_id,
+                table_name,
+                reason,
+            )
+        if rolled_back:
+            self._insert_event(
+                conn=conn,
+                job_id=job_id,
+                event_type="catalog_entries_rolled_back",
+                payload={"reason": reason, "entries": rolled_back},
+            )
+            conn.commit()
+        return rolled_back
+
+    def _finalize_awaiting_user_approval(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        job_id: str,
+        conversation_id: str | None,
+        agent_output: IngestionAgentPlanOutput,
+        tool_trace: list[dict[str, Any]],
+        route: RouteDecision,
+        analysis_audit: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist every proposal in ``agent_output`` and build the decision payload.
+
+        Supports both the single-proposal and the multi-table-decomposition shapes
+        emitted by the planning agent. Backward-compat: ``proposal_id`` /
+        ``proposal_json`` in the response point at the first persisted proposal so
+        existing single-proposal consumers keep working unchanged.
+        """
+        raw_proposals = agent_output.effective_proposals()
+        if not raw_proposals:
+            raise IngestionPlanningError(
+                code="AGENT_PROPOSAL_REQUIRED",
+                message="Agent output must include at least one proposal for user approval",
+                status_code=502,
+            )
+        persisted: list[dict[str, Any]] = []
+        primary_business_type: str | None = None
+        for raw in raw_proposals:
+            proposal = self._normalize_agent_proposal(raw)
+            proposal_id = self._persist_proposal(
+                conn=conn,
+                workspace_id=workspace_id,
+                job_id=job_id,
+                proposal=proposal,
+            )
+            if primary_business_type is None:
+                primary_business_type = proposal.business_type
+            persisted.append(
+                {
+                    "proposal_id": proposal_id,
+                    "proposal_json": proposal.model_dump(mode="json"),
+                    "recommended_action": proposal.recommended_action,
+                    "target_table": proposal.target_table,
+                }
+            )
+        self._set_job_status(
+            conn=conn,
+            job_id=job_id,
+            status="awaiting_user_approval",
+            business_type_guess=primary_business_type,
+            agent_session_id=conversation_id,
+        )
+        human_approval_payload = agent_output.human_approval.model_dump(mode="json")
+        self._insert_event(
+            conn=conn,
+            job_id=job_id,
+            event_type="human_approval_requested",
+            payload=human_approval_payload,
+        )
+        for entry in persisted:
+            self._insert_event(
+                conn=conn,
+                job_id=job_id,
+                event_type="proposal_generated",
+                payload={
+                    "proposal_id": entry["proposal_id"],
+                    "recommended_action": entry["recommended_action"],
+                    "target_table": entry["target_table"],
+                    "human_approval": human_approval_payload,
+                },
+            )
+        conn.commit()
+        logger.info(
+            "ingestion_plan_completed workspace_id=%s job_id=%s status=awaiting_user_approval proposal_count=%s primary_proposal_id=%s primary_target_table=%s primary_recommended_action=%s",
+            workspace_id,
+            job_id,
+            len(persisted),
+            persisted[0]["proposal_id"],
+            persisted[0]["target_table"] or "",
+            persisted[0]["recommended_action"],
+        )
+        primary = persisted[0]
+        return {
+            "status": "awaiting_user_approval",
+            "workspace_id": workspace_id,
+            "job_id": job_id,
+            "proposal_id": primary["proposal_id"],
+            "proposal_json": primary["proposal_json"],
+            "proposals": [
+                {
+                    "proposal_id": entry["proposal_id"],
+                    "proposal_json": entry["proposal_json"],
+                }
+                for entry in persisted
+            ],
+            "human_approval": human_approval_payload,
+            "route": route.to_payload(),
+            "existing_tables": self._latest_tool_result(tool_trace, "list_existing_tables"),
+            "tool_trace": tool_trace,
+            "analysis_audit": analysis_audit,
+        }
+
     def _persist_proposal(
         self,
         *,
@@ -5647,6 +6084,14 @@ class WriteIngestionAgentRuntime:
         setup_seed: IngestionCatalogSetupSeed,
         upload_info: dict[str, Any],
     ) -> dict[str, Any]:
+        """Insert or update a catalog entry.
+
+        The returned dict includes ``_was_inserted`` (True if a brand-new row
+        was created, False if an existing row was updated in place). Callers
+        that care about distinguishing the two (e.g. rollback on planning
+        failure) should inspect this flag and then strip it before returning
+        the entry to clients.
+        """
         self._ensure_user_record(conn=conn, user_id=requested_by)
         now = _utc_now()
         business_type = setup_seed.business_type
@@ -5677,6 +6122,7 @@ class WriteIngestionAgentRuntime:
             """,
             (workspace_id, business_type, table_name),
         ).fetchone()
+        was_inserted = existing is None
         if existing is None:
             catalog_id = uuid.uuid4().hex
             conn.execute(
@@ -5759,7 +6205,9 @@ class WriteIngestionAgentRuntime:
                 message="Catalog entry not found after setup confirmation",
                 status_code=500,
             )
-        return self._serialize_catalog_entry(row)
+        entry = self._serialize_catalog_entry(row)
+        entry["_was_inserted"] = was_inserted
+        return entry
 
     def _ensure_user_record(self, *, conn: sqlite3.Connection, user_id: str) -> None:
         normalized_user = user_id.strip()
@@ -6050,9 +6498,14 @@ class WriteIngestionAgentRuntime:
             )
         table_name = normalized_name
 
-        business_type = str(arguments.get("business_type", "other")).strip()
-        if business_type not in {"roster", "project_progress", "attendance", "other"}:
-            business_type = "other"
+        # business_type is free-form snake_case; the closed-vocabulary CHECK on
+        # table_catalog was dropped in db_migrations._relax_business_type_constraint.
+        # Only enforce identifier-ish shape so it stays storable + queryable.
+        raw_business_type = str(arguments.get("business_type", "other")).strip().lower()
+        business_type = raw_business_type or "other"
+        if not SAFE_IDENTIFIER_RE.match(business_type):
+            normalized = self._normalize_identifier(business_type)
+            business_type = normalized or "other"
 
         write_mode = str(arguments.get("write_mode", "new_table")).strip()
         if write_mode not in {"new_table", "update_existing", "time_partitioned_new_table"}:
@@ -6094,17 +6547,22 @@ class WriteIngestionAgentRuntime:
             setup_seed=setup_seed,
             upload_info=upload_info,
         )
+        was_inserted = bool(catalog_entry.pop("_was_inserted", False))
         conn.commit()
         logger.info(
-            "ingestion_catalog_entry_created job_id=%s workspace_id=%s table_name=%s business_type=%s write_mode=%s",
+            "ingestion_catalog_entry_created job_id=%s workspace_id=%s table_name=%s business_type=%s write_mode=%s was_inserted=%s",
             job_id,
             workspace_id,
             table_name,
             business_type,
             write_mode,
+            was_inserted,
         )
+        # `created` reflects whether a brand-new row landed (rollback uses this);
+        # `was_inserted` is the explicit name. Both are returned for clarity.
         return {
-            "created": True,
+            "created": was_inserted,
+            "was_inserted": was_inserted,
             "catalog_entry_id": catalog_entry["id"],
             "table_name": catalog_entry["table_name"],
             "human_label": catalog_entry["human_label"],
@@ -6114,7 +6572,7 @@ class WriteIngestionAgentRuntime:
             "primary_keys": catalog_entry["primary_keys"],
             "match_columns": catalog_entry["match_columns"],
             "message": (
-                f"Catalog entry created for table '{table_name}'. "
+                f"Catalog entry {'created' if was_inserted else 'updated'} for table '{table_name}'. "
                 "Now call describe_table_schema to get the full schema contract."
             ),
         }

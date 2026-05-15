@@ -301,6 +301,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           />
         ) : pendingApproval ? (
           <div className="rounded-comfortable border border-border-cream bg-amber-50 px-3 py-3">
+            {pendingApproval.plan.proposals.length > 1 ? (
+              <p className="mb-1 text-caption text-stone-gray">
+                {`Proposal 1 of ${pendingApproval.plan.proposals.length}`}
+                {pendingApproval.plan.proposal.targetTable
+                  ? ` · ${pendingApproval.plan.proposal.targetTable}`
+                  : ""}
+              </p>
+            ) : null}
             <p className="text-body-sm font-medium text-near-black">
               {pendingApproval.plan.humanApproval.question || t("chat.ingestion.approvalOptionsTitle")}
             </p>

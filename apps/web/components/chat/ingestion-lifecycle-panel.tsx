@@ -390,7 +390,7 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
       // auto-approve with the recommended action and auto-execute so the user
       // only needs to click "Confirm & Import" once.
       if (plan.status === "awaiting_user_approval") {
-        const approvalPlan = plan as IngestionPlanAwaitingApproval;
+        const approvalPlan = plan as unknown as IngestionPlanAwaitingApproval;
         await autoApproveAndExecute(approvalPlan);
       } else {
         applyPlanPayload(plan);
@@ -592,7 +592,7 @@ export function IngestionLifecyclePanel({ workspaceId, workspaceTitle }: Ingesti
       return;
     }
     setSetupPayload(null);
-    setApprovalPayload(plan as IngestionPlanAwaitingApproval);
+    setApprovalPayload(plan as unknown as IngestionPlanAwaitingApproval);
     setPhase("awaiting_user_approval");
   }
 

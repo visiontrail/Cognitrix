@@ -744,3 +744,76 @@ def test_create_catalog_entry_accepts_free_form_business_type(tmp_path: Path, mo
             (result["catalog_entry_id"],),
         ).fetchone()
         assert str(row["business_type"]) == "project_assignment"
+
+
+def test_count_pending_proposals_drives_multi_proposal_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After executing one proposal in a 3-proposal job, the pending count must
+    drop to 2 so the job is set back to awaiting_user_approval, not succeeded."""
+    _set_runtime_env(monkeypatch, tmp_path)
+    from apps.api.db_migrations import apply_migrations
+    apply_migrations()
+    runtime = WriteIngestionAgentRuntime()
+    workspace_id = "ws-multi"
+    job_id = "job-multi"
+    with runtime._connect() as conn:  # noqa: SLF001
+        conn.execute("INSERT OR IGNORE INTO users (id, email, display_name) VALUES ('u-1', 'u-1@local.invalid', 'u-1')")
+        conn.execute(
+            "INSERT OR IGNORE INTO workspaces (id, name, slug, owner_user_id) VALUES (?, 'wsm', 'wsm', 'u-1')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_uploads (id, workspace_id, uploaded_by, file_name, storage_path, size_bytes, file_hash) "
+            "VALUES ('up-m', ?, 'u-1', 'f.xlsx', '/tmp/f.xlsx', 0, 'h')",
+            (workspace_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ingestion_jobs (id, workspace_id, upload_id, created_by, status) "
+            "VALUES (?, ?, 'up-m', 'u-1', 'awaiting_user_approval')",
+            (job_id, workspace_id),
+        )
+        # Insert 3 proposals (each with a distinct proposal_version per the unique constraint)
+        for version, pid in enumerate(("p-1", "p-2", "p-3"), start=1):
+            conn.execute(
+                "INSERT INTO ingestion_proposals (id, job_id, workspace_id, proposal_version, "
+                "proposal_json, recommended_action, target_table, predicted_insert_count, "
+                "predicted_update_count, predicted_conflict_count, risk_summary, generated_sql_draft) "
+                "VALUES (?, ?, ?, ?, '{}', 'new_table', ?, 0, 0, 0, '[]', '')",
+                (pid, job_id, workspace_id, version, f"tbl_{pid}"),
+            )
+        conn.commit()
+
+        # No executions yet: all 3 are pending
+        assert runtime._count_pending_proposals(conn=conn, job_id=job_id) == 3  # noqa: SLF001
+
+        # Simulate successful execution of proposal p-1
+        conn.execute(
+            "INSERT INTO ingestion_executions (id, job_id, proposal_id, workspace_id, executed_by, "
+            "execution_mode, validated_sql, dry_run_summary, execution_receipt, status, started_at, finished_at) "
+            "VALUES ('ex-1', ?, 'p-1', ?, 'u-1', 'new_table', '', '{}', '{}', 'succeeded', 0, 0)",
+            (job_id, workspace_id),
+        )
+        conn.commit()
+
+        assert runtime._count_pending_proposals(conn=conn, job_id=job_id) == 2  # noqa: SLF001
+
+        # Simulate successful execution of proposal p-2
+        conn.execute(
+            "INSERT INTO ingestion_executions (id, job_id, proposal_id, workspace_id, executed_by, "
+            "execution_mode, validated_sql, dry_run_summary, execution_receipt, status, started_at, finished_at) "
+            "VALUES ('ex-2', ?, 'p-2', ?, 'u-1', 'new_table', '', '{}', '{}', 'succeeded', 0, 0)",
+            (job_id, workspace_id),
+        )
+        conn.commit()
+
+        assert runtime._count_pending_proposals(conn=conn, job_id=job_id) == 1  # noqa: SLF001
+
+        # Simulate successful execution of proposal p-3 — last one
+        conn.execute(
+            "INSERT INTO ingestion_executions (id, job_id, proposal_id, workspace_id, executed_by, "
+            "execution_mode, validated_sql, dry_run_summary, execution_receipt, status, started_at, finished_at) "
+            "VALUES ('ex-3', ?, 'p-3', ?, 'u-1', 'new_table', '', '{}', '{}', 'succeeded', 0, 0)",
+            (job_id, workspace_id),
+        )
+        conn.commit()
+
+        assert runtime._count_pending_proposals(conn=conn, job_id=job_id) == 0  # noqa: SLF001

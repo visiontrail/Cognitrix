@@ -1738,7 +1738,11 @@ class WriteIngestionAgentRuntime:
                     receipt=receipt,
                     proposal_payload=proposal_payload,
                 )
-            final_job_status = "succeeded" if execution_status == "succeeded" else "failed"
+            if execution_status == "succeeded":
+                remaining = self._count_pending_proposals(conn=conn, job_id=normalized_job_id)
+                final_job_status = "awaiting_user_approval" if remaining > 0 else "succeeded"
+            else:
+                final_job_status = "failed"
             self._set_job_status(
                 conn=conn,
                 job_id=normalized_job_id,
@@ -1964,7 +1968,11 @@ class WriteIngestionAgentRuntime:
                             receipt=receipt,
                             proposal_payload=proposal_payload,
                         )
-                    final_job_status = "succeeded" if execution_status == "succeeded" else "failed"
+                    if execution_status == "succeeded":
+                        remaining = self._count_pending_proposals(conn=conn, job_id=normalized_job_id)
+                        final_job_status = "awaiting_user_approval" if remaining > 0 else "succeeded"
+                    else:
+                        final_job_status = "failed"
                     self._set_job_status(
                         conn=conn,
                         job_id=normalized_job_id,
@@ -4370,6 +4378,30 @@ class WriteIngestionAgentRuntime:
             elapsed_ms,
         )
         return result
+
+    def _count_pending_proposals(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        job_id: str,
+    ) -> int:
+        """Return the number of proposals that have not yet been successfully executed."""
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM ingestion_proposals p
+            WHERE p.job_id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM ingestion_executions e
+                  WHERE e.job_id = p.job_id
+                    AND e.proposal_id = p.id
+                    AND e.status = 'succeeded'
+              )
+            """,
+            (job_id,),
+        ).fetchone()
+        return int(row["cnt"]) if row is not None else 0
 
     def _load_job_for_approval(
         self,

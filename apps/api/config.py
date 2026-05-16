@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     legacy_service_login_enabled: bool = Field(default=True, alias="LEGACY_SERVICE_LOGIN_ENABLED")
     auth_bootstrap_admin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_EMAIL")
     auth_bootstrap_admin_password: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_PASSWORD")
+    auth_bootstrap_superadmin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_SUPERADMIN_EMAIL")
+    agent_skills_enabled: bool = Field(default=False, alias="AGENT_SKILLS_ENABLED")
+    agent_skills_dir: str = Field(default="", alias="AGENT_SKILLS_DIR")
+    agent_skills_max_upload_mb: int = Field(default=25, alias="AGENT_SKILLS_MAX_UPLOAD_MB")
+    legacy_xlsx_parser_enabled: bool = Field(default=True, alias="LEGACY_XLSX_PARSER_ENABLED")
     app_url: str = Field(default="http://localhost:3000", alias="APP_URL")
     log_level: str = Field(alias="LOG_LEVEL")
     upload_dir: Path = Field(alias="UPLOAD_DIR")
@@ -99,6 +104,13 @@ class Settings(BaseSettings):
             raise ValueError(f"{field_name} must be greater than 0")
         return value
 
+    @field_validator("agent_skills_max_upload_mb")
+    @classmethod
+    def validate_agent_skills_max_upload_mb(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("AGENT_SKILLS_MAX_UPLOAD_MB must be greater than 0")
+        return value
+
     @model_validator(mode="after")
     def validate_agent_engine_sdk_toggle(self) -> "Settings":
         if not self.claude_agent_sdk_enabled:
@@ -108,6 +120,16 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
+
+    @property
+    def resolved_agent_skills_dir(self) -> Path:
+        raw = (self.agent_skills_dir or "").strip()
+        if not raw:
+            return (self.upload_dir / "agent_skills").resolve()
+        candidate = Path(raw).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve()
+        return (Path(__file__).resolve().parent / candidate).resolve()
 
 
 @lru_cache(maxsize=1)

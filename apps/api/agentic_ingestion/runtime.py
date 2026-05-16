@@ -511,6 +511,32 @@ proposal candidate_actions.
 Do not execute writes. Do not ask the user any questions. Human approval is handled by
 the application after you return. Return ONLY valid JSON matching the required schema.
 """
+
+# Suffix appended to INGESTION_AGENT_SYSTEM_PROMPT when LEGACY_XLSX_PARSER_ENABLED=false
+# and an xlsx skill is loaded into the agent. The hand-written
+# ``inspect_upload`` path is being retired in favour of the Anthropic-vendored
+# xlsx skill; see ``openspec/changes/add-agent-skills-management/design.md``.
+XLSX_SKILL_PROMPT_SUFFIX = """
+
+You have access to a vendored xlsx skill loaded as a Claude Agent SDK plugin.
+When parsing Excel uploads, prefer the xlsx skill's tools (e.g. for reading
+sheets, merged cells, and stacked-metadata layouts) over relying solely on the
+``inspect_upload`` pre-parse. The skill is the authoritative path for any
+xlsx file with non-flat structure.
+"""
+
+
+def build_ingestion_system_prompt() -> str:
+    """Compose the ingestion agent's system prompt with an optional xlsx-skill
+    suffix when the legacy parser is disabled."""
+    from ..config import get_settings
+
+    settings = get_settings()
+    if settings.agent_skills_enabled and not settings.legacy_xlsx_parser_enabled:
+        return INGESTION_AGENT_SYSTEM_PROMPT + XLSX_SKILL_PROMPT_SUFFIX
+    return INGESTION_AGENT_SYSTEM_PROMPT
+
+
 INGESTION_EXECUTION_AGENT_SYSTEM_PROMPT = """\
 You are Cognitrix's Write Execution Agent.
 
@@ -2327,6 +2353,11 @@ class WriteIngestionAgentRuntime:
                 settings.anthropic_default_haiku_model.strip() or model
             )
 
+        from ..agent_skills.agents import WRITE_INGESTION_AGENT
+        from ..agent_skills.loader import load_skill_plugins_for_agent
+
+        skill_plugins = load_skill_plugins_for_agent(WRITE_INGESTION_AGENT)
+
         return ClaudeAgentOptions(
             tools=[],
             system_prompt=INGESTION_EXECUTION_AGENT_SYSTEM_PROMPT,
@@ -2340,6 +2371,7 @@ class WriteIngestionAgentRuntime:
             model=model,
             cwd=str(Path.cwd()),
             env=env,
+            plugins=skill_plugins,
             output_format={
                 "type": "json_schema",
                 "schema": IngestionExecutionAgentOutput.model_json_schema(),
@@ -2964,9 +2996,14 @@ class WriteIngestionAgentRuntime:
                 settings.anthropic_default_haiku_model.strip() or model
             )
 
+        from ..agent_skills.agents import WRITE_INGESTION_AGENT
+        from ..agent_skills.loader import load_skill_plugins_for_agent
+
+        skill_plugins = load_skill_plugins_for_agent(WRITE_INGESTION_AGENT)
+
         return ClaudeAgentOptions(
             tools=[],
-            system_prompt=INGESTION_AGENT_SYSTEM_PROMPT,
+            system_prompt=build_ingestion_system_prompt(),
             mcp_servers={INGESTION_SDK_MCP_SERVER_NAME: server},
             can_use_tool=can_use_tool,
             permission_mode="default",
@@ -2974,6 +3011,7 @@ class WriteIngestionAgentRuntime:
             model=model,
             cwd=str(Path.cwd()),
             env=env,
+            plugins=skill_plugins,
             output_format={
                 "type": "json_schema",
                 "schema": IngestionAgentPlanOutput.model_json_schema(),

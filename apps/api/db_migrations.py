@@ -231,6 +231,73 @@ def _bootstrap_admin(conn: sqlite3.Connection) -> None:
     logger.info("bootstrap_admin_created email=%s", admin_email)
 
 
+def _bootstrap_superadmin(conn: sqlite3.Connection) -> None:
+    """Promote the configured account to the `superadmin` role on startup.
+
+    - When `AUTH_BOOTSTRAP_SUPERADMIN_EMAIL` is set and the user exists, promote them.
+    - Otherwise, if no user currently has the `superadmin` role override and a
+      bootstrap admin user exists, promote the bootstrap admin so the operator is
+      never locked out of /admin/skills.
+    """
+    from .auth import clear_auth_cache, get_role_directory
+    from .audit import get_audit_logger
+
+    settings = get_settings()
+    role_dir = get_role_directory()
+
+    def _promote(user_id: str, email_lower: str, reason: str) -> None:
+        existing = role_dir.get_override(user_id) or {}
+        if str(existing.get("role", "")).lower() == "superadmin":
+            return
+        role_dir.set_override(
+            user_id=user_id,
+            role="superadmin",
+            department=existing.get("department"),
+            clearance=int(existing.get("clearance", 0)),
+            updated_by="bootstrap",
+        )
+        clear_auth_cache()
+        get_audit_logger().log(
+            event_type="authorization",
+            action="superadmin_promote",
+            status="success",
+            severity="ALERT",
+            user_id=user_id,
+            project_id="default",
+            resource="auth.superadmin",
+            detail={"reason": reason, "email": email_lower},
+        )
+        logger.info("superadmin_promoted user_id=%s reason=%s", user_id, reason)
+
+    target_email = settings.auth_bootstrap_superadmin_email.strip().lower()
+    if target_email:
+        row = conn.execute(
+            "SELECT id, COALESCE(email_lower, LOWER(email)) AS email_lower "
+            "FROM users WHERE COALESCE(email_lower, LOWER(email)) = ?",
+            (target_email,),
+        ).fetchone()
+        if row is not None:
+            _promote(str(row["id"]), str(row["email_lower"]), reason="env_var")
+            return
+        logger.warning("superadmin_bootstrap_user_missing email=%s", target_email)
+        return
+
+    # No env override — only auto-promote if there is no existing superadmin.
+    if role_dir.has_any_with_role("superadmin"):
+        return
+
+    admin_email = settings.auth_bootstrap_admin_email.strip().lower()
+    if not admin_email:
+        return
+    row = conn.execute(
+        "SELECT id, COALESCE(email_lower, LOWER(email)) AS email_lower "
+        "FROM users WHERE COALESCE(email_lower, LOWER(email)) = ?",
+        (admin_email,),
+    ).fetchone()
+    if row is not None:
+        _promote(str(row["id"]), str(row["email_lower"]), reason="bootstrap_admin_fallback")
+
+
 def apply_migrations() -> None:
     db_path = _get_db_path()
     conn = _connect(db_path)
@@ -253,5 +320,6 @@ def apply_migrations() -> None:
         _relax_business_type_constraint(conn)
         _seed_jobs(conn)
         _bootstrap_admin(conn)
+        _bootstrap_superadmin(conn)
     finally:
         conn.close()

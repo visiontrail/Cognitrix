@@ -893,6 +893,11 @@ class AgentRuntime:
             else None
         )
 
+        from .agent_skills.agents import QUERY_AGENT
+        from .agent_skills.loader import load_skill_plugins_for_agent
+
+        skill_plugins = load_skill_plugins_for_agent(QUERY_AGENT)
+
         return ClaudeAgentOptions(
             tools=[],
             system_prompt=system_text,
@@ -910,6 +915,7 @@ class AgentRuntime:
             model=model,
             cwd=str(Path.cwd()),
             env=env,
+            plugins=skill_plugins,
             output_format=None,
         )
 

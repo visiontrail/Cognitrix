@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from .agentic_ingestion.router import router as ingestion_router
+from .admin_skills import router as admin_skills_router
 from .audit import get_audit_logger
 from .auth import (
     AuthIdentity,
@@ -71,6 +72,24 @@ app.include_router(table_catalog_router)
 app.include_router(portal_router)
 app.include_router(jobs_router)
 app.include_router(user_search_router)
+
+
+def register_admin_skills_router_if_enabled() -> None:
+    """Mount the /admin/skills router when the feature flag is on.
+
+    Re-callable from tests (after toggling ``AGENT_SKILLS_ENABLED`` and clearing
+    the settings cache) so the route table reflects the current env.
+    """
+
+    if not get_settings().agent_skills_enabled:
+        return
+    existing = {getattr(route, "path", "") for route in app.router.routes}
+    if any(path.startswith("/admin/skills") for path in existing):
+        return
+    app.include_router(admin_skills_router)
+
+
+register_admin_skills_router_if_enabled()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
@@ -182,6 +201,15 @@ async def on_startup() -> None:
         "agentic_ingestion_forced_enabled=true configured_flag=%s",
         settings.agentic_ingestion_enabled,
     )
+
+    if settings.agent_skills_enabled:
+        from .agent_skills.bootstrap import bootstrap_vendored_xlsx_skill
+
+        try:
+            bootstrap_vendored_xlsx_skill()
+        except Exception:
+            # Bootstrap is best-effort; never block API startup on a skill error.
+            logger.exception("xlsx_bootstrap_unexpected_error")
 
 
 @app.post("/auth/register")

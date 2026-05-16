@@ -22,6 +22,24 @@ from .audit import get_audit_logger
 from .config import get_settings
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "superadmin": {
+        "datasets:upload",
+        "datasets:read",
+        "semantic:metrics",
+        "semantic:query",
+        "chat:tool",
+        "chat:stream",
+        "views:write",
+        "views:read",
+        "views:share",
+        "views:rollback",
+        "audit:read",
+        "auth:manage",
+        "workspaces:read",
+        "workspaces:write",
+        "workspaces:manage",
+        "skills:admin",
+    },
     "admin": {
         "datasets:upload",
         "datasets:read",
@@ -305,6 +323,15 @@ class RoleDirectory:
                 return None
             return dict(raw)
 
+    def has_any_with_role(self, role: str) -> bool:
+        target = role.strip().lower()
+        with self._lock:
+            payload = self._load()
+        for entry in payload.values():
+            if isinstance(entry, dict) and str(entry.get("role", "")).strip().lower() == target:
+                return True
+        return False
+
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
             return {}
@@ -375,7 +402,7 @@ def can_access_owned_resource(
     owner_user_id: str,
     owner_project_id: str,
 ) -> bool:
-    if identity.role == "admin":
+    if identity.role in {"admin", "superadmin"}:
         return True
     return identity.user_id == owner_user_id and identity.project_id == owner_project_id
 

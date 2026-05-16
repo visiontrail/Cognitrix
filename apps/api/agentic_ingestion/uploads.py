@@ -224,6 +224,10 @@ class IngestionUploadInspectionService:
         workbook_bytes: bytes,
         filename: str,
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+        # TODO(remove): legacy xlsx pre-parse retained while
+        # LEGACY_XLSX_PARSER_ENABLED defaults to true. Scheduled for removal once
+        # the Anthropic xlsx skill bootstrap is the default code path (see
+        # openspec/changes/add-agent-skills-management/design.md migration plan).
         try:
             excel = pd.ExcelFile(BytesIO(workbook_bytes), engine="openpyxl")
         except Exception as exc:  # pragma: no cover - guarded by API tests

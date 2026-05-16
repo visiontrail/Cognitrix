@@ -238,6 +238,20 @@ class ChartQueryAgent:
         self.tools = tools or SnapshotMCPTools(cache=get_snapshot_duckdb_cache())
         self.client_factory = client_factory
 
+    def load_skill_plugins(self) -> list[dict[str, str]]:
+        """Return ``plugins=`` configs for skills assigned to ChartQueryAgent.
+
+        Called from the SDK options builder when this agent is wired into a
+        live ``ClaudeSDKClient`` loop. The current implementation of
+        :meth:`run_turn` is a placeholder that does not instantiate
+        ``ClaudeAgentOptions`` — when it does, it should pass the return value
+        of this method as ``ClaudeAgentOptions.plugins``.
+        """
+        from .agent_skills.agents import CHART_QUERY_AGENT
+        from .agent_skills.loader import load_skill_plugins_for_agent
+
+        return load_skill_plugins_for_agent(CHART_QUERY_AGENT)
+
     def build_system_prompt(self, *, page: PublishedPage, chart_id: str | None = None) -> str:
         entry = self.tools.cache.get(page=page)
         table_summaries = [

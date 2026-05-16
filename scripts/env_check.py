@@ -21,11 +21,26 @@ REQUIRED_KEYS = {
     ],
 }
 
+# Additional keys required only when a feature flag is enabled. Each tuple is
+# (flag_name, required_var) — when flag_name's value is truthy, required_var
+# must be non-empty in the same env file.
+CONDITIONAL_REQUIRED_KEYS = {
+    "api": [
+        ("AGENT_SKILLS_ENABLED", "AGENT_SKILLS_MAX_UPLOAD_MB"),
+    ],
+}
+
 OPTIONAL_WARNINGS = {
     "api": {
         "AI_API_KEY": "AI_API_KEY is not set; Agent chat will return an LLM configuration error until a key is provided.",
     },
 }
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _is_truthy(value: str) -> bool:
+    return value.strip().lower() in _TRUTHY
 
 
 def parse_env_file(path: Path) -> Dict[str, str]:
@@ -43,11 +58,19 @@ def missing_keys(values: Dict[str, str], required: Iterable[str]) -> List[str]:
     return [key for key in required if not values.get(key)]
 
 
+def conditional_missing_keys(kind: str, values: Dict[str, str]) -> List[str]:
+    missing: List[str] = []
+    for flag_name, required_var in CONDITIONAL_REQUIRED_KEYS.get(kind, []):
+        if _is_truthy(values.get(flag_name, "")) and not values.get(required_var):
+            missing.append(f"{required_var} (required when {flag_name}=true)")
+    return missing
+
+
 def validate_file(kind: str, path: Path) -> List[str]:
     if not path.exists():
         return [f"file_not_found:{path}"]
     values = parse_env_file(path)
-    return missing_keys(values, REQUIRED_KEYS[kind])
+    return missing_keys(values, REQUIRED_KEYS[kind]) + conditional_missing_keys(kind, values)
 
 
 def warning_messages(kind: str, path: Path) -> List[str]:

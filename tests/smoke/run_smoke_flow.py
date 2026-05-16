@@ -26,6 +26,16 @@ def parse_args() -> argparse.Namespace:
     # New email/password auth (used when --email is provided)
     parser.add_argument("--email", default="")
     parser.add_argument("--password", default="SmokePwd123!")
+    # Section 12 — exercise the vendored xlsx skill path end-to-end. Requires
+    # AGENT_SKILLS_ENABLED=true on the API and that the bootstrap has
+    # successfully installed and assigned anthropic/xlsx to WriteIngestionAgent.
+    parser.add_argument(
+        "--with-skills",
+        action="store_true",
+        help="After login, verify that the vendored xlsx skill is installed "
+        "and assigned to WriteIngestionAgent via /admin/skills (requires the "
+        "smoke user to be a superadmin).",
+    )
     return parser.parse_args()
 
 
@@ -126,6 +136,56 @@ def build_excel_files(workdir: Path) -> list[Path]:
     return [first_file, second_file]
 
 
+def verify_xlsx_skill_bootstrap(
+    client: httpx.Client,
+    api_base_url: str,
+    auth_headers: dict[str, str],
+) -> None:
+    """Assert the vendored Anthropic xlsx skill is installed and assigned.
+
+    Hits ``GET /admin/skills`` (requires the calling user to be a superadmin)
+    and confirms there is a skill named ``anthropic/xlsx`` in status
+    ``enabled`` with ``WriteIngestionAgent`` in its assignments. Raises with a
+    descriptive error otherwise so the smoke flow exits non-zero.
+    """
+    response = client.get(f"{api_base_url}/admin/skills", headers=auth_headers)
+    if response.status_code == 403:
+        raise RuntimeError(
+            "/admin/skills returned 403 — smoke user is not a superadmin. "
+            "Set AUTH_BOOTSTRAP_SUPERADMIN_EMAIL on the API to that user."
+        )
+    if response.status_code == 404:
+        raise RuntimeError(
+            "/admin/skills returned 404 — AGENT_SKILLS_ENABLED is likely off."
+        )
+    response.raise_for_status()
+
+    payload = response.json()
+    skills = payload.get("skills", [])
+    xlsx = next((s for s in skills if s.get("name") == "anthropic/xlsx"), None)
+    if xlsx is None:
+        raise RuntimeError(
+            "anthropic/xlsx skill not present in /admin/skills — vendor it "
+            "into apps/api/vendor/skills/ and update VERSIONS.md sha256."
+        )
+    if xlsx.get("status") != "enabled":
+        raise RuntimeError(
+            f"anthropic/xlsx is present but status={xlsx.get('status')!r}; expected enabled."
+        )
+    if "WriteIngestionAgent" not in xlsx.get("assignments", []):
+        raise RuntimeError(
+            "anthropic/xlsx is not assigned to WriteIngestionAgent. "
+            "Re-run bootstrap or assign manually via the admin UI."
+        )
+    print(
+        "[smoke][with-skills] anthropic/xlsx verified — version=",
+        xlsx.get("version") or "?",
+        " sha256=",
+        (xlsx.get("sha256") or "")[:12],
+        sep="",
+    )
+
+
 def main() -> int:
     args = parse_args()
 
@@ -178,6 +238,9 @@ def main() -> int:
             raise RuntimeError("missing access_token")
 
         auth_headers = {"Authorization": f"Bearer {token}"}
+
+        if args.with_skills:
+            verify_xlsx_skill_bootstrap(client, api_base_url, auth_headers)
 
         workspace_response = client.post(
             f"{api_base_url}/workspaces",

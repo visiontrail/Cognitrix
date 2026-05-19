@@ -1579,13 +1579,13 @@ class AgentRuntime:
     # Chart types rendered via frontend fallback option builders (no backend config.option needed)
     RECHARTS_TYPES = frozenset({
         "bar", "line", "pie", "area", "scatter", "radar",
-        "funnel", "radialBar", "composed",
+        "radialBar", "composed",
         "single_value", "note", "empty",
     })
 
     # Chart types that must be routed to ECharts (backend builds config.option)
     ECHARTS_ONLY_TYPES = frozenset({
-        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "scatter_clustering", "treemap", "multiple_funnel", "heatmap", "gauge", "sankey", "sunburst",
+        "negative_bar", "grouped_bar", "stacked_bar", "stacked_line", "scatter_clustering", "treemap", "funnel", "multiple_funnel", "heatmap", "gauge", "sankey", "sunburst",
         "boxplot", "candlestick", "graph", "map", "parallel", "wordCloud",
         "table",
     })
@@ -2948,10 +2948,27 @@ def _echarts_funnel_option(
     y_key: str,
 ) -> dict[str, Any]:
     data = [{"name": str(r.get(x_key, f"stage-{i+1}")), "value": r.get(y_key, 0)} for i, r in enumerate(rows)]
+    inside_label = {
+        "show": True,
+        "position": "inside",
+        "formatter": "{b}\n{c}",
+        "color": "#fff",
+        "fontWeight": 600,
+    }
     return {
-        "tooltip": {"trigger": "item"},
+        "tooltip": {"trigger": "item", "formatter": "{b}: {c}"},
         "legend": {},
-        "series": [{"type": "funnel", "left": "10%", "width": "80%", "data": data, "label": {"show": True, "position": "inside"}}],
+        "series": [
+            {
+                "type": "funnel",
+                "left": "10%",
+                "width": "80%",
+                "data": data,
+                "label": inside_label,
+                "labelLine": {"show": False},
+                "emphasis": {"label": inside_label},
+            }
+        ],
     }
 
 
@@ -2967,6 +2984,13 @@ def _echarts_multiple_funnel_option(
         for index, row in enumerate(rows)
     ]
     legend_data = [item["name"] for item in data]
+    inside_label = {
+        "show": True,
+        "position": "inside",
+        "formatter": "{b}\n{c}",
+        "color": "#fff",
+        "fontWeight": 600,
+    }
 
     return {
         "title": {"text": title, "left": "left", "top": "bottom"},
@@ -2980,6 +3004,9 @@ def _echarts_multiple_funnel_option(
                 "height": "45%",
                 "left": "5%",
                 "top": "50%",
+                "label": inside_label,
+                "labelLine": {"show": False},
+                "emphasis": {"label": inside_label},
                 "data": data,
             },
             {
@@ -2990,6 +3017,9 @@ def _echarts_multiple_funnel_option(
                 "left": "5%",
                 "top": "5%",
                 "sort": "ascending",
+                "label": inside_label,
+                "labelLine": {"show": False},
+                "emphasis": {"label": inside_label},
                 "data": data,
             },
             {
@@ -2999,7 +3029,9 @@ def _echarts_multiple_funnel_option(
                 "height": "45%",
                 "left": "55%",
                 "top": "5%",
-                "label": {"position": "left"},
+                "label": inside_label,
+                "labelLine": {"show": False},
+                "emphasis": {"label": inside_label},
                 "data": data,
             },
             {
@@ -3010,7 +3042,9 @@ def _echarts_multiple_funnel_option(
                 "left": "55%",
                 "top": "50%",
                 "sort": "ascending",
-                "label": {"position": "left"},
+                "label": inside_label,
+                "labelLine": {"show": False},
+                "emphasis": {"label": inside_label},
                 "data": data,
             },
         ],

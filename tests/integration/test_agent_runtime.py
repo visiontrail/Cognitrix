@@ -598,6 +598,16 @@ def test_agent_runtime_retries_fresh_session_when_claude_resume_is_missing(
     assert result.final_status == "completed"
     assert result.agent_session_id == "fresh-claude-session"
     assert result.spec["chart_type"] == "funnel"
+    option = result.spec["config"]["option"]
+    funnel_series = option["series"][0]
+    assert funnel_series["label"] == {
+        "show": True,
+        "position": "inside",
+        "formatter": "{b}\n{c}",
+        "color": "#fff",
+        "fontWeight": 600,
+    }
+    assert funnel_series["labelLine"] == {"show": False}
     assert result.ai_state["turn_count"] == 2
 
 
@@ -669,8 +679,11 @@ def test_agent_runtime_builds_multiple_funnel_echarts_spec(monkeypatch, tmp_path
     assert option["legend"]["data"] == ["Show", "Click", "Visit", "Inquiry", "Order"]
     assert len(option["series"]) == 4
     assert all(item["type"] == "funnel" for item in option["series"])
+    assert all(item["label"]["position"] == "inside" for item in option["series"])
+    assert all(item["label"]["formatter"] == "{b}\n{c}" for item in option["series"])
+    assert all(item["labelLine"] == {"show": False} for item in option["series"])
     assert option["series"][1]["sort"] == "ascending"
-    assert option["series"][3]["label"]["position"] == "left"
+    assert option["series"][3]["label"]["color"] == "#fff"
 
 
 def test_agent_runtime_builds_stacked_line_echarts_spec(monkeypatch, tmp_path: Path) -> None:

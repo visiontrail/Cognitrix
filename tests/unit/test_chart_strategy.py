@@ -72,6 +72,31 @@ def test_chart_strategy_uses_negative_bar_default_for_negative_metrics() -> None
     assert option["series"][0]["data"][0]["label"]["position"] == "right"
 
 
+def test_chart_strategy_builds_funnel_with_inside_value_labels() -> None:
+    router = ChartStrategyRouter()
+    rows = [
+        {"stage": "Show", "metric_value": 100},
+        {"stage": "Click", "metric_value": 80},
+    ]
+
+    spec = router.build_spec(
+        metric="conversion",
+        intent="用漏斗图显示阶段转化",
+        rows=rows,
+        group_by=["stage"],
+        chart_type="funnel",
+    )
+
+    assert spec["engine"] == "echarts"
+    assert spec["chart_type"] == "funnel"
+    option = spec["config"]["option"]
+    series = option["series"][0]
+    assert series["type"] == "funnel"
+    assert series["label"]["position"] == "inside"
+    assert series["label"]["formatter"] == "{b}\n{c}"
+    assert series["labelLine"] == {"show": False}
+
+
 def test_chart_strategy_returns_explainable_route_reason() -> None:
     router = ChartStrategyRouter()
     rows = [{"region": f"R-{index:02d}", "metric_value": index} for index in range(1, 15)]

@@ -77,6 +77,57 @@ describe("ChartRenderer", () => {
     expect(setOptionMock.mock.calls.at(-1)?.[0]?.series?.[0]?.type).toBe("pie");
   }, 10000);
 
+  it("places funnel fallback labels inside with stage names and values", async () => {
+    const { rerender } = render(
+      <ChartRenderer
+        spec={{
+          engine: "echarts",
+          chart_type: "funnel",
+          title: "Funnel",
+          data: [{ stage: "Show", metric_value: 100 }],
+          config: { xKey: "stage", yKey: "metric_value" }
+        }}
+      />
+    );
+
+    expect(screen.getByTestId("echarts-chart")).toBeInTheDocument();
+    await waitFor(() => expect(setOptionMock).toHaveBeenCalled());
+    const funnelOption = setOptionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const funnelSeries = funnelOption.series as Array<Record<string, unknown>>;
+    expect(funnelSeries[0]).toMatchObject({
+      type: "funnel",
+      label: { show: true, position: "inside", formatter: "{b}\n{c}", color: "#fff" },
+      labelLine: { show: false },
+      emphasis: {
+        label: { show: true, position: "inside", formatter: "{b}\n{c}", color: "#fff" }
+      }
+    });
+
+    setOptionMock.mockClear();
+    rerender(
+      <ChartRenderer
+        spec={{
+          engine: "echarts",
+          chart_type: "multiple_funnel",
+          title: "Multiple Funnel",
+          data: [
+            { stage: "Show", metric_value: 100 },
+            { stage: "Click", metric_value: 80 }
+          ],
+          config: { xKey: "stage", yKey: "metric_value" }
+        }}
+      />
+    );
+
+    await waitFor(() => expect(setOptionMock).toHaveBeenCalled());
+    const multipleOption = setOptionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const multipleSeries = multipleOption.series as Array<Record<string, unknown>>;
+    expect(multipleSeries).toHaveLength(4);
+    expect(multipleSeries.every((series) => (series.label as Record<string, unknown>)?.position === "inside")).toBe(true);
+    expect(multipleSeries.every((series) => (series.label as Record<string, unknown>)?.formatter === "{b}\n{c}")).toBe(true);
+    expect(multipleSeries.every((series) => (series.labelLine as Record<string, unknown>)?.show === false)).toBe(true);
+  });
+
   it("routes high-volume option to echarts renderer", async () => {
     const option = {
       xAxis: {

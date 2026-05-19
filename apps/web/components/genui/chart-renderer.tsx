@@ -146,6 +146,13 @@ const FALLBACK_OPTION_TYPES = new Set<KnownChartType>([
   "single_value",
   "gauge",
 ]);
+const FUNNEL_INSIDE_LABEL = {
+  show: true,
+  position: "inside",
+  formatter: "{b}\n{c}",
+  color: "#fff",
+  fontWeight: 600,
+};
 
 function normalizeChartType(rawChartType: unknown): ChartType {
   const normalized = String(rawChartType ?? "bar").trim();
@@ -259,6 +266,9 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
             name: String(row[xKey] ?? `item-${index + 1}`),
             value: asNumber(row[yKey]),
           })),
+          label: FUNNEL_INSIDE_LABEL,
+          labelLine: { show: false },
+          emphasis: { label: FUNNEL_INSIDE_LABEL },
         },
       ],
     };
@@ -274,8 +284,31 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
       tooltip: { trigger: "item", formatter: "{a}<br/>{b}: {c}" },
       legend: { orient: "vertical", left: "left", data: data.map((item) => item.name) },
       series: [
-        { name: "Funnel", type: "funnel", width: "40%", height: "45%", left: "5%", top: "50%", data },
-        { name: "Pyramid", type: "funnel", width: "40%", height: "45%", left: "5%", top: "5%", sort: "ascending", data },
+        {
+          name: "Funnel",
+          type: "funnel",
+          width: "40%",
+          height: "45%",
+          left: "5%",
+          top: "50%",
+          label: FUNNEL_INSIDE_LABEL,
+          labelLine: { show: false },
+          emphasis: { label: FUNNEL_INSIDE_LABEL },
+          data,
+        },
+        {
+          name: "Pyramid",
+          type: "funnel",
+          width: "40%",
+          height: "45%",
+          left: "5%",
+          top: "5%",
+          sort: "ascending",
+          label: FUNNEL_INSIDE_LABEL,
+          labelLine: { show: false },
+          emphasis: { label: FUNNEL_INSIDE_LABEL },
+          data,
+        },
         {
           name: "Funnel",
           type: "funnel",
@@ -283,7 +316,9 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
           height: "45%",
           left: "55%",
           top: "5%",
-          label: { position: "left" },
+          label: FUNNEL_INSIDE_LABEL,
+          labelLine: { show: false },
+          emphasis: { label: FUNNEL_INSIDE_LABEL },
           data,
         },
         {
@@ -294,7 +329,9 @@ function resolveOption(spec: LegacyGenUISpec, chartType: ChartType): Record<stri
           left: "55%",
           top: "50%",
           sort: "ascending",
-          label: { position: "left" },
+          label: FUNNEL_INSIDE_LABEL,
+          labelLine: { show: false },
+          emphasis: { label: FUNNEL_INSIDE_LABEL },
           data,
         },
       ],

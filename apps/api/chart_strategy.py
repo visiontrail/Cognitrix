@@ -85,6 +85,11 @@ class ChartStrategyRouter:
         if decision.chart_type == "negative_bar":
             base["config"] = {"option": self._negative_bar_option(categories=categories, values=values, metric=metric)}
             return base
+        if decision.chart_type == "funnel":
+            base["config"] = {
+                "option": self._funnel_option(categories=categories, values=values)
+            }
+            return base
 
         option = {
             "tooltip": {"trigger": "axis"},
@@ -122,6 +127,38 @@ class ChartStrategyRouter:
         # to ECharts so we honour the caller's intent without second-guessing.
         recharts_supported = {"bar", "table", "single_value"}
         return "recharts" if chart_type in recharts_supported else "echarts"
+
+    @staticmethod
+    def _funnel_option(
+        *,
+        categories: list[str],
+        values: list[Any],
+    ) -> dict[str, Any]:
+        inside_label = {
+            "show": True,
+            "position": "inside",
+            "formatter": "{b}\n{c}",
+            "color": "#fff",
+            "fontWeight": 600,
+        }
+        return {
+            "tooltip": {"trigger": "item", "formatter": "{b}: {c}"},
+            "legend": {},
+            "series": [
+                {
+                    "type": "funnel",
+                    "left": "10%",
+                    "width": "80%",
+                    "data": [
+                        {"name": category, "value": value}
+                        for category, value in zip(categories, values, strict=False)
+                    ],
+                    "label": inside_label,
+                    "labelLine": {"show": False},
+                    "emphasis": {"label": inside_label},
+                }
+            ],
+        }
 
     def _normalize_rows(
         self,

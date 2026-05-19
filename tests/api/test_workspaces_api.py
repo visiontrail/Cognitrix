@@ -191,6 +191,12 @@ def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
         assert create_response.status_code == 200
         workspace_id = create_response.json()["workspace_id"]
 
+        # ai_views tables are created lazily by ViewStorageService — materialise
+        # them BEFORE we open our own connection so the bootstrap doesn't collide
+        # with our held lock.
+        from apps.api.views import get_view_storage_service as _get_view_storage_service
+        _get_view_storage_service()
+
         # Seed every workspace-keyed table with at least one row, plus the
         # filesystem artifacts (DuckDB file + uploads directory) the cascade
         # should reap.
@@ -233,6 +239,18 @@ def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
                 "INSERT INTO ingestion_events (id, job_id, event_type, payload) "
                 "VALUES ('evt-1', 'job-1', 'planning', '{}')",
             )
+            # Saved view scoped to this workspace + its version history row.
+            conn.execute(
+                "INSERT INTO ai_views (view_id, owner_user_id, owner_project_id, workspace_id, "
+                "dataset_table, title, rbac_scope, ai_state, current_version, created_at, updated_at) "
+                "VALUES ('view-1', 'alice', 'north', ?, 'employees', 'My Saved View', '{}', '{}', 1, "
+                "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                (workspace_id,),
+            )
+            conn.execute(
+                "INSERT INTO ai_view_versions (view_id, version, ai_state, metadata, created_by, created_at) "
+                "VALUES ('view-1', 1, '{}', '{}', 'alice', '2026-01-01T00:00:00Z')",
+            )
             conn.commit()
 
         # Create the per-workspace filesystem artefacts the deletion should reap.
@@ -244,6 +262,38 @@ def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
         uploads_root = upload_dir / "agentic_ingestion" / "raw" / workspace_id / "up-1"
         uploads_root.mkdir(parents=True, exist_ok=True)
         (uploads_root / "f.xlsx").write_bytes(b"fake-excel")
+
+        # Seed an agent_sessions row tied to this workspace in the OTHER sqlite
+        # file (state/agent_sessions.sqlite3). The cascade must reach across.
+        agent_sessions_path = upload_dir / "state" / "agent_sessions.sqlite3"
+        agent_sessions_path.parent.mkdir(parents=True, exist_ok=True)
+        _ac = __import__("sqlite3").connect(agent_sessions_path)
+        try:
+            _ac.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    conversation_id TEXT PRIMARY KEY,
+                    agent_session_id TEXT NOT NULL,
+                    workspace_id TEXT,
+                    state_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            _ac.execute(
+                "INSERT INTO agent_sessions VALUES "
+                "('conv-1', 'agent-1', ?, '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                (workspace_id,),
+            )
+            # An unrelated session belonging to another workspace must survive.
+            _ac.execute(
+                "INSERT INTO agent_sessions VALUES "
+                "('conv-other', 'agent-other', 'other-workspace', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            )
+            _ac.commit()
+        finally:
+            _ac.close()
 
         # No confirmation provided — backward compat path still deletes.
         delete_response = client.request(
@@ -263,8 +313,11 @@ def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
         assert counts["ingestion_uploads"] == 1
         assert counts["table_column_metadata"] == 1
         assert counts["table_catalog"] == 1
+        assert counts["ai_view_versions"] == 1
+        assert counts["ai_views"] == 1
         assert counts["workspace_members"] == 1
         assert counts["workspaces"] == 1
+        assert counts.get("agent_sessions") == 1
 
         # SQL state: no row of the deleted workspace_id remains anywhere.
         with service._connect() as conn:  # noqa: SLF001
@@ -272,6 +325,23 @@ def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:
             assert conn.execute("SELECT COUNT(*) FROM table_catalog WHERE workspace_id = ?", (workspace_id,)).fetchone()[0] == 0
             assert conn.execute("SELECT COUNT(*) FROM ingestion_jobs WHERE workspace_id = ?", (workspace_id,)).fetchone()[0] == 0
             assert conn.execute("SELECT COUNT(*) FROM ingestion_events").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM ai_views WHERE workspace_id = ?", (workspace_id,)).fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM ai_view_versions WHERE view_id = 'view-1'").fetchone()[0] == 0
+
+        # agent_sessions cross-database: the deleted workspace's session is
+        # gone, the unrelated workspace's session survives.
+        _ac = __import__("sqlite3").connect(agent_sessions_path)
+        try:
+            assert _ac.execute(
+                "SELECT COUNT(*) FROM agent_sessions WHERE workspace_id = ?",
+                (workspace_id,),
+            ).fetchone()[0] == 0
+            assert _ac.execute(
+                "SELECT COUNT(*) FROM agent_sessions WHERE workspace_id = ?",
+                ("other-workspace",),
+            ).fetchone()[0] == 1
+        finally:
+            _ac.close()
 
         # Filesystem state.
         assert not duckdb_file.exists()

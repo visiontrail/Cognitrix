@@ -979,6 +979,7 @@ class ToolCallingService:
                     conversation_id=arguments.get("conversation_id"),
                     view_id=arguments.get("view_id"),
                     metadata=metadata,
+                    workspace_id=context.workspace_id,
                 )
             )
         except ViewStorageError as exc:

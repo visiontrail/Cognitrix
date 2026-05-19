@@ -349,6 +349,12 @@ class AgentSessionState:
     updated_at: str = field(default_factory=lambda: _utc_now())
     turn_count: int = 0
     runtime_backend: str = SDK_RUNTIME_BACKEND
+    # Tracks which workspace this conversation belongs to so the workspace
+    # delete-cascade can also reap the SDK resume cache. Optional for
+    # backward compat — sessions saved before this column was added carry
+    # NULL and remain accessible by conversation_id; only newly-saved rows
+    # are deletable by workspace.
+    workspace_id: str | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -362,10 +368,17 @@ class AgentSessionState:
             "updated_at": self.updated_at,
             "turn_count": self.turn_count,
             "runtime_backend": self.runtime_backend,
+            "workspace_id": self.workspace_id,
         }
 
     @classmethod
     def from_record(cls, record: dict[str, Any]) -> "AgentSessionState":
+        workspace_raw = record.get("workspace_id")
+        workspace_id = (
+            str(workspace_raw).strip()
+            if workspace_raw is not None and str(workspace_raw).strip()
+            else None
+        )
         return cls(
             conversation_id=str(record.get("conversation_id") or ""),
             agent_session_id=str(record.get("agent_session_id") or uuid.uuid4().hex),
@@ -377,6 +390,7 @@ class AgentSessionState:
             updated_at=str(record.get("updated_at") or _utc_now()),
             turn_count=int(record.get("turn_count") or 0),
             runtime_backend=str(record.get("runtime_backend") or SDK_RUNTIME_BACKEND),
+            workspace_id=workspace_id,
         )
 
 
@@ -452,23 +466,29 @@ class AgentSessionStore:
     def save(self, state: AgentSessionState) -> None:
         state.updated_at = _utc_now()
         with self._lock, self._connect() as conn:
+            # COALESCE on workspace_id so saves whose caller doesn't know the
+            # workspace (very rare, mostly legacy) don't overwrite a value set
+            # by an earlier save.
             conn.execute(
                 """
                 INSERT INTO agent_sessions (
                     conversation_id,
                     agent_session_id,
+                    workspace_id,
                     state_json,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(conversation_id) DO UPDATE SET
                     agent_session_id = excluded.agent_session_id,
+                    workspace_id = COALESCE(excluded.workspace_id, agent_sessions.workspace_id),
                     state_json = excluded.state_json,
                     updated_at = excluded.updated_at
                 """,
                 (
                     state.conversation_id,
                     state.agent_session_id,
+                    state.workspace_id,
                     json.dumps(
                         state.to_record(),
                         ensure_ascii=False,
@@ -506,11 +526,20 @@ class AgentSessionStore:
                 CREATE TABLE IF NOT EXISTS agent_sessions (
                     conversation_id TEXT PRIMARY KEY,
                     agent_session_id TEXT NOT NULL,
+                    workspace_id TEXT,
                     state_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            # Backfill the column on pre-existing databases (idempotent).
+            cols = conn.execute("PRAGMA table_info(agent_sessions)").fetchall()
+            if not any(str(c[1]) == "workspace_id" for c in cols):
+                conn.execute("ALTER TABLE agent_sessions ADD COLUMN workspace_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace "
+                "ON agent_sessions(workspace_id)"
             )
             conn.commit()
 
@@ -572,7 +601,7 @@ class AgentRuntime:
         event_queue: asyncio.Queue | None = None,
     ) -> AgentTurnResult:
         started = time.perf_counter()
-        session = self._load_session(request.conversation_id)
+        session = self._load_session(request.conversation_id, workspace_id=request.workspace_id)
         guard_context = AgentGuardrailContext(
             role=request.role,
             user_id=request.user_id,
@@ -1408,22 +1437,41 @@ class AgentRuntime:
             if record.result_data is not None and not record.tool_result_emitted:
                 self._record_sdk_tool_result(run_context=run_context, record=record)
 
-    def _load_session(self, conversation_id: str) -> AgentSessionState:
+    def _load_session(
+        self,
+        conversation_id: str,
+        *,
+        workspace_id: str | None = None,
+    ) -> AgentSessionState:
+        normalized_workspace_id = (
+            workspace_id.strip() if workspace_id and workspace_id.strip() else None
+        )
+
+        def _stamp_workspace(session: AgentSessionState) -> AgentSessionState:
+            # Sessions saved before the workspace_id column landed carry NULL.
+            # The first time we encounter them with a known workspace, stamp
+            # so future cascades can find them.
+            if normalized_workspace_id and not session.workspace_id:
+                session.workspace_id = normalized_workspace_id
+                self._store.save(session)
+            return session
+
         with self._lock:
             session = self._hot_sessions.get(conversation_id)
         if session is not None:
-            return session
+            return _stamp_workspace(session)
 
         stored = self._store.load(conversation_id)
         if stored is not None:
             with self._lock:
                 self._hot_sessions[conversation_id] = stored
-            return stored
+            return _stamp_workspace(stored)
 
         session = AgentSessionState(
             conversation_id=conversation_id,
             agent_session_id=str(uuid.uuid4()),
             runtime_backend=SDK_RUNTIME_BACKEND,
+            workspace_id=normalized_workspace_id,
         )
         with self._lock:
             self._hot_sessions[conversation_id] = session

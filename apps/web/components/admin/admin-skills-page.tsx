@@ -22,6 +22,13 @@ type Status = "idle" | "loading" | "ready";
 export default function AdminSkillsPage() {
   const { t } = useI18n();
   const isSuperadmin = useIsSuperadmin();
+  // The role is decoded from a token stored in localStorage, which is only
+  // available on the client. Defer the role-dependent branch until after
+  // hydration so the server-rendered HTML matches the first client render.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const [skills, setSkills] = useState<Skill[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -43,13 +50,14 @@ export default function AdminSkillsPage() {
   }, []);
 
   useEffect(() => {
-    if (isSuperadmin) {
+    if (mounted && isSuperadmin) {
       void refresh();
     }
-  }, [isSuperadmin, refresh]);
+  }, [mounted, isSuperadmin, refresh]);
 
   // Hidden route: non-superadmins (and signed-out users) see a generic 404 page.
-  if (!isSuperadmin) {
+  // Render the same shell on SSR and before-mount to avoid a hydration mismatch.
+  if (!mounted || !isSuperadmin) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-white">
         <h1 className="text-3xl font-semibold text-slate-800">{t("admin.skills.notFound")}</h1>

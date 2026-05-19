@@ -2700,7 +2700,7 @@ class WriteIngestionAgentRuntime:
                 code="INGESTION_AI_UNAVAILABLE",
                 message=(
                     "Claude Agent SDK timed out during ingestion planning "
-                    f"(>{settings.agent_timeout_seconds}s)"
+                    f"(>{settings.ingestion_plan_timeout_seconds}s)"
                 ),
                 status_code=503,
             ) from exc
@@ -2758,8 +2758,9 @@ class WriteIngestionAgentRuntime:
         text_blocks: list[str] = []
         session_id = conversation_id or f"ingestion-{job_id}"
 
+        plan_timeout = settings.ingestion_plan_timeout_seconds
         try:
-            with anyio.fail_after(settings.agent_timeout_seconds):
+            with anyio.fail_after(plan_timeout):
                 async with ClaudeSDKClient(options=options) as client:
                     await client.query(prompt, session_id=session_id)
                     async for sdk_message in client.receive_response():
@@ -2781,7 +2782,7 @@ class WriteIngestionAgentRuntime:
                 code="INGESTION_AI_UNAVAILABLE",
                 message=(
                     "Write Ingestion Agent timed out. Please retry — "
-                    f"the agent must complete within {settings.agent_timeout_seconds}s."
+                    f"the agent must complete within {plan_timeout}s."
                 ),
                 status_code=503,
             )

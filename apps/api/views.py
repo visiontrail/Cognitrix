@@ -44,6 +44,11 @@ class SaveViewInput:
     conversation_id: str | None = None
     view_id: str | None = None
     metadata: dict[str, Any] | None = None
+    # Optional: workspace this view belongs to. Pre-existing rows in the
+    # ai_views table predate the column; new saves populate it so workspace
+    # delete-cascade can reap them. Legacy callers that don't pass workspace_id
+    # still work — their views just leak on workspace delete (documented).
+    workspace_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -103,6 +108,7 @@ class ViewStorageService:
                         view_id,
                         owner_user_id,
                         owner_project_id,
+                        workspace_id,
                         dataset_table,
                         title,
                         conversation_id,
@@ -111,12 +117,13 @@ class ViewStorageService:
                         current_version,
                         created_at,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         view_id,
                         payload.user_id,
                         payload.project_id,
+                        (payload.workspace_id or "").strip() or None,
                         payload.dataset_table,
                         normalized_title,
                         payload.conversation_id,
@@ -148,6 +155,8 @@ class ViewStorageService:
                     )
 
                 current_version = int(existing["current_version"]) + 1
+                # COALESCE so a caller without workspace_id doesn't clobber a
+                # workspace association set by an earlier save.
                 conn.execute(
                     """
                     UPDATE ai_views
@@ -156,7 +165,8 @@ class ViewStorageService:
                         conversation_id = ?,
                         ai_state = ?,
                         current_version = ?,
-                        updated_at = ?
+                        updated_at = ?,
+                        workspace_id = COALESCE(?, workspace_id)
                     WHERE view_id = ?
                     """,
                     (
@@ -166,6 +176,7 @@ class ViewStorageService:
                         self._encode_json(payload.ai_state),
                         current_version,
                         now,
+                        (payload.workspace_id or "").strip() or None,
                         view_id,
                     ),
                 )
@@ -398,6 +409,7 @@ class ViewStorageService:
                     view_id TEXT PRIMARY KEY,
                     owner_user_id TEXT NOT NULL,
                     owner_project_id TEXT NOT NULL,
+                    workspace_id TEXT,
                     dataset_table TEXT NOT NULL,
                     title TEXT NOT NULL,
                     conversation_id TEXT,
@@ -427,7 +439,25 @@ class ViewStorageService:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ai_view_versions_view_id ON ai_view_versions(view_id)"
             )
+            # Older databases predate the workspace_id column; add it idempotently
+            # so workspace delete-cascade can find newly-saved views.
+            self._ensure_column(conn, "ai_views", "workspace_id", "TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ai_views_workspace ON ai_views(workspace_id)"
+            )
             conn.commit()
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        col_type: str,
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if any(str(r[1]) == column for r in rows):
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     def _append_event(self, payload: dict[str, Any]) -> None:
         line = json.dumps(payload, ensure_ascii=False)

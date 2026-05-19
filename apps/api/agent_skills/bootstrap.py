@@ -34,7 +34,7 @@ logger = logging.getLogger("cognitrix.agent_skills.bootstrap")
 
 
 VENDOR_DIR_NAME = "vendor/skills"
-ANTHROPIC_XLSX_SKILL_NAME = "anthropic/xlsx"
+ANTHROPIC_XLSX_SKILL_NAME = "xlsx"
 
 
 _VERSION_LINE_RE = re.compile(r"^-\s*\*\*Version:\*\*\s*(?P<value>.+)\s*$")

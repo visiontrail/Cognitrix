@@ -14,8 +14,8 @@ upload a correct version through the admin UI.
 
 - **File:** `anthropic-xlsx-<version>.zip`
 - **Upstream:** https://mcpservers.org/agent-skills/anthropic/xlsx
-- **Version:** _to be filled in after the bundle is vendored_
-- **Upstream sha256:** _to be filled in after the bundle is vendored_
+- **Version:** `1000`
+- **Upstream sha256:** `6397237b274d7d1788c79210fca0bd41260d8a8243728bd30d817124c689528a`
 
 To vendor or update the bundle:
 

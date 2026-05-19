@@ -582,14 +582,24 @@ def handle_email_login(request: EmailLoginRequest, response: Response) -> dict[s
     finally:
         conn.close()
 
-    token, expires_at = issue_user_token(user_id=user.id)
+    override = get_role_directory().get_override(user.id) or {}
+    effective_role = normalize_role(str(override.get("role", "admin")))
+    effective_department = _optional_string(override.get("department"))
+    effective_clearance = int(override.get("clearance", 0))
+    token, expires_at = issue_user_token(
+        user_id=user.id,
+        role=effective_role,
+        department=effective_department,
+        clearance=effective_clearance,
+    )
     _set_session_cookie(response, token)
     logger.info(
-        "[login] success user_id=%s email_lower=%s email_col=%s display_name=%s",
+        "[login] success user_id=%s email_lower=%s email_col=%s display_name=%s role=%s",
         user.id,
         user.email_lower,
         user.email,
         user.display_name,
+        effective_role,
     )
     get_audit_logger().log(
         event_type="authentication",

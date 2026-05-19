@@ -318,8 +318,48 @@ def apply_migrations() -> None:
             logger.info("migration_applied id=%s", migration_id)
 
         _relax_business_type_constraint(conn)
+        _add_workspace_id_to_ai_views(conn)
         _seed_jobs(conn)
         _bootstrap_admin(conn)
         _bootstrap_superadmin(conn)
     finally:
         conn.close()
+
+
+def _add_workspace_id_to_ai_views(conn: sqlite3.Connection) -> None:
+    """Backfill the ai_views table with a workspace_id column so workspace
+    delete-cascade can reach saved views.
+
+    Idempotent: skips when the column is already present. We don't try to
+    derive workspace_id from legacy owner_project_id (different concept) —
+    pre-existing rows just get NULL and remain accessible by view_id; only
+    NEW saves (which now plumb workspace_id) participate in the cascade.
+
+    Note: agent_sessions.workspace_id is handled inside
+    AgentSessionStore._init_schema because that table lives in a different
+    SQLite file (state/agent_sessions.sqlite3) than the one this migration
+    runner operates on (ai_views.sqlite3 / DATABASE_URL).
+    """
+    if not _table_exists(conn, "ai_views"):
+        return
+    if _column_exists(conn, "ai_views", "workspace_id"):
+        return
+    conn.execute("ALTER TABLE ai_views ADD COLUMN workspace_id TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_views_workspace ON ai_views(workspace_id)"
+    )
+    conn.commit()
+    logger.info("ai_views workspace_id column added")
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(str(r[1]) == column for r in rows)

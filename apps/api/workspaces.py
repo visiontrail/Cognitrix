@@ -516,6 +516,19 @@ class WorkspaceService:
                     "table_catalog",
                     "DELETE FROM table_catalog WHERE workspace_id = ?",
                 ),
+                # ai_views + version history. ai_view_versions FKs ai_views with
+                # ON DELETE CASCADE so deleting the parent is sufficient in
+                # principle, but PRAGMA foreign_keys is OFF for this connection
+                # (see _connect). Delete the version rows explicitly first.
+                (
+                    "ai_view_versions",
+                    "DELETE FROM ai_view_versions WHERE view_id IN ("
+                    "SELECT view_id FROM ai_views WHERE workspace_id = ?)",
+                ),
+                (
+                    "ai_views",
+                    "DELETE FROM ai_views WHERE workspace_id = ?",
+                ),
                 (
                     "published_pages",
                     "DELETE FROM published_pages WHERE workspace_id = ?",
@@ -556,6 +569,34 @@ class WorkspaceService:
             except sqlite3.DatabaseError:
                 conn.execute("ROLLBACK")
                 raise
+
+        # agent_sessions lives in a separate SQLite file (state/agent_sessions.sqlite3)
+        # because AgentSessionStore opens its own connection. Wipe the workspace's
+        # SDK resume cache here. Best-effort: a failure here doesn't roll back the
+        # SQL state — the cache will self-trim as new sessions overwrite it.
+        agent_sessions_path = (upload_dir / "state" / "agent_sessions.sqlite3").resolve()
+        if agent_sessions_path.exists():
+            try:
+                _agent_conn = sqlite3.connect(agent_sessions_path)
+                try:
+                    cols = _agent_conn.execute(
+                        "PRAGMA table_info(agent_sessions)"
+                    ).fetchall()
+                    if any(str(c[1]) == "workspace_id" for c in cols):
+                        cursor = _agent_conn.execute(
+                            "DELETE FROM agent_sessions WHERE workspace_id = ?",
+                            (normalized_workspace_id,),
+                        )
+                        deleted_counts["agent_sessions"] = int(cursor.rowcount or 0)
+                        _agent_conn.commit()
+                finally:
+                    _agent_conn.close()
+            except sqlite3.DatabaseError as exc:
+                logger.warning(
+                    "workspace_delete_agent_sessions_cleanup_failed workspace_id=%s error=%s",
+                    normalized_workspace_id,
+                    exc,
+                )
 
         # Filesystem cleanup — best-effort after SQL commit. Log everything for
         # an operator to chase down leaks; do not raise.

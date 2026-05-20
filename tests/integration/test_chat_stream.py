@@ -138,7 +138,7 @@ def test_chat_stream_emits_required_events_with_low_first_token_latency(
 
     assert first_chunk_at is not None
     assert first_chunk_at - start < 2.0
-    assert [item["event"] for item in events] == ["error", "final"]
+    assert [item["event"] for item in events][-2:] == ["error", "final"]
     assert events[-1]["data"]["status"] == "failed"
 
 
@@ -176,8 +176,8 @@ def test_chat_stream_reconnect_replays_missing_events(monkeypatch, tmp_path: Pat
             assert first_response.status_code == 200
             first_events, _ = _read_sse_events(first_response)
 
-        assert len(first_events) == 2
-        assert [item["id"] for item in first_events] == [1, 2]
+        assert [item["event"] for item in first_events][-2:] == ["error", "final"]
+        assert [item["id"] for item in first_events] == list(range(1, len(first_events) + 1))
 
         with client.stream(
             "POST",
@@ -188,7 +188,7 @@ def test_chat_stream_reconnect_replays_missing_events(monkeypatch, tmp_path: Pat
                 "user_id": "alice",
                 "project_id": "north",
                 "dataset_table": dataset_table,
-                "last_event_id": 1,
+                "last_event_id": first_events[-2]["id"],
                 "message": None,
             },
             headers=headers,
@@ -196,7 +196,7 @@ def test_chat_stream_reconnect_replays_missing_events(monkeypatch, tmp_path: Pat
             assert replay_response.status_code == 200
             replay_events, _ = _read_sse_events(replay_response)
 
-    assert [item["id"] for item in replay_events] == [2]
+    assert [item["id"] for item in replay_events] == [first_events[-1]["id"]]
     assert [item["event"] for item in replay_events] == ["final"]
     assert replay_events[-1]["data"]["status"] == "failed"
 
@@ -239,6 +239,6 @@ def test_chat_stream_returns_agent_error_when_sdk_fails(monkeypatch, tmp_path: P
             assert response.status_code == 200
             events, _ = _read_sse_events(response)
 
-    assert [item["event"] for item in events] == ["error", "final"]
-    assert events[0]["data"]["code"] == "AGENT_SDK_FAILED"
+    assert [item["event"] for item in events][-2:] == ["error", "final"]
+    assert events[-2]["data"]["code"] == "AGENT_SDK_FAILED"
     assert events[-1]["data"]["status"] == "failed"

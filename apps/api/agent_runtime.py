@@ -42,6 +42,8 @@ from .tool_calling import ToolCall, ToolCallRequest, ToolCallResponse, get_tool_
 
 logger = logging.getLogger("cognitrix.agent")
 
+MISSING_CLAUDE_SESSION_MARKER = "No conversation found with session ID"
+
 # ---------------------------------------------------------------------------
 # Tool definitions exposed as Claude Agent SDK in-process MCP tools.
 # ---------------------------------------------------------------------------
@@ -436,6 +438,7 @@ class SDKRunContext:
     records_by_key: dict[str, SDKToolInvocationRecord] = field(default_factory=dict)
     records_by_tool_use_id: dict[str, SDKToolInvocationRecord] = field(default_factory=dict)
     event_queue: asyncio.Queue | None = None
+    sdk_stderr_lines: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -576,24 +579,33 @@ class AgentRuntime:
         queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
         async def _run_and_signal() -> AgentTurnResult:
-            result = await self._run_turn_with_sdk(request, event_queue=queue)
-            queue.put_nowait(None)  # sentinel — signals end of stream
-            return result
+            try:
+                return await self._run_turn_with_sdk(request, event_queue=queue)
+            finally:
+                queue.put_nowait(None)  # sentinel — signals end of stream, including failures
 
         task = asyncio.ensure_future(_run_and_signal())
+        reached_task_end = False
         try:
             while True:
                 item = await queue.get()
                 if item is None:
+                    reached_task_end = True
                     break
                 yield item
+            await task
         finally:
             if not task.done():
                 task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            elif not reached_task_end:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def _run_turn_with_sdk(
         self,
@@ -675,7 +687,11 @@ class AgentRuntime:
             await execute_sdk_turn(options)
         except Exception as exc:
             self._flush_pending_sdk_tool_results(run_context)
-            if _is_missing_claude_session_error(exc) and session.turn_count > 0 and not tool_trace:
+            if (
+                _is_missing_claude_session_error(exc, stderr_lines=run_context.sdk_stderr_lines)
+                and session.turn_count > 0
+                and not tool_trace
+            ):
                 logger.warning(
                     "agent_sdk_resume_missing conversation_id=%s request_id=%s agent_session_id=%s; retrying with fresh SDK session",
                     request.conversation_id,
@@ -894,6 +910,30 @@ class AgentRuntime:
                 run_context=run_context,
             )
 
+        def sdk_stderr(line: str) -> None:
+            line_text = str(line).strip()
+            if not line_text:
+                return
+            if len(run_context.sdk_stderr_lines) < 100:
+                run_context.sdk_stderr_lines.append(line_text)
+            else:
+                run_context.sdk_stderr_lines[-1] = line_text
+            if MISSING_CLAUDE_SESSION_MARKER in line_text:
+                logger.warning(
+                    "agent_sdk_stderr_missing_session conversation_id=%s request_id=%s agent_session_id=%s message=%s",
+                    request.conversation_id,
+                    request.request_id,
+                    session.agent_session_id,
+                    line_text[:500],
+                )
+            else:
+                logger.debug(
+                    "agent_sdk_stderr conversation_id=%s request_id=%s message=%s",
+                    request.conversation_id,
+                    request.request_id,
+                    line_text[:500],
+                )
+
         server = create_sdk_mcp_server(
             name=SDK_MCP_SERVER_NAME,
             version="1.0.0",
@@ -944,6 +984,7 @@ class AgentRuntime:
             model=model,
             cwd=str(Path.cwd()),
             env=env,
+            stderr=sdk_stderr,
             plugins=skill_plugins,
             output_format=None,
         )
@@ -1912,9 +1953,24 @@ def _parse_sdk_tool_response_text(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _is_missing_claude_session_error(error: Exception) -> bool:
-    message = str(error)
-    return "No conversation found with session ID" in message
+def _is_missing_claude_session_error(
+    error: Exception,
+    *,
+    stderr_lines: list[str] | None = None,
+) -> bool:
+    messages: list[str] = [str(error)]
+    stderr = getattr(error, "stderr", None)
+    if stderr:
+        messages.append(str(stderr))
+    for related in (getattr(error, "__cause__", None), getattr(error, "__context__", None)):
+        if related is not None:
+            messages.append(str(related))
+            related_stderr = getattr(related, "stderr", None)
+            if related_stderr:
+                messages.append(str(related_stderr))
+    if stderr_lines:
+        messages.extend(stderr_lines)
+    return any(MISSING_CLAUDE_SESSION_MARKER in message for message in messages)
 
 
 

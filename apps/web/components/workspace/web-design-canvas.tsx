@@ -519,9 +519,9 @@ function TextGridZone({
         <div
           draggable
           onDragStart={handleDragStart}
-          className="flex cursor-grab items-center justify-between border-b border-[#d0e4f8] bg-[#eaf3ff] px-2 py-1 active:cursor-grabbing"
+          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#d0e4f8] bg-[#eaf3ff] px-2 py-1 active:cursor-grabbing"
         >
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <span className="rounded bg-[#d0e4f8] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3a6ea8]">
               {t(`workspace.webDesign.textZone.${zone.style}`)}
             </span>
@@ -727,9 +727,9 @@ function GridZone({
         <div
           draggable
           onDragStart={handleDragStart}
-          className="flex cursor-grab items-center justify-between border-b border-[#eee8dc] bg-[#faf8f4] px-2 py-1 active:cursor-grabbing"
+          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#eee8dc] bg-[#faf8f4] px-2 py-1 active:cursor-grabbing"
         >
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <span className="rounded bg-[#ede8de] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#7a6a4f] truncate max-w-[120px]">
               {node.data.title}
             </span>

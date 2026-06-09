@@ -54,6 +54,15 @@ TOOLS_REQUIRE_ACTIVE_DATASET = frozenset(
         "query_metrics",
         "describe_dataset",
         "run_semantic_query",
+    }
+)
+
+# Tools that benefit from a resolved dataset_table (e.g. for column-level
+# access checks) but can still function when the caller-supplied table name
+# doesn't match any table in the session.  Resolution is best-effort: the
+# first available table is used as a fallback.
+TOOLS_SOFT_DATASET = frozenset(
+    {
         "execute_readonly_sql",
         "get_distinct_values",
     }
@@ -1007,6 +1016,7 @@ class ToolCallingService:
         resolved_arguments = dict(arguments)
         needs_table_resolution = (
             tool_name in TOOLS_REQUIRE_ACTIVE_DATASET
+            or tool_name in TOOLS_SOFT_DATASET
             or tool_name in TOOLS_WITH_OPTIONAL_TABLE_ARGUMENT
             or tool_name in {"list_tables", "save_view"}
         )
@@ -1014,12 +1024,30 @@ class ToolCallingService:
             return context, resolved_arguments
 
         available_tables = self._fetch_session_tables(context)
+
+        # Strict resolution for tools that genuinely require the dataset_table
+        # to exist (semantic queries, distinct values).  Best-effort for tools
+        # in TOOLS_SOFT_DATASET (execute_readonly_sql) — fall back to the
+        # first available table so the agent can always run raw SQL even when
+        # the caller-supplied dataset_table is stale or wrong.
+        strict = tool_name in TOOLS_REQUIRE_ACTIVE_DATASET
         resolved_dataset_table = self._resolve_table_reference(
             context=context,
             requested_table=context.dataset_table,
             available_tables=available_tables,
-            strict=tool_name in TOOLS_REQUIRE_ACTIVE_DATASET,
+            strict=strict,
         )
+
+        # For soft-dataset tools, if resolution returned a name that doesn't
+        # match any available table (non-strict resolve returns the raw
+        # candidate), pick the first available table so column-level role
+        # checks still work.
+        if (
+            tool_name in TOOLS_SOFT_DATASET
+            and available_tables
+            and resolved_dataset_table.lower() not in {t.lower() for t in available_tables}
+        ):
+            resolved_dataset_table = available_tables[0]
 
         if tool_name in TOOLS_WITH_OPTIONAL_TABLE_ARGUMENT:
             requested_table = resolved_arguments.get("table")

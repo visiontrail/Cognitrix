@@ -15,6 +15,11 @@ mkdir -p "$LOG_DIR"
 export API_LOG_FILE="${API_LOG_FILE:-$LOG_DIR/api.log}"
 export WEB_LOG_FILE="${WEB_LOG_FILE:-$LOG_DIR/web.log}"
 
+# Bind to all interfaces to allow local LAN access
+export API_HOST="0.0.0.0"
+export WEB_HOST="0.0.0.0"
+
+
 echo "[dev-local] Validating environment variables"
 .venv/bin/python scripts/env_check.py --web-env-file apps/web/.env --api-env-file apps/api/.env
 

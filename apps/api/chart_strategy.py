@@ -137,13 +137,13 @@ class ChartStrategyRouter:
         inside_label = {
             "show": True,
             "position": "inside",
-            "formatter": "{b}\n{c}",
+            "formatter": "{b}\n{c} ({d}%)",
             "color": "#fff",
             "fontWeight": 600,
         }
         return {
-            "tooltip": {"trigger": "item", "formatter": "{b}: {c}"},
-            "legend": {},
+            "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
+            "legend": {"show": False},
             "series": [
                 {
                     "type": "funnel",

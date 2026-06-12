@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 API_HOST="${API_HOST:-127.0.0.1}"
@@ -11,7 +11,7 @@ WEB_PORT="${WEB_PORT:-3000}"
 API_BASE_URL="http://${API_HOST}:${API_PORT}"
 WEB_BASE_URL="http://${WEB_HOST}:${WEB_PORT}"
 
-.venv/bin/python scripts/env_check.py --web-env-file apps/web/.env --api-env-file apps/api/.env
+.venv/bin/python scripts/checks/env_check.py --web-env-file apps/web/.env --api-env-file apps/api/.env
 
 API_LOG="/tmp/smarthrbi-smoke-api.log"
 WEB_LOG="/tmp/smarthrbi-smoke-web.log"

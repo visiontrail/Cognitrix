@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 if [[ ! -x ".venv/bin/python" ]]; then
@@ -9,4 +9,4 @@ if [[ ! -x ".venv/bin/python" ]]; then
   exit 1
 fi
 
-.venv/bin/python scripts/reset_local_data.py "$@"
+.venv/bin/python scripts/maintenance/reset_local_data.py "$@"

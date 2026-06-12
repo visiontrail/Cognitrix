@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-SCRIPT_PATH = ROOT_DIR / "scripts" / "env_check.py"
+SCRIPT_PATH = ROOT_DIR / "scripts" / "checks" / "env_check.py"
 
 
 def run_env_check(web_env: Path, api_env: Path) -> subprocess.CompletedProcess[str]:

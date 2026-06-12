@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/docker.sh"
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "[docker-up] Docker is not installed"
-  exit 1
-fi
+require_docker
+ensure_env_file
 
-docker compose up -d --build
+cd "${PROJECT_ROOT}"
+
+compose up -d --build

@@ -178,7 +178,11 @@ Open **http://127.0.0.1:3000** — upload one of the sample Excel files to start
 ├── models                # HR / PM semantic metric definitions (YAML)
 ├── sample_data           # Example Excel files for local testing
 ├── tests                 # Backend, integration, security, eval, and smoke tests
-├── scripts               # Local development, build, test, and reset helpers
+├── scripts               # Dev/start/deploy entrypoints plus grouped helper scripts
+│   ├── checks            # Env validation, lint, and build checks
+│   ├── maintenance       # Local data reset and one-off migration helpers
+│   ├── setup             # Bootstrap and local service setup helpers
+│   └── tests             # Test and smoke-test runners
 ├── docs/adr              # Architecture decision records
 ├── infra/docker          # Alternative Docker Compose configurations
 └── packages/shared       # Shared package placeholder
@@ -442,19 +446,19 @@ make reset-local-data
 Preview what will be deleted:
 
 ```bash
-.venv/bin/python scripts/reset_local_data.py --dry-run
+.venv/bin/python scripts/maintenance/reset_local_data.py --dry-run
 ```
 
 Also reset the database referenced by `apps/api/.env`:
 
 ```bash
-.venv/bin/python scripts/reset_local_data.py --with-db-reset
+.venv/bin/python scripts/maintenance/reset_local_data.py --with-db-reset
 ```
 
 Also remove Docker Compose named volumes:
 
 ```bash
-.venv/bin/python scripts/reset_local_data.py --include-docker-volumes
+.venv/bin/python scripts/maintenance/reset_local_data.py --include-docker-volumes
 ```
 
 ---

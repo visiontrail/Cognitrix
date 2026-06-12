@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import unquote, urlparse
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[2]
 APPS_API_DIR = ROOT_DIR / "apps" / "api"
 DEFAULT_API_ENV_FILE = APPS_API_DIR / ".env"
 

@@ -2,7 +2,7 @@
 
 - [x] 1.1 Add `AGENT_SKILLS_ENABLED` (default `false`), `AGENT_SKILLS_DIR` (default `${UPLOAD_DIR}/agent_skills`), `AGENT_SKILLS_MAX_UPLOAD_MB` (default `25`), `LEGACY_XLSX_PARSER_ENABLED` (default `true`), `AUTH_BOOTSTRAP_SUPERADMIN_EMAIL` (optional) to `apps/api/config.py` `Settings`
 - [x] 1.2 Update `apps/api/.env.example` with the new vars and inline comments
-- [x] 1.3 Update `make env-check` script (in `tests/scripts/`) to validate the new vars when `AGENT_SKILLS_ENABLED=true`
+- [x] 1.3 Update `make env-check` script (in `scripts/checks/`) to validate the new vars when `AGENT_SKILLS_ENABLED=true`
 
 ## 2. RBAC: superadmin role
 

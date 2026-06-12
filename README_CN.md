@@ -178,7 +178,11 @@ make dev
 ├── models                # HR / PM 语义指标定义（YAML）
 ├── sample_data           # 示例 Excel 数据（用于本地测试）
 ├── tests                 # 后端、集成、安全、评测、smoke 测试
-├── scripts               # 本地开发、构建、测试、重置脚本
+├── scripts               # 开发/启动/发布入口与分组辅助脚本
+│   ├── checks            # 环境校验、lint、build 检查
+│   ├── maintenance       # 本地数据重置与一次性迁移脚本
+│   ├── setup             # bootstrap 与本地服务初始化脚本
+│   └── tests             # 测试与 smoke runner
 ├── docs/adr              # 架构决策记录
 ├── infra/docker          # 备用 Docker Compose 配置
 └── packages/shared       # 共享包占位

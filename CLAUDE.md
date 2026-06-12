@@ -171,7 +171,9 @@ HR and PM metric definitions in YAML, loaded by `SemanticRegistry`. Metrics map 
 - `tests/evals/` — agent prompting quality evals
 - `tests/e2e/` — share rehydration flow (Python)
 - `tests/smoke/run_smoke_flow.py` — end-to-end smoke: healthz → login → upload → query → chat → save → share
-- `tests/scripts/` — env-check and shell-env validation
+- `scripts/checks/` — reusable env-check, lint, and build scripts
+- `scripts/tests/` — shell runners for pytest and smoke flows
+- `tests/scripts/` — automated tests for repository scripts
 - `tests/agentic_ingestion_fakes.py` — shared fakes for ingestion tests
 
 Frontend tests in `apps/web/tests/` use Vitest (unit, jsdom) and Playwright (e2e). UI test coverage includes: sidebar, chat-input, chart-node, workspace-catalog, ingestion-lifecycle-panel, genui-registry, onboarding-gate, share-view, workbench states.

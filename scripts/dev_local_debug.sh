@@ -21,7 +21,7 @@ export WEB_HOST="0.0.0.0"
 
 
 echo "[dev-local] Validating environment variables"
-.venv/bin/python scripts/env_check.py --web-env-file apps/web/.env --api-env-file apps/api/.env
+.venv/bin/python scripts/checks/env_check.py --web-env-file apps/web/.env --api-env-file apps/api/.env
 
 echo "[dev-local] Starting local debug stack (web + api)"
 echo "[dev-local] API log: $API_LOG_FILE"

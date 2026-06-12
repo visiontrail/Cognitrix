@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
-SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent.parent / "apps" / "api"
+SQLITE_RELATIVE_BASE = Path(__file__).resolve().parents[2] / "apps" / "api"
 
 
 def _utc_now() -> str:

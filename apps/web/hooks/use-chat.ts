@@ -31,7 +31,12 @@ import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { generateId, isRecord } from "@/lib/utils";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
-import type { ChatMessage, ChatSession } from "@/types/chat";
+import type {
+  ChatMessage,
+  ChatSession,
+  MultiChartConfirmation,
+  MultiChartConfirmationSubmission,
+} from "@/types/chat";
 import type {
   IngestionApprovalResult,
   IngestionCatalogSetupSeed,
@@ -147,12 +152,14 @@ export function useSendMessage() {
       attachment,
       approvedAction,
       preferredChartType,
+      multiChartConfirmation,
     }: {
       sessionId: string;
       content: string;
       attachment?: File;
       approvedAction?: IngestionProposalAction;
       preferredChartType?: QueryChartType;
+      multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
       const workspaceId = getActiveWorkspaceIdOrThrow(t);
       assertSessionInCurrentScope(sessionId, t);
@@ -215,6 +222,7 @@ export function useSendMessage() {
           sessionId,
           content: trimmedContent,
           preferredChartType,
+          multiChartConfirmation,
           workspaceId,
           signal: abortController.signal,
           t,
@@ -267,7 +275,7 @@ export function useSendMessage() {
       }
       return { sessionId, optimistic: true };
     },
-    onSuccess: ({ assistantMessage, chartAsset, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
+    onSuccess: ({ assistantMessage, chartAsset, chartAssets, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
       if (preAppended) {
         useChatStore.getState().replaceMessage(sessionId, assistantMessage.id, assistantMessage);
       } else {
@@ -275,6 +283,9 @@ export function useSendMessage() {
       }
       if (chartAsset) {
         addAsset(chartAsset);
+      }
+      for (const asset of chartAssets ?? []) {
+        addAsset(asset);
       }
       touchSession(sessionId, {
         lastMessage: assistantMessage.content,
@@ -426,6 +437,7 @@ type TranslateFn = (key: string, params?: Record<string, string | number | null 
 type AssistantResponse = {
   assistantMessage: ChatMessage;
   chartAsset?: ChartAsset;
+  chartAssets?: ChartAsset[];
   preAppended: boolean;
   catalogRefreshWorkspaceId?: string;
 };
@@ -445,6 +457,7 @@ async function streamAssistantResponse({
   sessionId,
   content,
   preferredChartType,
+  multiChartConfirmation,
   workspaceId,
   signal,
   t,
@@ -453,6 +466,7 @@ async function streamAssistantResponse({
   sessionId: string;
   content: string;
   preferredChartType?: QueryChartType;
+  multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
   signal?: AbortSignal;
   t: TranslateFn;
@@ -487,6 +501,16 @@ async function streamAssistantResponse({
 
   let finalText = "";
   let latestSpec: unknown = null;
+  const groupedSpecs: Array<{
+    rawSpec: unknown;
+    chartId?: string;
+    chartKey?: string;
+    chartLabel?: string;
+    chartIndex?: number;
+    chartCount?: number;
+    multiChartGroupId?: string;
+  }> = [];
+  let pendingMultiChartConfirmation: MultiChartConfirmation | undefined;
   let terminalReason: "final" | "error" | "closed" = "closed";
   let planningStepCounter = 0;
   let toolStepCount = 0;
@@ -511,6 +535,13 @@ async function streamAssistantResponse({
         response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),
+        multi_chart_confirmation: multiChartConfirmation
+          ? {
+              confirmation_id: multiChartConfirmation.confirmationId,
+              action: multiChartConfirmation.action,
+              selected_items: multiChartConfirmation.selectedItems ?? null,
+            }
+          : null,
       }),
       signal,
     });
@@ -571,24 +602,52 @@ async function streamAssistantResponse({
         if (!finalText) {
           finalText = String(payload.message ?? t("chat.requestFailed"));
         }
+        const errorCode = payload.code ? String(payload.code) : undefined;
+        if (
+          errorCode === "MULTI_CHART_CONFIRMATION_EXPIRED" ||
+          errorCode === "MULTI_CHART_CONFIRMATION_MISMATCH" ||
+          errorCode === "MULTI_CHART_CONFIRMATION_MISSING"
+        ) {
+          useChatStore.getState().clearPendingMultiChartConfirmation(sessionId);
+        }
         useChatStore.getState().pushTraceStep(messageId, {
           kind: "error",
           id: `error-${Date.now()}`,
           message: String(payload.message ?? ""),
-          code: payload.code ? String(payload.code) : undefined,
+          code: errorCode,
           at: Date.now(),
         });
         terminalReason = "error";
         continue;
       }
 
+      if (streamEvent.event === "confirmation_required") {
+        if (payload.confirmation_type === "multi_chart_generation") {
+          pendingMultiChartConfirmation = mapMultiChartConfirmation(payload);
+          useChatStore.getState().setPendingMultiChartConfirmation(sessionId, pendingMultiChartConfirmation);
+        }
+        continue;
+      }
+
       if (streamEvent.event === "spec") {
         latestSpec = payload.spec ?? null;
+        groupedSpecs.push({
+          rawSpec: payload.spec ?? null,
+          chartId: typeof payload.chart_id === "string" ? payload.chart_id : undefined,
+          chartKey: typeof payload.chart_key === "string" ? payload.chart_key : undefined,
+          chartLabel: typeof payload.chart_label === "string" ? payload.chart_label : undefined,
+          chartIndex: typeof payload.chart_index === "number" ? payload.chart_index : undefined,
+          chartCount: typeof payload.chart_count === "number" ? payload.chart_count : undefined,
+          multiChartGroupId: typeof payload.multi_chart_group_id === "string" ? payload.multi_chart_group_id : undefined,
+        });
         continue;
       }
 
       if (streamEvent.event === "final") {
         finalText = String(payload.text ?? finalText);
+        if (payload.status !== "awaiting_confirmation" && payload.status !== "failed") {
+          useChatStore.getState().clearPendingMultiChartConfirmation(sessionId);
+        }
         terminalReason = "final";
         continue;
       }
@@ -616,12 +675,27 @@ async function streamAssistantResponse({
   const traceStatus: "ok" | "error" | "incomplete" =
     terminalReason === "final" ? "ok" : terminalReason === "error" ? "error" : "incomplete";
 
-  const chartAsset = toChartAsset(latestSpec, {
-    sessionId,
-    prompt: content,
-  });
+  const specEvents = groupedSpecs.length > 0
+    ? [...groupedSpecs].sort((a, b) => (a.chartIndex ?? 0) - (b.chartIndex ?? 0))
+    : latestSpec
+      ? [{ rawSpec: latestSpec }]
+      : [];
+  const chartAssets = specEvents
+    .map((event) =>
+      toChartAsset(event.rawSpec, {
+        sessionId,
+        messageId,
+        prompt: content,
+        assetId: event.chartId ? `asset-${event.chartId}` : undefined,
+        title: event.chartLabel,
+      })
+    )
+    .filter((asset): asset is ChartAsset => Boolean(asset));
+  const chartAsset = chartAssets[0] ?? null;
   const fallbackText = chartAsset
     ? t("chat.generatedChart", { title: chartAsset.title })
+    : pendingMultiChartConfirmation
+      ? t("chat.multiChart.awaitingConfirmation")
     : t("chat.completed");
   const assistantMessage: ChatMessage = {
     id: messageId,
@@ -635,13 +709,26 @@ async function streamAssistantResponse({
           chartType: chartAsset.chartType,
         }
       : undefined,
+    chartAssets: chartAssets.length > 1
+      ? chartAssets.map((asset) => ({
+          assetId: asset.id,
+          title: asset.title,
+          chartType: asset.chartType,
+        }))
+      : undefined,
+    multiChartConfirmation: pendingMultiChartConfirmation,
     timestamp: new Date().toISOString(),
     traceSummary:
       traceSteps.length > 0
         ? { stepCount: toolCallCount, durationMs, status: traceStatus }
         : undefined,
   };
-  return { assistantMessage, chartAsset: chartAsset ?? undefined, preAppended: true };
+  return {
+    assistantMessage,
+    chartAsset: chartAsset ?? undefined,
+    chartAssets: chartAssets.length > 1 ? chartAssets : undefined,
+    preAppended: true,
+  };
 }
 
 function computeResultPreview(result: unknown): string {
@@ -656,6 +743,26 @@ function computeResultPreview(result: unknown): string {
   }
   const text = typeof result === "string" ? result : JSON.stringify(result) ?? "";
   return text.length > 80 ? text.slice(0, 80) + "…" : text;
+}
+
+function mapMultiChartConfirmation(payload: Record<string, unknown>): MultiChartConfirmation {
+  const items = Array.isArray(payload.items)
+    ? payload.items.filter(isRecord).map((item) => ({
+        key: String(item.key ?? ""),
+        label: String(item.label ?? item.key ?? ""),
+        selected: item.selected !== false,
+      })).filter((item) => item.key)
+    : [];
+  return {
+    confirmationId: String(payload.confirmation_id ?? ""),
+    groupingDimension: String(payload.grouping_dimension ?? ""),
+    proposedCount: asNumber(payload.proposed_count),
+    maxChartCount: Math.max(1, asNumber(payload.max_chart_count)),
+    reason: String(payload.reason ?? ""),
+    expiresAt: typeof payload.expires_at === "number" ? payload.expires_at : undefined,
+    truncated: Boolean(payload.truncated),
+    items,
+  };
 }
 
 function buildMessageWithChartPreference({
@@ -1713,7 +1820,7 @@ function extractUploadStats(upload: IngestionUploadResult): { sheetCount: number
 
 function toChartAsset(
   rawSpec: unknown,
-  source: { sessionId: string; prompt: string }
+  source: { sessionId: string; messageId: string; prompt: string; assetId?: string; title?: string }
 ): ChartAsset | null {
   if (!isRecord(rawSpec)) {
     return null;
@@ -1723,7 +1830,7 @@ function toChartAsset(
   if (chartType === "empty") {
     return null;
   }
-  const title = typeof rawSpec.title === "string" && rawSpec.title.trim() ? rawSpec.title : "Chart";
+  const title = source.title || (typeof rawSpec.title === "string" && rawSpec.title.trim() ? rawSpec.title : "Chart");
   const echartsOption = resolveEchartsOption(rawSpec);
   if (!echartsOption) {
     return null;
@@ -1737,14 +1844,14 @@ function toChartAsset(
   };
   const now = new Date().toISOString();
   return {
-    id: `asset-${generateId()}`,
+    id: source.assetId ?? `asset-${generateId()}`,
     title,
     description: spec.subtitle,
     chartType,
     spec,
     sourceMeta: {
       sessionId: source.sessionId,
-      messageId: `msg-${generateId()}`,
+      messageId: source.messageId,
       prompt: source.prompt,
       datasetTable: DEFAULT_DATASET_TABLE,
     },

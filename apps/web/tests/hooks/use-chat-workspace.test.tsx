@@ -10,6 +10,7 @@ import {
   useSendMessage,
 } from "../../hooks/use-chat";
 import { setInMemoryToken } from "../../lib/auth/session";
+import { useAssetStore } from "../../stores/asset-store";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
 import { useWorkspaceStore } from "../../stores/workspace-store";
@@ -133,6 +134,7 @@ describe("use-chat workspace isolation", () => {
     useChatStore.getState().initForWorkspace("user-1", "ws-a");
     useChatStore.getState().addSession(session("session-a"));
     useChatStore.getState().setActiveSession("session-a");
+    useAssetStore.setState({ assets: [] });
   });
 
   it("keys chat session and message caches by active workspace", async () => {
@@ -177,6 +179,56 @@ describe("use-chat workspace isolation", () => {
 
     await expect(result.current.mutateAsync({ sessionId: "session-a", content: "leak" })).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects grouped spec events as multi-asset assistant messages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse([
+        'event: spec\ndata: {"multi_chart_group_id":"mcg-1","chart_id":"chart-hr","chart_index":0,"chart_count":2,"chart_key":"hr","chart_label":"HR","spec":{"engine":"recharts","chart_type":"bar","title":"HR","data":[{"segment":"HR","metric_value":2}],"config":{"xKey":"segment","yKey":"metric_value"}}}\n\n',
+        'event: spec\ndata: {"multi_chart_group_id":"mcg-1","chart_id":"chart-pm","chart_index":1,"chart_count":2,"chart_key":"pm","chart_label":"PM","spec":{"engine":"recharts","chart_type":"bar","title":"PM","data":[{"segment":"PM","metric_value":1}],"config":{"xKey":"segment","yKey":"metric_value"}}}\n\n',
+        'event: final\ndata: {"status":"completed","text":"Generated 2 charts."}\n\n',
+      ].join(""))
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSendMessage(), { wrapper: wrapperFor(makeQueryClient()) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ sessionId: "session-a", content: "charts for each department" });
+    });
+
+    const assistant = useChatStore.getState().messagesBySession["session-a"].at(-1);
+    expect(assistant?.chartAsset?.assetId).toBe("asset-chart-hr");
+    expect(assistant?.chartAssets?.map((asset) => asset.assetId)).toEqual(["asset-chart-hr", "asset-chart-pm"]);
+    expect(new Set(useAssetStore.getState().assets.map((asset) => asset.id))).toEqual(
+      new Set(["asset-chart-hr", "asset-chart-pm"])
+    );
+  });
+
+  it("sends typed multi-chart confirmation payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse('event: final\ndata: {"status":"canceled","text":"Canceled."}\n\n')
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSendMessage(), { wrapper: wrapperFor(makeQueryClient()) });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        sessionId: "session-a",
+        content: "Cancel multi-chart generation",
+        multiChartConfirmation: {
+          confirmationId: "mchart-1",
+          action: "cancel",
+        },
+      });
+    });
+
+    const chatCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/chat/stream"));
+    const body = JSON.parse(String(chatCall?.[1]?.body));
+    expect(body.multi_chart_confirmation).toEqual({
+      confirmation_id: "mchart-1",
+      action: "cancel",
+      selected_items: null,
+    });
   });
 
   it("sends ingestion setup confirmation with active workspace and rejects cross-workspace sessions", async () => {

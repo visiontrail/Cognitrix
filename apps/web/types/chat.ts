@@ -21,6 +21,8 @@ export type ChatMessage = {
   role: MessageRole;
   content: string;
   chartAsset?: ChartAssetReference;
+  chartAssets?: ChartAssetReference[];
+  multiChartConfirmation?: MultiChartConfirmation;
   timestamp: string;
   traceSummary?: TraceSummary;
 };
@@ -36,6 +38,7 @@ export type AssistantResponse = {
   messageId: string;
   content: string;
   chartSpec?: import("./chart").ChartSpec;
+  chartAssets?: import("./chart").ChartAsset[];
   suggestedActions?: SuggestedAction[];
 };
 
@@ -50,6 +53,30 @@ export type SendMessageRequest = {
   content: string;
   attachment?: File;
   preferredChartType?: import("./chart").KnownChartType;
+  multiChartConfirmation?: MultiChartConfirmationSubmission;
+};
+
+export type MultiChartConfirmationItem = {
+  key: string;
+  label: string;
+  selected?: boolean;
+};
+
+export type MultiChartConfirmation = {
+  confirmationId: string;
+  groupingDimension: string;
+  proposedCount: number;
+  maxChartCount: number;
+  reason: string;
+  expiresAt?: number;
+  truncated?: boolean;
+  items: MultiChartConfirmationItem[];
+};
+
+export type MultiChartConfirmationSubmission = {
+  confirmationId: string;
+  action: "confirm" | "adjust" | "cancel";
+  selectedItems?: Array<{ key: string; label?: string }>;
 };
 
 export type SendMessageResponse = {

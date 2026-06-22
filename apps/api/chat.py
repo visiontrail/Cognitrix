@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
 from threading import Lock
-from typing import Any, AsyncGenerator, Iterator
+from typing import Any, AsyncGenerator, Iterator, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,17 @@ from .agent_runtime import AgentRequest, AgentRuntimeError, get_agent_runtime
 from .config import get_settings
 
 logger = logging.getLogger("cognitrix.chat")
+
+
+class MultiChartConfirmationItem(BaseModel):
+    key: str
+    label: str | None = None
+
+
+class MultiChartConfirmationPayload(BaseModel):
+    confirmation_id: str
+    action: Literal["confirm", "adjust", "cancel"]
+    selected_items: list[MultiChartConfirmationItem] | None = None
 
 
 class ChatStreamRequest(BaseModel):
@@ -31,6 +42,7 @@ class ChatStreamRequest(BaseModel):
     department: str | None = None
     clearance: int = 0
     last_event_id: int | None = None
+    multi_chart_confirmation: MultiChartConfirmationPayload | None = None
 
 
 @dataclass(slots=True)
@@ -133,7 +145,7 @@ class ChatStreamService:
             )
 
         new_events: list[ChatEvent] = []
-        if request.message:
+        if request.message or request.multi_chart_confirmation:
             try:
                 generated = self._generate_event_payloads(request=request, conversation_id=conversation_id)
             except Exception:
@@ -182,7 +194,7 @@ class ChatStreamService:
             ):
                 yield _format_sse(event)
 
-        if not request.message:
+        if not request.message and request.multi_chart_confirmation is None:
             if last_event_id is None:
                 generated = self._build_terminal_failure_events(
                     conversation_id=conversation_id,
@@ -276,7 +288,7 @@ class ChatStreamService:
         request: ChatStreamRequest,
         conversation_id: str,
     ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
-        assert request.message is not None
+        message = request.message or ""
         agent_request = AgentRequest(
             conversation_id=conversation_id,
             request_id=request.request_id,
@@ -284,12 +296,15 @@ class ChatStreamService:
             project_id=request.project_id,
             workspace_id=request.workspace_id,
             dataset_table=request.dataset_table,
-            message=request.message,
+            message=message,
             preferred_chart_type=request.preferred_chart_type,
             response_locale=request.response_locale,
             role=request.role,
             department=request.department,
             clearance=request.clearance,
+            multi_chart_confirmation=request.multi_chart_confirmation.model_dump()
+            if request.multi_chart_confirmation
+            else None,
         )
         async for event_type, payload in self.agent_runtime.run_turn_stream(agent_request):
             yield event_type, payload
@@ -300,6 +315,7 @@ class ChatStreamService:
                 conversation_id=conversation_id,
                 updates={
                     "latest_spec": runtime_session.last_spec,
+                    "latest_specs": runtime_session.last_specs,
                     "agent_session_id": runtime_session.agent_session_id,
                     "agent_tool_trace": runtime_session.last_tool_trace,
                 },
@@ -384,7 +400,7 @@ class ChatStreamService:
         request: ChatStreamRequest,
         conversation_id: str,
     ) -> list[tuple[str, dict[str, Any]]]:
-        assert request.message is not None
+        message = request.message or ""
         result = self.agent_runtime.run_turn(
             AgentRequest(
                 conversation_id=conversation_id,
@@ -393,18 +409,22 @@ class ChatStreamService:
                 project_id=request.project_id,
                 workspace_id=request.workspace_id,
                 dataset_table=request.dataset_table,
-                message=request.message,
+                message=message,
                 preferred_chart_type=request.preferred_chart_type,
                 response_locale=request.response_locale,
                 role=request.role,
                 department=request.department,
                 clearance=request.clearance,
+                multi_chart_confirmation=request.multi_chart_confirmation.model_dump()
+                if request.multi_chart_confirmation
+                else None,
             )
         )
         self.sessions.update_context(
             conversation_id=conversation_id,
             updates={
                 "latest_spec": result.spec,
+                "latest_specs": result.specs,
                 "latest_sql": result.ai_state.get("latest_result", {}).get("sql")
                 if isinstance(result.ai_state.get("latest_result"), dict)
                 else None,

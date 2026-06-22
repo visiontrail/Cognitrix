@@ -1,7 +1,8 @@
 "use client";
 
 import type { ChatMessage } from "@/types/chat";
-import { ChartMessageCard } from "./chart-message-card";
+import { ChartMessageCard, MultiChartMessageGroup } from "./chart-message-card";
+import { MultiChartConfirmationBox } from "./multi-chart-confirmation-box";
 import { AgentTrace } from "./agent-trace";
 import { User, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -111,14 +112,23 @@ export function MessageItem({ message }: { message: ChatMessage }) {
           </div>
         )}
 
+        {message.multiChartConfirmation && !isUser && (
+          <MultiChartConfirmationBox
+            sessionId={message.sessionId}
+            confirmation={message.multiChartConfirmation}
+          />
+        )}
+
         {/* Chart Card */}
-        {message.chartAsset && !isUser && (
+        {message.chartAssets && message.chartAssets.length > 1 && !isUser ? (
+          <MultiChartMessageGroup assets={message.chartAssets} />
+        ) : message.chartAsset && !isUser ? (
           <ChartMessageCard
             assetId={message.chartAsset.assetId}
             title={message.chartAsset.title}
             chartType={message.chartAsset.chartType}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );

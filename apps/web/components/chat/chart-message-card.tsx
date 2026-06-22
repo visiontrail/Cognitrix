@@ -20,6 +20,7 @@ import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
+import type { ChartAssetReference } from "@/types/chat";
 
 const DEFAULT_CHART_NODE_WIDTH = 520;
 const DEFAULT_CHART_NODE_HEIGHT = 380;
@@ -222,6 +223,99 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference[] }) {
+  const { t } = useI18n();
+  const getAsset = useAssetStore((s) => s.getAsset);
+  const addNode = useWorkspaceStore((s) => s.addNode);
+  const addNodeToWebDesign = useWorkspaceStore((s) => s.addNodeToWebDesign);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const nodes = useWorkspaceStore((s) => s.nodes);
+  const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const setActivePanel = useUIStore((s) => s.setActivePanel);
+  const canvasName = t(getCanvasFormatPreset(canvasFormat.id).labelKey);
+
+  const handleAddAllToCanvas = useCallback(() => {
+    if (!activeWorkspaceId) {
+      toast.error(t("chat.toast.noWorkspace"));
+      return;
+    }
+
+    const resolvedAssets = assets
+      .map((asset) => getAsset(asset.assetId))
+      .filter((asset): asset is NonNullable<ReturnType<typeof getAsset>> => Boolean(asset));
+    if (!resolvedAssets.length) {
+      toast.error(t("chat.toast.chartAssetNotFound"));
+      return;
+    }
+
+    resolvedAssets.forEach((asset, index) => {
+      const positionIndex = nodes.length + index;
+      const offsetX = 50 + (positionIndex % 3) * 560;
+      const offsetY = 50 + Math.floor(positionIndex / 3) * 420;
+      const nodeData: ChartNodeData = {
+        type: "chart",
+        assetId: asset.id,
+        title: asset.title,
+        chartType: asset.chartType,
+        spec: asset.spec,
+        width: DEFAULT_CHART_NODE_WIDTH,
+        height: DEFAULT_CHART_NODE_HEIGHT,
+      };
+      const node = {
+        id: `node-${generateId()}`,
+        type: "chartNode",
+        position: { x: offsetX, y: offsetY },
+        width: DEFAULT_CHART_NODE_WIDTH,
+        height: DEFAULT_CHART_NODE_HEIGHT,
+        initialWidth: DEFAULT_CHART_NODE_WIDTH,
+        initialHeight: DEFAULT_CHART_NODE_HEIGHT,
+        data: nodeData,
+      };
+      if (canvasFormat.id === "web-design") {
+        addNodeToWebDesign(node);
+      } else {
+        addNode(node);
+      }
+    });
+
+    setActivePanel("both");
+    toast.success(t("chat.multiChart.addedAll", { count: resolvedAssets.length, canvasName }));
+  }, [
+    activeWorkspaceId,
+    addNode,
+    addNodeToWebDesign,
+    assets,
+    canvasFormat.id,
+    canvasName,
+    getAsset,
+    nodes.length,
+    setActivePanel,
+    t,
+  ]);
+
+  return (
+    <div className="w-full max-w-2xl space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Badge variant="secondary">{t("chat.multiChart.generatedCount", { count: assets.length })}</Badge>
+        <Button size="sm" variant="outline" onClick={handleAddAllToCanvas}>
+          <LayoutDashboard className="h-3.5 w-3.5" />
+          {t("chat.multiChart.addAllToCanvas", { canvasName })}
+        </Button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {assets.map((asset) => (
+          <ChartMessageCard
+            key={asset.assetId}
+            assetId={asset.assetId}
+            title={asset.title}
+            chartType={asset.chartType}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 

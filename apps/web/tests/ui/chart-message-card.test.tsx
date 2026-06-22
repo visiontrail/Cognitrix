@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "../../components/ui/tooltip";
-import { ChartMessageCard } from "../../components/chat/chart-message-card";
+import { ChartMessageCard, MultiChartMessageGroup } from "../../components/chat/chart-message-card";
 import { useAssetStore } from "../../stores/asset-store";
 import { useChatStore } from "../../stores/chat-store";
+import { useWorkspaceStore } from "../../stores/workspace-store";
 import type { ChartAsset } from "../../types/chart";
 
 const toBlobMock = vi.fn();
@@ -62,6 +63,16 @@ const chartAsset: ChartAsset = {
   },
   createdAt: "2026-05-14T00:00:00.000Z",
   updatedAt: "2026-05-14T00:00:00.000Z",
+};
+
+const secondChartAsset: ChartAsset = {
+  ...chartAsset,
+  id: "asset-2",
+  title: "PM Headcount",
+  sourceMeta: {
+    ...chartAsset.sourceMeta,
+    messageId: "message-2",
+  },
 };
 
 function renderCard() {
@@ -128,6 +139,11 @@ describe("ChartMessageCard", () => {
         },
       },
     });
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      nodes: [],
+      edges: [],
+    });
   });
 
   afterEach(() => {
@@ -139,9 +155,11 @@ describe("ChartMessageCard", () => {
       messagesBySession: {},
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
+      pendingMultiChartBySession: {},
       composerText: "",
       traceByMessageId: {},
     });
+    useWorkspaceStore.setState({ activeWorkspaceId: null, nodes: [], edges: [] });
   });
 
   it("copies the rendered chart to the clipboard as a PNG", async () => {
@@ -187,5 +205,30 @@ describe("ChartMessageCard", () => {
     renderCard();
 
     expect(screen.queryByRole("button", { name: /full screen/i })).not.toBeInTheDocument();
+  });
+
+  it("adds all generated chart assets to the workspace", async () => {
+    useAssetStore.setState({ assets: [chartAsset, secondChartAsset] });
+
+    render(
+      <TooltipProvider>
+        <MultiChartMessageGroup
+          assets={[
+            { assetId: chartAsset.id, title: chartAsset.title, chartType: chartAsset.chartType },
+            { assetId: secondChartAsset.id, title: secondChartAsset.title, chartType: secondChartAsset.chartType },
+          ]}
+        />
+      </TooltipProvider>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Add all/i }));
+
+    const nodes = useWorkspaceStore.getState().nodes;
+    expect(nodes).toHaveLength(2);
+    expect(nodes.map((node) => node.data.assetId)).toEqual(["asset-1", "asset-2"]);
+    expect(nodes.map((node) => node.position)).toEqual([
+      { x: 50, y: 50 },
+      { x: 610, y: 50 },
+    ]);
   });
 });

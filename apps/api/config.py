@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     agent_max_sql_rows: int = Field(default=200, alias="AGENT_MAX_SQL_ROWS")
     agent_max_sql_scan_rows: int = Field(default=10000, alias="AGENT_MAX_SQL_SCAN_ROWS")
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
+    multi_chart_generation_enabled: bool = Field(default=True, alias="MULTI_CHART_GENERATION_ENABLED")
+    agent_max_multi_charts: int = Field(default=8, alias="AGENT_MAX_MULTI_CHARTS")
+    multi_chart_confirmation_ttl_seconds: int = Field(default=900, alias="MULTI_CHART_CONFIRMATION_TTL_SECONDS")
     ingestion_plan_timeout_seconds: float = Field(default=600.0, alias="INGESTION_PLAN_TIMEOUT_SECONDS")
     auth_secret: str = Field(alias="AUTH_SECRET")
     user_accounts_enabled: bool = Field(default=True, alias="USER_ACCOUNTS_ENABLED")
@@ -97,7 +100,13 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_TIMEOUT_SECONDS / INGESTION_PLAN_TIMEOUT_SECONDS must be greater than 0")
         return value
 
-    @field_validator("agent_max_tool_steps", "agent_max_sql_rows", "agent_max_sql_scan_rows")
+    @field_validator(
+        "agent_max_tool_steps",
+        "agent_max_sql_rows",
+        "agent_max_sql_scan_rows",
+        "agent_max_multi_charts",
+        "multi_chart_confirmation_ttl_seconds",
+    )
     @classmethod
     def validate_positive_ints(cls, value: int, info) -> int:  # type: ignore[no-untyped-def]
         if value <= 0:

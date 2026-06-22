@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { normalizeSessionTitle } from "@/lib/chat/session-title";
-import type { ChatSession, ChatMessage } from "@/types/chat";
+import type { ChatSession, ChatMessage, MultiChartConfirmation } from "@/types/chat";
 import type { MessageTrace, TraceStep } from "@/types/trace";
 import type { IngestionPlanAwaitingApproval, IngestionPlanAwaitingSetup, IngestionUploadResult } from "@/types/ingestion";
 import {
@@ -28,6 +28,7 @@ type ChatState = {
   messagesBySession: Record<string, ChatMessage[]>;
   pendingIngestionBySession: Record<string, PendingIngestionApproval | undefined>;
   pendingIngestionSetupBySession: Record<string, PendingIngestionSetup | undefined>;
+  pendingMultiChartBySession: Record<string, MultiChartConfirmation | undefined>;
   isComposing: boolean;
   composerText: string;
   traceByMessageId: Record<string, MessageTrace>;
@@ -50,6 +51,11 @@ type ChatState = {
     pending: PendingIngestionSetup | null
   ) => void;
   clearPendingIngestionSetup: (sessionId: string) => void;
+  setPendingMultiChartConfirmation: (
+    sessionId: string,
+    pending: MultiChartConfirmation | null
+  ) => void;
+  clearPendingMultiChartConfirmation: (sessionId: string) => void;
   touchSession: (
     sessionId: string,
     updates: { lastMessage?: string; messageDelta?: number; title?: string }
@@ -228,6 +234,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messagesBySession: {},
   pendingIngestionBySession: {},
   pendingIngestionSetupBySession: {},
+  pendingMultiChartBySession: {},
   isComposing: false,
   composerText: "",
   traceByMessageId: {},
@@ -249,12 +256,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const pendingIngestionSetupBySession = Object.fromEntries(
         Object.entries(state.pendingIngestionSetupBySession).filter(([sessionId]) => sessionIds.has(sessionId))
       );
+      const pendingMultiChartBySession = Object.fromEntries(
+        Object.entries(state.pendingMultiChartBySession).filter(([sessionId]) => sessionIds.has(sessionId))
+      );
       const nextState = {
         sessions: normalizedSessions,
         activeSessionId,
         messagesBySession,
         pendingIngestionBySession,
         pendingIngestionSetupBySession,
+        pendingMultiChartBySession,
       };
       persistChatState(nextState);
       return nextState;
@@ -299,7 +310,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete next[sessionId];
         return next;
       })();
-      const nextState = { sessions, activeSessionId, messagesBySession, pendingIngestionBySession, pendingIngestionSetupBySession };
+      const pendingMultiChartBySession = (() => {
+        const next = { ...state.pendingMultiChartBySession };
+        delete next[sessionId];
+        return next;
+      })();
+      const nextState = {
+        sessions,
+        activeSessionId,
+        messagesBySession,
+        pendingIngestionBySession,
+        pendingIngestionSetupBySession,
+        pendingMultiChartBySession,
+      };
       persistChatState(nextState);
       return nextState;
     }),
@@ -363,8 +386,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       );
       const pendingIngestionBySession = { ...state.pendingIngestionBySession };
       const pendingIngestionSetupBySession = { ...state.pendingIngestionSetupBySession };
+      const pendingMultiChartBySession = { ...state.pendingMultiChartBySession };
       delete pendingIngestionBySession[sessionId];
       delete pendingIngestionSetupBySession[sessionId];
+      delete pendingMultiChartBySession[sessionId];
       const sessions = state.sessions.map((session) =>
         session.id === sessionId
           ? {
@@ -385,6 +410,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messagesBySession,
         pendingIngestionBySession,
         pendingIngestionSetupBySession,
+        pendingMultiChartBySession,
         traceByMessageId,
       };
       persistChatState(nextState);
@@ -394,6 +420,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messagesBySession,
         pendingIngestionBySession,
         pendingIngestionSetupBySession,
+        pendingMultiChartBySession,
         traceByMessageId,
       };
     }),
@@ -438,6 +465,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const next = { ...state.pendingIngestionSetupBySession };
       delete next[sessionId];
       return { pendingIngestionSetupBySession: next };
+    }),
+
+  setPendingMultiChartConfirmation: (sessionId, pending) =>
+    set((state) => {
+      const next = { ...state.pendingMultiChartBySession };
+      if (pending) {
+        next[sessionId] = pending;
+      } else {
+        delete next[sessionId];
+      }
+      return { pendingMultiChartBySession: next };
+    }),
+
+  clearPendingMultiChartConfirmation: (sessionId) =>
+    set((state) => {
+      if (!state.pendingMultiChartBySession[sessionId]) {
+        return state;
+      }
+      const next = { ...state.pendingMultiChartBySession };
+      delete next[sessionId];
+      return { pendingMultiChartBySession: next };
     }),
 
   touchSession: (sessionId, updates) =>
@@ -600,6 +648,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messagesBySession: {},
         pendingIngestionBySession: {},
         pendingIngestionSetupBySession: {},
+        pendingMultiChartBySession: {},
         traceByMessageId: {},
       });
       return;
@@ -614,6 +663,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesBySession,
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
+      pendingMultiChartBySession: {},
       traceByMessageId,
     });
   },
@@ -635,6 +685,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesBySession: {},
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
+      pendingMultiChartBySession: {},
       traceByMessageId: {},
     });
   },

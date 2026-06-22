@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 import uuid
@@ -337,6 +338,112 @@ class AgentRequest:
     workspace_id: str | None = None
     preferred_chart_type: str | None = None
     response_locale: str | None = None
+    multi_chart_confirmation: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class MultiChartItem:
+    key: str
+    label: str
+    filter_field: str
+    filter_value: Any
+    title: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "filter_field": self.filter_field,
+            "filter_value": self.filter_value,
+            "title": self.title,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "MultiChartItem":
+        label = str(payload.get("label") or payload.get("key") or "").strip()
+        return cls(
+            key=str(payload.get("key") or label),
+            label=label,
+            filter_field=str(payload.get("filter_field") or ""),
+            filter_value=payload.get("filter_value"),
+            title=str(payload.get("title")).strip() if payload.get("title") else None,
+        )
+
+
+@dataclass(slots=True)
+class MultiChartPlan:
+    confirmation_id: str
+    grouping_dimension: str
+    original_message: str
+    reason: str
+    items: list[MultiChartItem]
+    max_chart_count: int
+    created_at: float
+    expires_at: float
+    chart_type: str | None = None
+    dataset_table: str | None = None
+    confidence: float = 0.0
+    truncated: bool = False
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "confirmation_id": self.confirmation_id,
+            "grouping_dimension": self.grouping_dimension,
+            "original_message": self.original_message,
+            "reason": self.reason,
+            "items": [item.to_payload() for item in self.items],
+            "max_chart_count": self.max_chart_count,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "chart_type": self.chart_type,
+            "dataset_table": self.dataset_table,
+            "confidence": self.confidence,
+            "truncated": self.truncated,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "MultiChartPlan":
+        items = [
+            MultiChartItem.from_payload(item)
+            for item in payload.get("items", [])
+            if isinstance(item, dict)
+        ]
+        return cls(
+            confirmation_id=str(payload.get("confirmation_id") or ""),
+            grouping_dimension=str(payload.get("grouping_dimension") or ""),
+            original_message=str(payload.get("original_message") or ""),
+            reason=str(payload.get("reason") or ""),
+            items=items,
+            max_chart_count=int(payload.get("max_chart_count") or 0),
+            created_at=float(payload.get("created_at") or 0),
+            expires_at=float(payload.get("expires_at") or 0),
+            chart_type=str(payload.get("chart_type")).strip() if payload.get("chart_type") else None,
+            dataset_table=str(payload.get("dataset_table")).strip() if payload.get("dataset_table") else None,
+            confidence=float(payload.get("confidence") or 0.0),
+            truncated=bool(payload.get("truncated")),
+        )
+
+
+@dataclass(slots=True)
+class GroupedChartSpecMetadata:
+    multi_chart_group_id: str
+    chart_id: str
+    chart_index: int
+    chart_count: int
+    chart_key: str
+    chart_label: str
+    spec: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "multi_chart_group_id": self.multi_chart_group_id,
+            "chart_id": self.chart_id,
+            "chart_index": self.chart_index,
+            "chart_count": self.chart_count,
+            "chart_key": self.chart_key,
+            "chart_label": self.chart_label,
+            "spec": self.spec,
+        }
 
 
 @dataclass(slots=True)
@@ -346,6 +453,8 @@ class AgentSessionState:
     history: list[dict[str, Any]] = field(default_factory=list)
     last_result: dict[str, Any] | None = None
     last_spec: dict[str, Any] | None = None
+    last_specs: list[dict[str, Any]] = field(default_factory=list)
+    pending_multi_chart_confirmation: dict[str, Any] | None = None
     last_tool_trace: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: _utc_now())
     updated_at: str = field(default_factory=lambda: _utc_now())
@@ -365,6 +474,8 @@ class AgentSessionState:
             "history": self.history,
             "last_result": self.last_result,
             "last_spec": self.last_spec,
+            "last_specs": self.last_specs,
+            "pending_multi_chart_confirmation": self.pending_multi_chart_confirmation,
             "last_tool_trace": self.last_tool_trace,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -387,6 +498,12 @@ class AgentSessionState:
             history=list(record.get("history") or []),
             last_result=record.get("last_result") if isinstance(record.get("last_result"), dict) else None,
             last_spec=record.get("last_spec") if isinstance(record.get("last_spec"), dict) else None,
+            last_specs=[
+                item for item in record.get("last_specs", []) if isinstance(item, dict)
+            ],
+            pending_multi_chart_confirmation=record.get("pending_multi_chart_confirmation")
+            if isinstance(record.get("pending_multi_chart_confirmation"), dict)
+            else None,
             last_tool_trace=list(record.get("last_tool_trace") or []),
             created_at=str(record.get("created_at") or _utc_now()),
             updated_at=str(record.get("updated_at") or _utc_now()),
@@ -407,6 +524,7 @@ class AgentTurnResult:
     final_status: str
     spec: dict[str, Any]
     ai_state: dict[str, Any]
+    specs: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -547,6 +665,288 @@ class AgentSessionStore:
             conn.commit()
 
 
+class MultiChartPreflightPlanner:
+    DIMENSION_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("department", ("department", "departments", "dept", "部门", "组织", "团队")),
+        ("region", ("region", "regions", "区域", "地区")),
+        ("job_family", ("job family", "job families", "job_family", "岗位族", "职族")),
+        ("job_level", ("job level", "job levels", "job_level", "职级", "级别")),
+        ("location", ("location", "locations", "city", "office", "地点", "城市")),
+        ("status", ("status", "statuses", "状态")),
+        ("gender", ("gender", "性别")),
+    )
+    MULTI_CUES = (
+        "for each",
+        "each ",
+        "every ",
+        "per ",
+        "separate",
+        "separately",
+        "all ",
+        "多个",
+        "分别",
+        "每个",
+        "各个",
+        "按",
+    )
+
+    def __init__(self, *, tool_service: Any, settings: Any) -> None:
+        self.tool_service = tool_service
+        self.settings = settings
+
+    async def plan(
+        self,
+        *,
+        request: AgentRequest,
+        run_context: SDKRunContext,
+        append_event: Any,
+    ) -> MultiChartPlan | None:
+        if not self.settings.multi_chart_generation_enabled:
+            return None
+
+        dimension = self._infer_dimension(request.message)
+        requested_count = self._infer_requested_count(request.message)
+        if dimension is None and requested_count is not None:
+            dimension = "department"
+        if dimension is None:
+            return None
+
+        has_multi_cue = self._has_multi_chart_cue(request.message)
+        if requested_count is None and not has_multi_cue:
+            return None
+
+        values_payload = await self._discover_values(
+            request=request,
+            run_context=run_context,
+            append_event=append_event,
+            field=dimension,
+        )
+        if values_payload is None:
+            return None
+
+        raw_values = values_payload.get("values", values_payload.get("rows", []))
+        rows = [
+            row for row in raw_values
+            if isinstance(row, dict) and row.get("value") not in (None, "")
+        ]
+        if requested_count is not None:
+            rows = rows[:requested_count]
+        if len(rows) < 2:
+            return None
+
+        now = time.time()
+        max_count = max(1, int(self.settings.agent_max_multi_charts))
+        items = [
+            MultiChartItem(
+                key=_slugify_chart_key(str(row.get("value")), fallback=f"item-{index + 1}"),
+                label=str(row.get("value")),
+                filter_field=dimension,
+                filter_value=row.get("value"),
+                title=f"{str(row.get('value'))} - {request.message.strip()[:80]}",
+            )
+            for index, row in enumerate(rows)
+        ]
+        reason = _localized_text(
+            _normalize_response_locale(request.response_locale, request.message),
+            en=f"The request appears to ask for one chart per {dimension.replace('_', ' ')}.",
+            zh=f"该请求看起来需要按 {dimension.replace('_', ' ')} 分别生成图表。",
+        )
+        return MultiChartPlan(
+            confirmation_id=f"mchart-{uuid.uuid4().hex}",
+            grouping_dimension=dimension,
+            original_message=request.message,
+            reason=reason,
+            items=items,
+            max_chart_count=max_count,
+            created_at=now,
+            expires_at=now + int(self.settings.multi_chart_confirmation_ttl_seconds),
+            chart_type=request.preferred_chart_type,
+            dataset_table=request.dataset_table,
+            confidence=0.86 if has_multi_cue else 0.72,
+            truncated=bool(values_payload.get("truncated")) or len(items) > max_count,
+        )
+
+    @classmethod
+    def _infer_dimension(cls, message: str) -> str | None:
+        lowered = message.lower()
+        for column, aliases in cls.DIMENSION_ALIASES:
+            if any(alias.lower() in lowered for alias in aliases):
+                return column
+        return None
+
+    @classmethod
+    def _has_multi_chart_cue(cls, message: str) -> bool:
+        lowered = message.lower()
+        if any(cue in lowered for cue in cls.MULTI_CUES):
+            return True
+        return re.search(r"\b(generate|create|make|build|show)\b.{0,32}\b(charts|graphs|visualizations)\b", lowered) is not None
+
+    @staticmethod
+    def _infer_requested_count(message: str) -> int | None:
+        lowered = message.lower()
+        match = re.search(r"\b(?:generate|create|make|build|show)\s+(\d{1,2})\s+(?:charts|graphs|visualizations)\b", lowered)
+        if match:
+            return max(2, int(match.group(1)))
+        return None
+
+    async def _discover_values(
+        self,
+        *,
+        request: AgentRequest,
+        run_context: SDKRunContext,
+        append_event: Any,
+        field: str,
+    ) -> dict[str, Any] | None:
+        response = await _invoke_guarded_bi_tool(
+            tool_service=self.tool_service,
+            request=request,
+            run_context=run_context,
+            append_event=append_event,
+            tool_name="get_distinct_values",
+            arguments={
+                "field": field,
+                "table": request.dataset_table,
+                "limit": max(2, int(self.settings.agent_max_multi_charts) + 1),
+            },
+            idempotency_suffix=f"multi-chart-plan:{field}",
+        )
+        if response.status != "success" or not isinstance(response.result, dict):
+            return None
+        return response.result
+
+
+@dataclass(slots=True)
+class MultiChartGenerationOutcome:
+    specs: list[GroupedChartSpecMetadata]
+    failures: list[dict[str, Any]]
+
+
+class MultiChartGenerationService:
+    def __init__(self, *, tool_service: Any, router: ChartStrategyRouter, settings: Any) -> None:
+        self.tool_service = tool_service
+        self.router = router
+        self.settings = settings
+
+    async def generate(
+        self,
+        *,
+        request: AgentRequest,
+        run_context: SDKRunContext,
+        plan: MultiChartPlan,
+        items: list[MultiChartItem],
+        append_event: Any,
+    ) -> MultiChartGenerationOutcome:
+        group_id = f"mcg-{plan.confirmation_id}"
+        specs: list[GroupedChartSpecMetadata] = []
+        failures: list[dict[str, Any]] = []
+        chart_count = len(items)
+
+        for index, item in enumerate(items):
+            try:
+                rows = await self._query_chart_rows(
+                    request=request,
+                    run_context=run_context,
+                    append_event=append_event,
+                    item=item,
+                    index=index,
+                )
+                spec = self.router.build_spec(
+                    metric=item.label,
+                    intent=plan.original_message,
+                    rows=rows,
+                    group_by=["segment"],
+                    chart_type=plan.chart_type or request.preferred_chart_type,
+                )
+                spec["title"] = item.title or item.label
+                spec.setdefault("meta", {})
+                if isinstance(spec["meta"], dict):
+                    spec["meta"].update(
+                        {
+                            "multi_chart_group_id": group_id,
+                            "chart_key": item.key,
+                            "chart_label": item.label,
+                            "filter_field": item.filter_field,
+                            "filter_value": item.filter_value,
+                            "generated_by": SDK_RUNTIME_BACKEND,
+                        }
+                    )
+                chart_id = f"chart-{uuid.uuid5(uuid.NAMESPACE_URL, f'{group_id}:{item.key}').hex}"
+                metadata = GroupedChartSpecMetadata(
+                    multi_chart_group_id=group_id,
+                    chart_id=chart_id,
+                    chart_index=index,
+                    chart_count=chart_count,
+                    chart_key=item.key,
+                    chart_label=item.label,
+                    spec=spec,
+                )
+                append_event(run_context, "spec", {
+                    "conversation_id": request.conversation_id,
+                    "request_id": request.request_id,
+                    "agent_session_id": run_context.session.agent_session_id,
+                    **metadata.to_payload(),
+                })
+                specs.append(metadata)
+            except Exception as exc:  # noqa: BLE001 - partial chart failure must not abort the group
+                logger.warning(
+                    "multi_chart_item_failed conversation_id=%s request_id=%s item=%s error=%s",
+                    request.conversation_id,
+                    request.request_id,
+                    item.key,
+                    exc,
+                )
+                failures.append(
+                    {
+                        "chart_key": item.key,
+                        "chart_label": item.label,
+                        "code": getattr(exc, "code", "CHART_GENERATION_FAILED"),
+                        "message": getattr(exc, "message", str(exc) or "Chart generation failed"),
+                    }
+                )
+
+        return MultiChartGenerationOutcome(specs=specs, failures=failures)
+
+    async def _query_chart_rows(
+        self,
+        *,
+        request: AgentRequest,
+        run_context: SDKRunContext,
+        append_event: Any,
+        item: MultiChartItem,
+        index: int,
+    ) -> list[dict[str, Any]]:
+        table = _quote_sql_identifier(request.dataset_table)
+        field = _quote_sql_identifier(item.filter_field)
+        literal = _sql_literal(item.filter_value)
+        sql = (
+            f"SELECT {field} AS segment, COUNT(*) AS metric_value "
+            f"FROM {table} "
+            f"WHERE {field} = {literal} "
+            f"GROUP BY {field} "
+            f"ORDER BY metric_value DESC"
+        )
+        response = await _invoke_guarded_bi_tool(
+            tool_service=self.tool_service,
+            request=request,
+            run_context=run_context,
+            append_event=append_event,
+            tool_name="execute_readonly_sql",
+            arguments={"sql": sql, "max_rows": 50},
+            idempotency_suffix=f"multi-chart-generate:{index}:{item.key}",
+        )
+        if response.status != "success" or not isinstance(response.result, dict):
+            detail = response.error or {"message": "Chart query failed"}
+            raise AgentRuntimeError(
+                code=str(detail.get("code") or "CHART_QUERY_FAILED"),
+                message=str(detail.get("message") or "Chart query failed"),
+                should_fallback=False,
+            )
+        rows = response.result.get("rows")
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+
 # ---------------------------------------------------------------------------
 # Agent runtime — Claude Agent SDK client and MCP tools
 # ---------------------------------------------------------------------------
@@ -559,6 +959,15 @@ class AgentRuntime:
         self.guardrails = AgentGuardrails()
         self.tool_service = get_tool_calling_service()
         self.router = ChartStrategyRouter()
+        self.multi_chart_planner = MultiChartPreflightPlanner(
+            tool_service=self.tool_service,
+            settings=settings,
+        )
+        self.multi_chart_generator = MultiChartGenerationService(
+            tool_service=self.tool_service,
+            router=self.router,
+            settings=settings,
+        )
         self.system_prompt = build_agent_system_prompt()
         self._store = AgentSessionStore(
             db_path=(settings.upload_dir / "state" / "agent_sessions.sqlite3").resolve()
@@ -642,10 +1051,35 @@ class AgentRuntime:
             tool_trace=tool_trace,
             event_queue=event_queue,
         )
+
+        if request.multi_chart_confirmation is not None:
+            return await self._handle_multi_chart_confirmation(
+                request=request,
+                session=session,
+                run_context=run_context,
+                started=started,
+                response_locale=response_locale,
+            )
+
         self._emit_planning_event(
             run_context,
             f"Analyzing request for dataset `{request.dataset_table}`.",
         )
+
+        plan = await self.multi_chart_planner.plan(
+            request=request,
+            run_context=run_context,
+            append_event=self._append_event,
+        )
+        if plan is not None:
+            return self._finalize_multi_chart_confirmation(
+                request=request,
+                session=session,
+                run_context=run_context,
+                plan=plan,
+                started=started,
+                response_locale=response_locale,
+            )
 
         logger.info(
             "agent_turn_start_debug conversation_id=%s request_id=%s agent_session_id=%s\n%s",
@@ -852,6 +1286,510 @@ class AgentRuntime:
 
     def get_persisted_session(self, conversation_id: str) -> AgentSessionState | None:
         return self._store.load(conversation_id)
+
+    async def _handle_multi_chart_confirmation(
+        self,
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        run_context: SDKRunContext,
+        started: float,
+        response_locale: str | None,
+    ) -> AgentTurnResult:
+        payload = request.multi_chart_confirmation or {}
+        action = str(payload.get("action") or "").strip().lower()
+        pending = (
+            MultiChartPlan.from_payload(session.pending_multi_chart_confirmation)
+            if isinstance(session.pending_multi_chart_confirmation, dict)
+            else None
+        )
+
+        if action not in {"confirm", "adjust", "cancel"}:
+            return self._finalize_multi_chart_error(
+                request=request,
+                session=session,
+                run_context=run_context,
+                started=started,
+                code="MULTI_CHART_CONFIRMATION_ACTION_INVALID",
+                message=_localized_text(
+                    response_locale,
+                    en="Unsupported multi-chart confirmation action.",
+                    zh="不支持的多图表确认操作。",
+                ),
+            )
+
+        if action == "cancel":
+            confirmation_id = str(payload.get("confirmation_id") or "").strip()
+            if pending is None:
+                return self._finalize_multi_chart_error(
+                    request=request,
+                    session=session,
+                    run_context=run_context,
+                    started=started,
+                    code="MULTI_CHART_CONFIRMATION_MISSING",
+                    message=_localized_text(
+                        response_locale,
+                        en="No pending multi-chart confirmation was found.",
+                        zh="未找到待确认的多图表请求。",
+                    ),
+                )
+            if confirmation_id != pending.confirmation_id:
+                return self._finalize_multi_chart_error(
+                    request=request,
+                    session=session,
+                    run_context=run_context,
+                    started=started,
+                    code="MULTI_CHART_CONFIRMATION_MISMATCH",
+                    message=_localized_text(
+                        response_locale,
+                        en="The multi-chart confirmation no longer matches the pending request.",
+                        zh="该多图表确认已不匹配当前待处理请求。",
+                    ),
+                )
+            if time.time() > pending.expires_at:
+                return self._finalize_multi_chart_error(
+                    request=request,
+                    session=session,
+                    run_context=run_context,
+                    started=started,
+                    code="MULTI_CHART_CONFIRMATION_EXPIRED",
+                    message=_localized_text(
+                        response_locale,
+                        en="The multi-chart confirmation expired. Please ask again.",
+                        zh="该多图表确认已过期，请重新发起请求。",
+                    ),
+                )
+            session.pending_multi_chart_confirmation = None
+            return self._finalize_multi_chart_cancel(
+                request=request,
+                session=session,
+                run_context=run_context,
+                started=started,
+                response_locale=response_locale,
+            )
+
+        validation_error, selected_items = self._validate_multi_chart_confirmation(
+            payload=payload,
+            pending=pending,
+            response_locale=response_locale,
+            request_message=request.message,
+        )
+        if validation_error is not None or pending is None:
+            return self._finalize_multi_chart_error(
+                request=request,
+                session=session,
+                run_context=run_context,
+                started=started,
+                code=(validation_error or {}).get("code", "MULTI_CHART_CONFIRMATION_INVALID"),
+                message=(validation_error or {}).get("message", "Invalid multi-chart confirmation."),
+            )
+
+        self._emit_planning_event(
+            run_context,
+            _localized_text(
+                response_locale,
+                en=f"Generating {len(selected_items)} confirmed charts.",
+                zh=f"正在生成 {len(selected_items)} 个已确认图表。",
+            ),
+        )
+        outcome = await self.multi_chart_generator.generate(
+            request=request,
+            run_context=run_context,
+            plan=pending,
+            items=selected_items,
+            append_event=self._append_event,
+        )
+        return self._finalize_multi_chart_generation(
+            request=request,
+            session=session,
+            run_context=run_context,
+            plan=pending,
+            outcome=outcome,
+            started=started,
+            response_locale=response_locale,
+        )
+
+    def _validate_multi_chart_confirmation(
+        self,
+        *,
+        payload: dict[str, Any],
+        pending: MultiChartPlan | None,
+        response_locale: str | None,
+        request_message: str,
+    ) -> tuple[dict[str, str] | None, list[MultiChartItem]]:
+        confirmation_id = str(payload.get("confirmation_id") or "").strip()
+        if pending is None:
+            return (
+                {
+                    "code": "MULTI_CHART_CONFIRMATION_MISSING",
+                    "message": _localized_text(
+                        response_locale,
+                        en="No pending multi-chart confirmation was found.",
+                        zh="未找到待确认的多图表请求。",
+                    ),
+                },
+                [],
+            )
+        if confirmation_id != pending.confirmation_id:
+            return (
+                {
+                    "code": "MULTI_CHART_CONFIRMATION_MISMATCH",
+                    "message": _localized_text(
+                        response_locale,
+                        en="The multi-chart confirmation no longer matches the pending request.",
+                        zh="该多图表确认已不匹配当前待处理请求。",
+                    ),
+                },
+                [],
+            )
+        if time.time() > pending.expires_at:
+            return (
+                {
+                    "code": "MULTI_CHART_CONFIRMATION_EXPIRED",
+                    "message": _localized_text(
+                        response_locale,
+                        en="The multi-chart confirmation expired. Please ask again.",
+                        zh="该多图表确认已过期，请重新发起请求。",
+                    ),
+                },
+                [],
+            )
+
+        by_key = {item.key: item for item in pending.items}
+        selected_payload = payload.get("selected_items")
+        selected_keys: list[str]
+        if isinstance(selected_payload, list) and selected_payload:
+            selected_keys = [
+                str(item.get("key") if isinstance(item, dict) else item).strip()
+                for item in selected_payload
+                if str(item.get("key") if isinstance(item, dict) else item).strip()
+            ]
+        else:
+            selected_keys = [item.key for item in pending.items]
+
+        selected: list[MultiChartItem] = []
+        unknown: list[str] = []
+        seen: set[str] = set()
+        for key in selected_keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            item = by_key.get(key)
+            if item is None:
+                unknown.append(key)
+            else:
+                selected.append(item)
+
+        if unknown:
+            return (
+                {
+                    "code": "MULTI_CHART_CONFIRMATION_ITEM_MISMATCH",
+                    "message": _localized_text(
+                        response_locale,
+                        en="The confirmed chart selection includes unknown items.",
+                        zh="确认的图表选择包含未知项。",
+                    ),
+                },
+                [],
+            )
+        if not selected:
+            return (
+                {
+                    "code": "MULTI_CHART_CONFIRMATION_EMPTY",
+                    "message": _localized_text(
+                        response_locale,
+                        en="Select at least one chart to generate.",
+                        zh="请至少选择一个要生成的图表。",
+                    ),
+                },
+                [],
+            )
+        if len(selected) > pending.max_chart_count:
+            return (
+                {
+                    "code": "MULTI_CHART_LIMIT_EXCEEDED",
+                    "message": _localized_text(
+                        response_locale,
+                        en=f"Select at most {pending.max_chart_count} charts before generating.",
+                        zh=f"生成前最多选择 {pending.max_chart_count} 个图表。",
+                    ),
+                },
+                [],
+            )
+        _ = request_message
+        return None, selected
+
+    def _finalize_multi_chart_confirmation(
+        self,
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        run_context: SDKRunContext,
+        plan: MultiChartPlan,
+        started: float,
+        response_locale: str | None,
+    ) -> AgentTurnResult:
+        session.pending_multi_chart_confirmation = plan.to_payload()
+        payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "confirmation_type": "multi_chart_generation",
+            "confirmation_id": plan.confirmation_id,
+            "grouping_dimension": plan.grouping_dimension,
+            "proposed_count": len(plan.items),
+            "max_chart_count": plan.max_chart_count,
+            "expires_at": plan.expires_at,
+            "reason": plan.reason,
+            "truncated": plan.truncated,
+            "items": [
+                {
+                    "key": item.key,
+                    "label": item.label,
+                    "selected": len(plan.items) <= plan.max_chart_count,
+                }
+                for item in plan.items
+            ],
+        }
+        self._append_event(run_context, "confirmation_required", payload)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        final_text = _localized_text(
+            response_locale,
+            en=f"Please confirm before I generate {len(plan.items)} charts.",
+            zh=f"生成 {len(plan.items)} 个图表前，请先确认。",
+        )
+        final_payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "status": "awaiting_confirmation",
+            "text": final_text,
+            "duration_ms": duration_ms,
+            "tool_steps": len([item for item in run_context.tool_trace if item.get("event") == "tool_use"]),
+            "confirmation_id": plan.confirmation_id,
+            "confirmation_type": "multi_chart_generation",
+        }
+        self._append_event(run_context, "final", final_payload)
+        session.turn_count += 1
+        session.history.append({"role": "user", "content": request.message})
+        session.history.append({"role": "assistant", "content": final_text})
+        session.last_result = payload
+        session.last_tool_trace = run_context.tool_trace
+        self._store.save(session)
+        with self._lock:
+            self._hot_sessions[request.conversation_id] = session
+        return AgentTurnResult(
+            conversation_id=request.conversation_id,
+            request_id=request.request_id,
+            agent_session_id=session.agent_session_id,
+            events=run_context.events,
+            tool_trace=run_context.tool_trace,
+            final_text=final_text,
+            final_status="awaiting_confirmation",
+            spec=session.last_spec or self._empty_spec(request=request),
+            ai_state={
+                "conversation_id": request.conversation_id,
+                "agent_session_id": session.agent_session_id,
+                "tool_trace": run_context.tool_trace,
+                "latest_result": payload,
+                "latest_spec": session.last_spec,
+                "latest_specs": session.last_specs,
+                "turn_count": session.turn_count,
+                "runtime_backend": session.runtime_backend,
+            },
+            specs=session.last_specs,
+        )
+
+    def _finalize_multi_chart_cancel(
+        self,
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        run_context: SDKRunContext,
+        started: float,
+        response_locale: str | None,
+    ) -> AgentTurnResult:
+        self._emit_planning_event(
+            run_context,
+            _localized_text(response_locale, en="Canceled multi-chart generation.", zh="已取消多图表生成。"),
+        )
+        final_text = _localized_text(
+            response_locale,
+            en="Multi-chart generation was canceled.",
+            zh="已取消多图表生成。",
+        )
+        final_payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "status": "canceled",
+            "text": final_text,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "tool_steps": 0,
+        }
+        self._append_event(run_context, "final", final_payload)
+        session.turn_count += 1
+        session.history.append({"role": "user", "content": request.message})
+        session.history.append({"role": "assistant", "content": final_text})
+        session.last_result = final_payload
+        session.last_tool_trace = run_context.tool_trace
+        self._store.save(session)
+        with self._lock:
+            self._hot_sessions[request.conversation_id] = session
+        return AgentTurnResult(
+            conversation_id=request.conversation_id,
+            request_id=request.request_id,
+            agent_session_id=session.agent_session_id,
+            events=run_context.events,
+            tool_trace=run_context.tool_trace,
+            final_text=final_text,
+            final_status="canceled",
+            spec=session.last_spec or self._empty_spec(request=request),
+            ai_state={"latest_result": final_payload, "latest_spec": session.last_spec},
+            specs=session.last_specs,
+        )
+
+    def _finalize_multi_chart_error(
+        self,
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        run_context: SDKRunContext,
+        started: float,
+        code: str,
+        message: str,
+    ) -> AgentTurnResult:
+        if code in {"MULTI_CHART_CONFIRMATION_EXPIRED", "MULTI_CHART_CONFIRMATION_MISMATCH"}:
+            session.pending_multi_chart_confirmation = None
+        error_payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "status": "failed",
+            "code": code,
+            "message": message,
+        }
+        self._append_event(run_context, "error", error_payload)
+        final_payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "status": "failed",
+            "text": message,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "tool_steps": 0,
+        }
+        self._append_event(run_context, "final", final_payload)
+        session.turn_count += 1
+        session.history.append({"role": "user", "content": request.message})
+        session.history.append({"role": "assistant", "content": message})
+        session.last_result = final_payload
+        session.last_tool_trace = run_context.tool_trace
+        self._store.save(session)
+        with self._lock:
+            self._hot_sessions[request.conversation_id] = session
+        return AgentTurnResult(
+            conversation_id=request.conversation_id,
+            request_id=request.request_id,
+            agent_session_id=session.agent_session_id,
+            events=run_context.events,
+            tool_trace=run_context.tool_trace,
+            final_text=message,
+            final_status="failed",
+            spec=session.last_spec or self._empty_spec(request=request),
+            ai_state={"latest_result": final_payload, "latest_spec": session.last_spec},
+            specs=session.last_specs,
+        )
+
+    def _finalize_multi_chart_generation(
+        self,
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        run_context: SDKRunContext,
+        plan: MultiChartPlan,
+        outcome: MultiChartGenerationOutcome,
+        started: float,
+        response_locale: str | None,
+    ) -> AgentTurnResult:
+        successful_payloads = [item.to_payload() for item in outcome.specs]
+        status = "completed" if not outcome.failures else ("partial" if successful_payloads else "failed")
+        labels = [item.chart_label for item in outcome.specs]
+        failed_labels = [str(item.get("chart_label") or item.get("chart_key")) for item in outcome.failures]
+        if status == "completed":
+            final_text = _localized_text(
+                response_locale,
+                en=f"Generated {len(successful_payloads)} charts: {', '.join(labels)}.",
+                zh=f"已生成 {len(successful_payloads)} 个图表：{', '.join(labels)}。",
+            )
+        elif status == "partial":
+            final_text = _localized_text(
+                response_locale,
+                en=f"Generated {len(successful_payloads)} charts; failed: {', '.join(failed_labels)}.",
+                zh=f"已生成 {len(successful_payloads)} 个图表；失败：{', '.join(failed_labels)}。",
+            )
+        else:
+            final_text = _localized_text(
+                response_locale,
+                en="No charts could be generated from the confirmed selection.",
+                zh="无法根据已确认的选择生成图表。",
+            )
+
+        final_payload = {
+            "conversation_id": request.conversation_id,
+            "request_id": request.request_id,
+            "agent_session_id": session.agent_session_id,
+            "status": status,
+            "text": final_text,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "tool_steps": len([item for item in run_context.tool_trace if item.get("event") == "tool_use"]),
+            "multi_chart_group_id": f"mcg-{plan.confirmation_id}",
+            "charts": [
+                {
+                    "chart_id": item.chart_id,
+                    "title": item.spec.get("title") or item.chart_label,
+                    "chart_key": item.chart_key,
+                    "chart_label": item.chart_label,
+                }
+                for item in outcome.specs
+            ],
+            "failed_charts": outcome.failures,
+        }
+        self._append_event(run_context, "final", final_payload)
+
+        primary_spec = successful_payloads[0]["spec"] if successful_payloads else self._empty_spec(request=request)
+        session.turn_count += 1
+        session.history.append({"role": "user", "content": request.message or plan.original_message})
+        session.history.append({"role": "assistant", "content": final_text})
+        session.pending_multi_chart_confirmation = None
+        session.last_result = final_payload
+        session.last_spec = primary_spec
+        session.last_specs = successful_payloads
+        session.last_tool_trace = run_context.tool_trace
+        self._store.save(session)
+        with self._lock:
+            self._hot_sessions[request.conversation_id] = session
+        return AgentTurnResult(
+            conversation_id=request.conversation_id,
+            request_id=request.request_id,
+            agent_session_id=session.agent_session_id,
+            events=run_context.events,
+            tool_trace=run_context.tool_trace,
+            final_text=final_text,
+            final_status=status,
+            spec=primary_spec,
+            ai_state={
+                "conversation_id": request.conversation_id,
+                "agent_session_id": session.agent_session_id,
+                "tool_trace": run_context.tool_trace,
+                "latest_result": final_payload,
+                "latest_spec": primary_spec,
+                "latest_specs": successful_payloads,
+                "turn_count": session.turn_count,
+                "runtime_backend": session.runtime_backend,
+            },
+            specs=successful_payloads,
+        )
 
     def _build_sdk_options(
         self,
@@ -1803,6 +2741,8 @@ class AgentRuntime:
         session.history.append({"role": "assistant", "content": final_text})
         session.last_result = result_payload
         session.last_spec = spec
+        session.last_specs = [spec]
+        session.pending_multi_chart_confirmation = None
         session.last_tool_trace = tool_trace
         self._store.save(session)
         with self._lock:
@@ -1814,6 +2754,7 @@ class AgentRuntime:
             "tool_trace": tool_trace,
             "latest_result": result_payload,
             "latest_spec": spec,
+            "latest_specs": [spec],
             "turn_count": session.turn_count,
             "runtime_backend": session.runtime_backend,
         }
@@ -1848,7 +2789,99 @@ class AgentRuntime:
             final_status="completed",
             spec=spec,
             ai_state=ai_state,
+            specs=[spec],
         )
+
+
+async def _invoke_guarded_bi_tool(
+    *,
+    tool_service: Any,
+    request: AgentRequest,
+    run_context: SDKRunContext,
+    append_event: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    idempotency_suffix: str,
+) -> ToolCallResponse:
+    step = run_context.next_tool_step
+    run_context.next_tool_step += 1
+    step_id = str(uuid.uuid4())
+    started_at = time.time()
+    tool_use_payload = {
+        "conversation_id": request.conversation_id,
+        "request_id": request.request_id,
+        "agent_session_id": run_context.session.agent_session_id,
+        "tool_name": tool_name,
+        "step": step,
+        "arguments": arguments,
+        "step_id": step_id,
+        "started_at": started_at,
+    }
+    append_event(run_context, "tool_use", tool_use_payload)
+    run_context.tool_trace.append({"event": "tool_use", **tool_use_payload})
+
+    def invoke() -> ToolCallResponse:
+        return tool_service.invoke(
+            ToolCallRequest(
+                conversation_id=request.conversation_id,
+                request_id=request.request_id,
+                idempotency_key=f"{request.request_id}:{idempotency_suffix}",
+                user_id=request.user_id,
+                project_id=request.project_id,
+                workspace_id=request.workspace_id,
+                dataset_table=request.dataset_table,
+                role=request.role,
+                department=request.department,
+                clearance=request.clearance,
+                emit_debug_blocks=False,
+                tool=ToolCall(name=tool_name, arguments=arguments),
+            )
+        )
+
+    response = await anyio.to_thread.run_sync(invoke)
+    completed_at = time.time()
+    result_data = response.result if response.status == "success" else {"error": response.error}
+    tool_result_payload = {
+        "conversation_id": request.conversation_id,
+        "request_id": request.request_id,
+        "agent_session_id": run_context.session.agent_session_id,
+        "tool_name": tool_name,
+        "step": step,
+        "status": response.status,
+        "result": result_data,
+        "error": response.error,
+        "from_cache": response.from_cache,
+        "step_id": step_id,
+        "started_at": started_at,
+        "completed_at": completed_at,
+    }
+    append_event(run_context, "tool_result", tool_result_payload)
+    run_context.tool_trace.append({"event": "tool_result", **tool_result_payload})
+    return response
+
+
+def _slugify_chart_key(value: str, *, fallback: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
+    return normalized[:64] or fallback
+
+
+def _quote_sql_identifier(identifier: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", identifier):
+        raise AgentRuntimeError(
+            code="UNSAFE_IDENTIFIER",
+            message="Multi-chart generation received an unsafe SQL identifier.",
+            should_fallback=False,
+        )
+    return f'"{identifier}"'
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return str(value)
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
 
 
 # ---------------------------------------------------------------------------

@@ -782,7 +782,7 @@ class MultiChartPreflightPlanner:
                 label=str(row.get("value")),
                 filter_field=dimension,
                 filter_value=row.get("value"),
-                title=f"{str(row.get('value'))} - {request.message.strip()[:80]}",
+                title=None,
             )
             for index, row in enumerate(rows)
         ]

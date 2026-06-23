@@ -420,7 +420,41 @@ Default Compose exposure:
 - Web: `127.0.0.1:3000`
 - API: `127.0.0.1:8000`
 
-Uploads and state data are stored in the Docker named volume `cognitrix_upload_data`.
+### Persistent Storage Container
+
+The Compose stack runs a dedicated `storage` service (`cognitrix-storage`) that
+owns the persistent runtime data and keeps its lifecycle separate from the
+compute containers:
+
+- It mounts the named volume `cognitrix_upload_data` (rendered by Docker as
+  `cognitrix_cognitrix_upload_data`) at `/storage/uploads`.
+- On startup it creates the required runtime directories (`state`, `audit`,
+  `agent_skills`) **without deleting existing files**, writes a readiness
+  marker, and stays alive as the storage owner.
+- Its healthcheck verifies the volume and `state/` are writable; the `api`
+  service has `depends_on: storage (condition: service_healthy)`, so the API
+  starts only after storage is initialized.
+- Only the API writes application data. The API still consumes the same volume
+  at `/app/data/uploads` (`UPLOAD_DIR`), and the default SQLite `DATABASE_URL`
+  resolves under that tree (`/app/data/uploads/state/ai_views.sqlite3`).
+
+Retained under the storage volume: uploaded source files, per-user/project
+DuckDB databases, SQLite state under `state/`, audit logs, agent session state,
+saved views, and catalog metadata.
+
+**Restarts preserve data.** `make docker-restart`, `make docker-up`,
+`make docker-start`, `make docker-down`, and image rebuilds never pass
+`--volumes` and never delete the storage volume. A restart is a compute
+lifecycle event only.
+
+To verify persistence end-to-end against a Docker host, run:
+
+```bash
+bash scripts/tests/docker_persistence.sh
+```
+
+It writes a sentinel and a `state/` marker into the volume, runs the normal
+restart workflow, and asserts both survive and `state/` is still writable.
 
 ---
 
@@ -460,6 +494,15 @@ Also remove Docker Compose named volumes:
 ```bash
 .venv/bin/python scripts/maintenance/reset_local_data.py --include-docker-volumes
 ```
+
+> **Destructive reset is explicit and separate from restart.** This
+> `--include-docker-volumes` path is the **only** workflow that deletes the
+> persistent `cognitrix_upload_data` Docker volume (it runs
+> `docker compose down --remove-orphans --volumes`). It prompts for
+> confirmation unless `--yes` is supplied. The restart/start/stop scripts
+> (`make docker-restart`, `make docker-up`, `make docker-start`,
+> `make docker-down`) never delete this volume — use this reset command only
+> when you intentionally want to erase persisted Docker data.
 
 ---
 

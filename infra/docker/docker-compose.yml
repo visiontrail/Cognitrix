@@ -1,12 +1,43 @@
 name: cognitrix
 
 services:
+  # Persistent-storage owner. This service initializes and reports health for
+  # the Cognitrix runtime data volume; only the API writes application data.
+  # The volume is shared (not copied) so DuckDB/SQLite keep native file locks.
+  storage:
+    image: alpine:3.20
+    container_name: cognitrix-storage
+    restart: unless-stopped
+    volumes:
+      - cognitrix_upload_data:/storage/uploads
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        # Create required runtime directories without touching existing data.
+        mkdir -p /storage/uploads/state /storage/uploads/audit /storage/uploads/agent_skills
+        printf 'ready\n' > /storage/uploads/state/.storage_ready
+        echo "[storage] persistent storage initialized at /storage/uploads"
+        # Stay alive as the storage lifecycle owner.
+        exec tail -f /dev/null
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -d /storage/uploads && test -w /storage/uploads/state && touch /storage/uploads/state/.storage_health && rm -f /storage/uploads/state/.storage_health
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: ../..
       dockerfile: apps/api/Dockerfile
     container_name: cognitrix-api
     restart: unless-stopped
+    depends_on:
+      storage:
+        condition: service_healthy
     environment:
       APP_NAME: Cognitrix API
       APP_ENV: production
@@ -60,4 +91,7 @@ services:
       retries: 10
 
 volumes:
+  # Preserved volume identity. With Compose project name `cognitrix` and this
+  # key, Docker generates the volume `cognitrix_cognitrix_upload_data`, which is
+  # the existing volume. Do not rename the key; renaming would orphan user data.
   cognitrix_upload_data:

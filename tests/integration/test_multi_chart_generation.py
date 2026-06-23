@@ -49,6 +49,25 @@ def _seed_gender_dataset(client: TestClient) -> str:
     )
 
 
+def _seed_division_gender_dataset(client: TestClient) -> str:
+    return upload_dataset(
+        client,
+        rows=[
+            {"employee_id": "E-001", "department": "NTN中心", "division": "平台组", "gender": "男", "status": "active"},
+            {"employee_id": "E-002", "department": "NTN中心", "division": "平台组", "gender": "女", "status": "active"},
+            {"employee_id": "E-003", "department": "NTN中心", "division": "测试组", "gender": "男", "status": "active"},
+            {"employee_id": "E-004", "department": "NTN中心", "division": "测试组", "gender": "男", "status": "active"},
+            {"employee_id": "E-005", "department": "NTN中心", "division": "传输与接入组", "gender": "男", "status": "active"},
+            {"employee_id": "E-006", "department": "NTN中心", "division": "传输与接入组", "gender": "女", "status": "active"},
+        ],
+        user_id="admin",
+        project_id="north",
+        role="admin",
+        department="HR",
+        clearance=9,
+    )
+
+
 def _headers(client: TestClient) -> dict[str, str]:
     return auth_headers(
         client,
@@ -207,6 +226,91 @@ def test_chinese_requested_pie_charts_use_gender_breakdown(monkeypatch, tmp_path
         {"segment": "女", "metric_value": 1},
         {"segment": "男", "metric_value": 1},
     ]
+
+
+def test_third_level_department_pie_request_uses_division_multi_chart_flow(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = _seed_division_gender_dataset(client)
+        headers = _headers(client)
+        conversation_id = "multi-chart-third-level-department"
+        message = (
+            "请你按照 @third_level_department 输出多张 #pie 图表来分别统计 @gender 分布\n\n"
+            "[Chart type selection]\n"
+            "chart_type: pie\n"
+            "Use this exact chart_type in the final JSON answer unless the query returns no rows."
+        )
+        confirmation_events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    conversation_id,
+                    f"{conversation_id}-request-plan",
+                    dataset_table,
+                    message,
+                ),
+                "preferred_chart_type": "pie",
+            },
+            headers=headers,
+        )
+        confirmation = next(event["data"] for event in confirmation_events if event["event"] == "confirmation_required")
+        generation_events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    conversation_id,
+                    f"{conversation_id}-request-generate",
+                    dataset_table,
+                    "Generate selected charts",
+                ),
+                "preferred_chart_type": "pie",
+                "multi_chart_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "confirm",
+                },
+            },
+            headers=headers,
+        )
+
+    assert confirmation["grouping_dimension"] == "division"
+    assert confirmation["breakdown_dimension"] == "gender"
+    assert confirmation["proposed_count"] == 3
+    assert [item["label"] for item in confirmation["items"]] == ["传输与接入组", "平台组", "测试组"]
+
+    spec_payloads = [event["data"] for event in generation_events if event["event"] == "spec"]
+    assert len(spec_payloads) == 3
+    assert all(payload["spec"]["chart_type"] == "pie" for payload in spec_payloads)
+    assert all(payload["spec"]["config"]["xKey"] == "segment" for payload in spec_payloads)
+    assert all(payload["spec"]["config"]["yKey"] == "metric_value" for payload in spec_payloads)
+    assert generation_events[-1]["event"] == "final"
+    assert len(generation_events[-1]["data"]["charts"]) == 3
+
+
+def test_chinese_third_level_department_phrase_keeps_gender_breakdown(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = _seed_division_gender_dataset(client)
+        headers = _headers(client)
+        conversation_id = "multi-chart-third-level-department-phrase"
+        confirmation_events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    conversation_id,
+                    f"{conversation_id}-request-plan",
+                    dataset_table,
+                    "请按三级部门输出多张 #pie 图表，分别统计性别分布",
+                ),
+                "preferred_chart_type": "pie",
+            },
+            headers=headers,
+        )
+        confirmation = next(event["data"] for event in confirmation_events if event["event"] == "confirmation_required")
+
+    assert confirmation["grouping_dimension"] == "division"
+    assert confirmation["breakdown_dimension"] == "gender"
 
 
 def test_multi_chart_limit_mismatch_expiry_and_cancel_validation(monkeypatch, tmp_path: Path) -> None:

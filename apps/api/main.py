@@ -163,12 +163,34 @@ class RollbackViewRequest(BaseModel):
     clearance: int = 0
 
 
+class HealthzAccessLogFilter(logging.Filter):
+    """Suppress successful health check access logs while preserving real traffic logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+
+        method = str(args[1])
+        path = str(args[2]).split("?", 1)[0]
+        status_code = str(args[4])
+        return not (method == "GET" and path == "/healthz" and status_code == "200")
+
+
+def _ensure_healthz_access_log_filter(access_logger: logging.Logger) -> None:
+    if any(isinstance(item, HealthzAccessLogFilter) for item in access_logger.filters):
+        return
+    access_logger.addFilter(HealthzAccessLogFilter())
+
+
 def configure_application_logging(level_name: str) -> None:
     level = getattr(logging, level_name.upper(), logging.INFO)
     app_logger = logging.getLogger("cognitrix")
     uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
 
     app_logger.setLevel(level)
+    _ensure_healthz_access_log_filter(uvicorn_access_logger)
     if uvicorn_error_logger.handlers:
         app_logger.handlers = uvicorn_error_logger.handlers
         app_logger.propagate = False

@@ -672,6 +672,32 @@ class AgentSessionStore:
 
 class MultiChartPreflightPlanner:
     DIMENSION_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "division",
+            (
+                "third_level_department",
+                "third level department",
+                "third-level department",
+                "division",
+                "三级部门",
+                "三级组织",
+                "三级团队",
+            ),
+        ),
+        (
+            "sub_department",
+            (
+                "second_level_department",
+                "second level department",
+                "second-level department",
+                "sub_department",
+                "sub department",
+                "sub-department",
+                "二级部门",
+                "二级组织",
+                "二级团队",
+            ),
+        ),
         ("department", ("department", "departments", "dept", "部门", "组织", "团队")),
         ("region", ("region", "regions", "区域", "地区")),
         ("job_family", ("job family", "job families", "job_family", "岗位族", "职族")),
@@ -688,7 +714,11 @@ class MultiChartPreflightPlanner:
         "separate",
         "separately",
         "all ",
+        "multiple ",
         "多个",
+        "多张",
+        "多幅",
+        "若干张",
         "分别",
         "每个",
         "各个",
@@ -793,19 +823,22 @@ class MultiChartPreflightPlanner:
 
     @classmethod
     def _infer_dimension(cls, message: str) -> str | None:
-        lowered = message.lower()
         for column, aliases in cls.DIMENSION_ALIASES:
-            if any(alias.lower() in lowered for alias in aliases):
+            if any(cls._mentions_alias(message, alias) for alias in aliases):
                 return column
         return None
 
     @classmethod
     def _infer_breakdown_dimension(cls, message: str, *, grouping_dimension: str) -> str | None:
-        lowered = message.lower()
+        grouping_aliases = next(
+            (aliases for column, aliases in cls.DIMENSION_ALIASES if column == grouping_dimension),
+            (),
+        )
+        message_without_grouping = cls._remove_alias_mentions(message, grouping_aliases)
         for column, aliases in cls.DIMENSION_ALIASES:
             if column == grouping_dimension:
                 continue
-            if any(alias.lower() in lowered for alias in aliases):
+            if any(cls._mentions_alias(message_without_grouping, alias) for alias in aliases):
                 return column
         return None
 
@@ -815,6 +848,46 @@ class MultiChartPreflightPlanner:
         if any(cue in lowered for cue in cls.MULTI_CUES):
             return True
         return re.search(r"\b(generate|create|make|build|show)\b.{0,32}\b(charts|graphs|visualizations)\b", lowered) is not None
+
+    @staticmethod
+    def _mentions_alias(message: str, alias: str) -> bool:
+        lowered = message.lower()
+        normalized_alias = alias.lower().strip()
+        if not normalized_alias:
+            return False
+
+        mentioned_fields = re.findall(r"@([\w\u4e00-\u9fff-]+)", lowered)
+        normalized_target = re.sub(r"[\s-]+", "_", normalized_alias)
+        if any(re.sub(r"[\s-]+", "_", field) == normalized_target for field in mentioned_fields):
+            return True
+
+        if any("\u4e00" <= char <= "\u9fff" for char in normalized_alias):
+            return normalized_alias in lowered
+
+        if " " in normalized_alias:
+            pattern = r"(?<![a-z0-9_])" + r"[\s_-]+".join(
+                re.escape(part) for part in normalized_alias.split()
+            ) + r"(?![a-z0-9_])"
+            return re.search(pattern, lowered) is not None
+
+        return re.search(rf"(?<![a-z0-9_]){re.escape(normalized_alias)}(?![a-z0-9_])", lowered) is not None
+
+    @classmethod
+    def _remove_alias_mentions(cls, message: str, aliases: tuple[str, ...]) -> str:
+        stripped = message.lower()
+        for alias in sorted((item.lower().strip() for item in aliases if item.strip()), key=len, reverse=True):
+            stripped = re.sub(rf"@{re.escape(re.sub(r'[\s-]+', '_', alias))}", " ", stripped)
+            if any("\u4e00" <= char <= "\u9fff" for char in alias):
+                stripped = stripped.replace(alias, " ")
+                continue
+            if " " in alias:
+                pattern = r"(?<![a-z0-9_])" + r"[\s_-]+".join(
+                    re.escape(part) for part in alias.split()
+                ) + r"(?![a-z0-9_])"
+            else:
+                pattern = rf"(?<![a-z0-9_]){re.escape(alias)}(?![a-z0-9_])"
+            stripped = re.sub(pattern, " ", stripped)
+        return stripped
 
     @staticmethod
     def _infer_requested_count(message: str) -> int | None:

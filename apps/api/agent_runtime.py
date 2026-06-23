@@ -876,7 +876,8 @@ class MultiChartPreflightPlanner:
     def _remove_alias_mentions(cls, message: str, aliases: tuple[str, ...]) -> str:
         stripped = message.lower()
         for alias in sorted((item.lower().strip() for item in aliases if item.strip()), key=len, reverse=True):
-            stripped = re.sub(rf"@{re.escape(re.sub(r'[\s-]+', '_', alias))}", " ", stripped)
+            mention_alias = re.sub(r"[\s-]+", "_", alias)
+            stripped = re.sub(rf"@{re.escape(mention_alias)}", " ", stripped)
             if any("\u4e00" <= char <= "\u9fff" for char in alias):
                 stripped = stripped.replace(alias, " ")
                 continue

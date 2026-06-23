@@ -165,6 +165,7 @@ function TableView({
   height: number;
   className?: string;
 }) {
+  const { t } = useI18n();
   const opt = spec.echartsOption;
   const columns = Array.isArray(opt.__columns__)
     ? (opt.__columns__ as string[])
@@ -179,7 +180,7 @@ function TableView({
         className="flex items-center justify-center text-stone-gray text-body-sm"
         style={{ height }}
       >
-        暂无数据
+        {t("chart.noData")}
       </div>
     );
   }

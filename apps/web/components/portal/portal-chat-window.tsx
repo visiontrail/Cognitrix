@@ -223,7 +223,7 @@ export function PortalChatWindow({
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#996b35]/15">
             <Sparkles className="h-3.5 w-3.5 text-[#996b35]" />
           </div>
-          <span className="text-sm font-semibold text-[#2f332f]">AI Assistant</span>
+          <span className="text-sm font-semibold text-[#2f332f]">{t("portal.aiAssistant")}</span>
         </div>
 
         {/* New chat button */}

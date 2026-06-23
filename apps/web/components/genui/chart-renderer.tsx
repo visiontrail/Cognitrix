@@ -3,6 +3,7 @@
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/charts/kpi-options";
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
+import { useI18n } from "@/lib/i18n/context";
 import { isRecord } from "@/lib/utils";
 import type { ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 
@@ -15,11 +16,12 @@ type LegacyGenUISpec = {
 };
 
 export function ChartRenderer({ spec }: { spec: LegacyGenUISpec }) {
+  const { t } = useI18n();
   const mapped = mapLegacySpec(spec);
   if (!mapped) {
     return (
       <div className="p-4 text-center text-stone-gray">
-        <p>Unsupported chart spec format</p>
+        <p>{t("genui.unsupportedChartSpec")}</p>
       </div>
     );
   }

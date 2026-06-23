@@ -27,7 +27,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       const invite = await onGenerate(role);
       setNewInvite(invite);
     } catch {
-      toast.error("生成邀请链接失败");
+      toast.error(t("collab.generateLinkFailed"));
     } finally {
       setGenerating(false);
     }
@@ -39,7 +39,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       await onRevoke(inviteId);
       if (newInvite?.id === inviteId) setNewInvite(null);
     } catch {
-      toast.error("撤销失败");
+      toast.error(t("collab.revokeLinkFailed"));
     } finally {
       setRevoking(null);
     }
@@ -50,7 +50,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       await navigator.clipboard.writeText(url);
       toast.success(t("collab.linkCopied"));
     } catch {
-      toast.error("复制失败");
+      toast.error(t("collab.copyLinkFailed"));
     }
   }
 
@@ -70,7 +70,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
           <option value="viewer">{t("collab.roleViewer")}</option>
         </select>
         <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generating}>
-          {generating ? "生成中..." : t("collab.generateLink")}
+          {generating ? t("collab.generatingLink") : t("collab.generateLink")}
         </Button>
       </div>
 

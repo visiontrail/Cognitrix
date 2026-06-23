@@ -30,6 +30,25 @@ def _seed_dataset(client: TestClient) -> str:
     )
 
 
+def _seed_gender_dataset(client: TestClient) -> str:
+    return upload_dataset(
+        client,
+        rows=[
+            {"employee_id": "E-001", "department": "HR", "gender": "女", "status": "active"},
+            {"employee_id": "E-002", "department": "HR", "gender": "男", "status": "active"},
+            {"employee_id": "E-003", "department": "PM", "gender": "女", "status": "active"},
+            {"employee_id": "E-004", "department": "PM", "gender": "女", "status": "active"},
+            {"employee_id": "E-005", "department": "ENG", "gender": "男", "status": "active"},
+            {"employee_id": "E-006", "department": "ENG", "gender": "男", "status": "active"},
+        ],
+        user_id="admin",
+        project_id="north",
+        role="admin",
+        department="HR",
+        clearance=9,
+    )
+
+
 def _headers(client: TestClient) -> dict[str, str]:
     return auth_headers(
         client,
@@ -131,6 +150,63 @@ def test_confirmed_multi_chart_generation_streams_grouped_specs(monkeypatch, tmp
     assert events[-1]["event"] == "final"
     assert events[-1]["data"]["status"] == "completed"
     assert len(events[-1]["data"]["charts"]) == 2
+
+
+def test_chinese_requested_pie_charts_use_gender_breakdown(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = _seed_gender_dataset(client)
+        headers = _headers(client)
+        conversation_id = "multi-chart-chinese-gender-pie"
+        confirmation_events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    conversation_id,
+                    f"{conversation_id}-request-plan",
+                    dataset_table,
+                    "请你输出三张 #pie 来统计各个部门的性别分布",
+                ),
+                "preferred_chart_type": "pie",
+            },
+            headers=headers,
+        )
+        confirmation = next(event["data"] for event in confirmation_events if event["event"] == "confirmation_required")
+        selected = next(item for item in confirmation["items"] if item["label"] == "HR")
+        generation_events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    conversation_id,
+                    f"{conversation_id}-request-generate",
+                    dataset_table,
+                    "Generate selected charts",
+                ),
+                "preferred_chart_type": "pie",
+                "multi_chart_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "adjust",
+                    "selected_items": [{"key": selected["key"], "label": selected["label"]}],
+                },
+            },
+            headers=headers,
+        )
+
+    assert confirmation["grouping_dimension"] == "department"
+    assert confirmation["breakdown_dimension"] == "gender"
+    assert confirmation["proposed_count"] == 3
+
+    spec_payload = next(event["data"] for event in generation_events if event["event"] == "spec")
+    assert spec_payload["chart_label"] == "HR"
+    assert spec_payload["spec"]["chart_type"] == "pie"
+    assert spec_payload["spec"]["engine"] == "recharts"
+    assert spec_payload["spec"]["config"]["xKey"] == "segment"
+    assert spec_payload["spec"]["config"]["yKey"] == "metric_value"
+    assert sorted(spec_payload["spec"]["data"], key=lambda row: row["segment"]) == [
+        {"segment": "女", "metric_value": 1},
+        {"segment": "男", "metric_value": 1},
+    ]
 
 
 def test_multi_chart_limit_mismatch_expiry_and_cancel_validation(monkeypatch, tmp_path: Path) -> None:
@@ -382,6 +458,66 @@ def test_multi_chart_planner_distinct_values_respect_rls(monkeypatch, tmp_path: 
         if event.get("event") == "tool_result" and event.get("tool_name") == "get_distinct_values"
     )
     assert [row["value"] for row in distinct_result["values"]] == ["HR"]
+
+
+def test_explicit_chinese_multi_chart_count_does_not_fall_back_when_only_one_value_visible(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"employee_id": "E-001", "department": "HR", "gender": "女", "status": "active"},
+                {"employee_id": "E-002", "department": "PM", "gender": "男", "status": "active"},
+                {"employee_id": "E-003", "department": "ENG", "gender": "男", "status": "active"},
+            ],
+            user_id="viewer",
+            project_id="north",
+            role="viewer",
+            department="HR",
+            clearance=1,
+        )
+
+    runtime = get_agent_runtime()
+    session = AgentSessionState(
+        conversation_id="rls-explicit-count",
+        agent_session_id=str(uuid.uuid4()),
+        runtime_backend=SDK_RUNTIME_BACKEND,
+    )
+    request = AgentRequest(
+        conversation_id="rls-explicit-count",
+        request_id="rls-explicit-count-request",
+        user_id="viewer",
+        project_id="north",
+        dataset_table=dataset_table,
+        message="请你输出三张 #pie 来统计各个部门的性别分布",
+        preferred_chart_type="pie",
+        role="viewer",
+        department="HR",
+        clearance=1,
+    )
+    run_context = SDKRunContext(
+        request=request,
+        session=session,
+        events=[],
+        tool_trace=[],
+    )
+
+    async def run_plan():
+        return await runtime.multi_chart_planner.plan(
+            request=request,
+            run_context=run_context,
+            append_event=runtime._append_event,  # noqa: SLF001
+        )
+
+    result = anyio.run(run_plan)
+
+    assert result is not None
+    assert result.grouping_dimension == "department"
+    assert result.breakdown_dimension == "gender"
+    assert result.chart_type == "pie"
+    assert [item.label for item in result.items] == ["HR"]
+    assert result.truncated is True
 
 
 def test_multi_chart_sensitive_column_prompt_is_blocked_before_confirmation(monkeypatch, tmp_path: Path) -> None:

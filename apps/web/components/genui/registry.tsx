@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartRenderer } from "./chart-renderer";
+import { useI18n } from "@/lib/i18n/context";
 
 type GenUIRegistryProps = {
   rawSpec: unknown;
@@ -8,6 +9,8 @@ type GenUIRegistryProps = {
 };
 
 export function GenUIRegistry({ rawSpec, isStreaming = false }: GenUIRegistryProps) {
+  const { t } = useI18n();
+
   if (!rawSpec && isStreaming) {
     return (
       <div className="space-y-3 p-4">
@@ -21,7 +24,7 @@ export function GenUIRegistry({ rawSpec, isStreaming = false }: GenUIRegistryPro
   if (!rawSpec || typeof rawSpec !== "object") {
     return (
       <div className="p-4 text-center text-stone-gray">
-        <p>Invalid chart specification</p>
+        <p>{t("genui.invalidChartSpec")}</p>
       </div>
     );
   }

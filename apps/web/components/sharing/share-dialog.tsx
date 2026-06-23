@@ -41,18 +41,18 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
         setMembers(m);
         setInvites(i);
       })
-      .catch(() => toast.error("加载协作信息失败"))
+      .catch(() => toast.error(t("collab.loadFailed")))
       .finally(() => setLoading(false));
-  }, [open, workspaceId]);
+  }, [open, workspaceId, t]);
 
   async function handleInviteUser(user: UserSearchResult) {
     try {
       await addMember(workspaceId, user.id, "editor");
-      toast.success(`已邀请${user.display_name}为编辑者`);
+      toast.success(t("collab.invitedEditor", { name: user.display_name }));
       const updated = await listMembers(workspaceId);
       setMembers(updated);
     } catch {
-      toast.error("邀请失败");
+      toast.error(t("collab.inviteFailed"));
     }
   }
 
@@ -85,7 +85,7 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg space-y-4 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">共享 · {workspaceName}</h2>
+          <h2 className="text-lg font-semibold">{t("collab.shareTitle", { workspaceName })}</h2>
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
         </div>
 
@@ -95,7 +95,7 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
           <UserSearchInput
             onSelect={handleInviteUser}
             excludeIds={existingMemberIds}
-            placeholder="搜索用户邀请..."
+            placeholder={t("collab.searchInvitePlaceholder")}
           />
         </div>
 
@@ -103,7 +103,7 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
         <div className="space-y-2">
           <p className="text-sm font-medium">{t("collab.collaborators")}</p>
           {loading ? (
-            <p className="text-xs text-muted-foreground">加载中...</p>
+            <p className="text-xs text-muted-foreground">{t("collab.loading")}</p>
           ) : (
             <MembersList
               members={members}

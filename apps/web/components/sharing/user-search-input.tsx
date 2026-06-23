@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { API_BASE_URL } from "@/lib/api-base";
 import { getAuthorizationHeader } from "@/lib/auth/session";
+import { useI18n } from "@/lib/i18n/context";
 
 const DEFAULT_AUTH_CONTEXT = {
   userId: process.env.NEXT_PUBLIC_DEFAULT_USER_ID ?? "demo-user",
@@ -37,7 +38,8 @@ function useDebounce<T extends (...args: Parameters<T>) => void>(fn: T, delay: n
   ) as T;
 }
 
-export function UserSearchInput({ onSelect, excludeIds = [], placeholder = "搜索用户..." }: Props) {
+export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Props) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,7 +110,7 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder = "搜�
         value={query}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t("collab.userSearchPlaceholder")}
         aria-autocomplete="list"
         aria-expanded={open}
       />

@@ -63,8 +63,8 @@ export function PublishPanel({ onPublish, isPublishing, initialVisibilityMode, i
   return (
     <div className="absolute right-0 top-full z-50 mt-1.5 w-80 rounded-lg border border-[#d8d1c1] bg-white shadow-lg">
       <div className="border-b border-[#d8d1c1] px-4 py-3">
-        <p className="text-sm font-semibold text-[#2f332f]">发布设置</p>
-        <p className="mt-0.5 text-xs text-[#777166]">选择页面可见范围后确认发布</p>
+        <p className="text-sm font-semibold text-[#2f332f]">{t("workspace.webDesign.publishSettings")}</p>
+        <p className="mt-0.5 text-xs text-[#777166]">{t("workspace.webDesign.publishSettingsDescription")}</p>
       </div>
 
       <div className="p-3 space-y-1">
@@ -97,14 +97,14 @@ export function PublishPanel({ onPublish, isPublishing, initialVisibilityMode, i
 
       {visibilityMode === "allowlist" && (
         <div className="border-t border-[#d8d1c1] px-4 py-3 space-y-2">
-          <p className="text-xs font-medium text-[#2f332f]">搜索并添加用户</p>
+          <p className="text-xs font-medium text-[#2f332f]">{t("workspace.webDesign.publishUserSearch")}</p>
           <UserSearchInput
             onSelect={addUser}
             excludeIds={selectedUsers.map((u) => u.id)}
-            placeholder="输入邮箱或姓名..."
+            placeholder={t("workspace.webDesign.publishUserSearchPlaceholder")}
           />
           {selectedUsers.length === 0 && (
-            <p className="text-xs text-red-500">请至少选择一位用户</p>
+            <p className="text-xs text-red-500">{t("workspace.webDesign.publishAllowlistRequired")}</p>
           )}
           {selectedUsers.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -118,7 +118,7 @@ export function PublishPanel({ onPublish, isPublishing, initialVisibilityMode, i
                     type="button"
                     onClick={() => removeUser(u.id)}
                     className="text-[#777166] hover:text-red-500"
-                    aria-label={`移除 ${u.display_name}`}
+                    aria-label={t("workspace.webDesign.removePublishUser", { name: u.display_name })}
                   >
                     ×
                   </button>
@@ -136,7 +136,7 @@ export function PublishPanel({ onPublish, isPublishing, initialVisibilityMode, i
           onClick={handlePublish}
           disabled={!canPublish || isPublishing}
         >
-          {isPublishing ? "发布中..." : "确认发布"}
+          {isPublishing ? t("workspace.webDesign.publishing") : t("workspace.webDesign.confirmPublish")}
         </Button>
       </div>
     </div>

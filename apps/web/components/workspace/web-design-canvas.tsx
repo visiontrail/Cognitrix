@@ -266,7 +266,7 @@ export function WebDesignCanvas() {
             {canEdit && (
               <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
                 <Share2 className="h-4 w-4" />
-                分享
+                {t("workspace.webDesign.share")}
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={loadHistory}>
@@ -457,19 +457,19 @@ function AddTextZoneMenu({
 
 const TEXT_ZONE_STYLE_MAP: Record<
   WebDesignTextStyle,
-  { className: string; placeholder: string }
+  { className: string; placeholderKey: string }
 > = {
   title: {
     className: "text-2xl font-bold leading-tight text-[#2f332f]",
-    placeholder: "标题",
+    placeholderKey: "workspace.webDesign.textZone.titlePlaceholder",
   },
   subtitle: {
     className: "text-lg font-semibold leading-snug text-[#4a4842]",
-    placeholder: "副标题",
+    placeholderKey: "workspace.webDesign.textZone.subtitlePlaceholder",
   },
   body: {
     className: "text-sm leading-relaxed text-[#555250]",
-    placeholder: "在此输入分析说明...",
+    placeholderKey: "workspace.webDesign.textZone.bodyPlaceholder",
   },
 };
 
@@ -533,13 +533,16 @@ function TextGridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(Math.max(1, zone.colSpan - 1), zone.rowSpan)}
+                    aria-label={t("workspace.webDesign.aria.decreaseColumnSpan")}
                   >
                     <Minus className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">{zone.colSpan}col</span>
+              <span className="text-[10px] text-[#555]">
+                {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -547,6 +550,7 @@ function TextGridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(Math.min(maxColumns - zone.column, zone.colSpan + 1), zone.rowSpan)}
+                    aria-label={t("workspace.webDesign.aria.increaseColumnSpan")}
                   >
                     <Plus className="h-3 w-3" />
                   </Button>
@@ -562,13 +566,16 @@ function TextGridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(zone.colSpan, Math.max(1, zone.rowSpan - 1))}
+                    aria-label={t("workspace.webDesign.aria.decreaseRowSpan")}
                   >
                     <ChevronUp className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">{zone.rowSpan}row</span>
+              <span className="text-[10px] text-[#555]">
+                {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -576,6 +583,7 @@ function TextGridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(zone.colSpan, Math.min(maxRows - zone.row, zone.rowSpan + 1))}
+                    aria-label={t("workspace.webDesign.aria.increaseRowSpan")}
                   >
                     <ChevronDown className="h-3 w-3" />
                   </Button>
@@ -603,7 +611,7 @@ function TextGridZone({
               "h-full min-h-[80px] w-full resize-none border-none bg-transparent p-0 shadow-none focus-visible:ring-0",
               styleConfig.className
             )}
-            placeholder={styleConfig.placeholder}
+            placeholder={t(styleConfig.placeholderKey)}
             value={zone.content}
             onChange={(e) => onUpdate({ content: e.target.value })}
           />
@@ -741,13 +749,16 @@ function GridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(Math.max(1, zone.colSpan - 1), zone.rowSpan)}
+                    aria-label={t("workspace.webDesign.aria.decreaseColumnSpan")}
                   >
                     <Minus className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">{zone.colSpan}col</span>
+              <span className="text-[10px] text-[#555]">
+                {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -755,6 +766,7 @@ function GridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(Math.min(maxColumns - zone.column, zone.colSpan + 1), zone.rowSpan)}
+                    aria-label={t("workspace.webDesign.aria.increaseColumnSpan")}
                   >
                     <Plus className="h-3 w-3" />
                   </Button>
@@ -770,13 +782,16 @@ function GridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(zone.colSpan, Math.max(1, zone.rowSpan - 1))}
+                    aria-label={t("workspace.webDesign.aria.decreaseRowSpan")}
                   >
                     <ChevronUp className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">{zone.rowSpan}row</span>
+              <span className="text-[10px] text-[#555]">
+                {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -784,6 +799,7 @@ function GridZone({
                     size="icon-sm"
                     className="h-5 w-5"
                     onClick={() => onResize(zone.colSpan, Math.min(maxRows - zone.row, zone.rowSpan + 1))}
+                    aria-label={t("workspace.webDesign.aria.increaseRowSpan")}
                   >
                     <ChevronDown className="h-3 w-3" />
                   </Button>

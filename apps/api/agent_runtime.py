@@ -380,6 +380,7 @@ class MultiChartPlan:
     max_chart_count: int
     created_at: float
     expires_at: float
+    breakdown_dimension: str | None = None
     chart_type: str | None = None
     dataset_table: str | None = None
     confidence: float = 0.0
@@ -395,6 +396,7 @@ class MultiChartPlan:
             "max_chart_count": self.max_chart_count,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
+            "breakdown_dimension": self.breakdown_dimension,
             "chart_type": self.chart_type,
             "dataset_table": self.dataset_table,
             "confidence": self.confidence,
@@ -417,6 +419,9 @@ class MultiChartPlan:
             max_chart_count=int(payload.get("max_chart_count") or 0),
             created_at=float(payload.get("created_at") or 0),
             expires_at=float(payload.get("expires_at") or 0),
+            breakdown_dimension=str(payload.get("breakdown_dimension")).strip()
+            if payload.get("breakdown_dimension")
+            else None,
             chart_type=str(payload.get("chart_type")).strip() if payload.get("chart_type") else None,
             dataset_table=str(payload.get("dataset_table")).strip() if payload.get("dataset_table") else None,
             confidence=float(payload.get("confidence") or 0.0),
@@ -710,6 +715,7 @@ class MultiChartPreflightPlanner:
             dimension = "department"
         if dimension is None:
             return None
+        breakdown_dimension = self._infer_breakdown_dimension(request.message, grouping_dimension=dimension)
 
         has_multi_cue = self._has_multi_chart_cue(request.message)
         if requested_count is None and not has_multi_cue:
@@ -731,7 +737,9 @@ class MultiChartPreflightPlanner:
         ]
         if requested_count is not None:
             rows = rows[:requested_count]
-        if len(rows) < 2:
+        if len(rows) < 2 and requested_count is None:
+            return None
+        if not rows:
             return None
 
         now = time.time()
@@ -751,6 +759,18 @@ class MultiChartPreflightPlanner:
             en=f"The request appears to ask for one chart per {dimension.replace('_', ' ')}.",
             zh=f"该请求看起来需要按 {dimension.replace('_', ' ')} 分别生成图表。",
         )
+        if requested_count is not None and len(items) < requested_count:
+            reason = _localized_text(
+                _normalize_response_locale(request.response_locale, request.message),
+                en=(
+                    f"The request asks for {requested_count} charts, but only {len(items)} "
+                    f"{dimension.replace('_', ' ')} value(s) are visible in the current data scope."
+                ),
+                zh=(
+                    f"请求需要生成 {requested_count} 个图表，但当前数据权限范围内只发现 "
+                    f"{len(items)} 个 {dimension.replace('_', ' ')} 取值。"
+                ),
+            )
         return MultiChartPlan(
             confirmation_id=f"mchart-{uuid.uuid4().hex}",
             grouping_dimension=dimension,
@@ -760,16 +780,31 @@ class MultiChartPreflightPlanner:
             max_chart_count=max_count,
             created_at=now,
             expires_at=now + int(self.settings.multi_chart_confirmation_ttl_seconds),
+            breakdown_dimension=breakdown_dimension,
             chart_type=request.preferred_chart_type,
             dataset_table=request.dataset_table,
             confidence=0.86 if has_multi_cue else 0.72,
-            truncated=bool(values_payload.get("truncated")) or len(items) > max_count,
+            truncated=(
+                bool(values_payload.get("truncated"))
+                or len(items) > max_count
+                or bool(requested_count is not None and len(items) < requested_count)
+            ),
         )
 
     @classmethod
     def _infer_dimension(cls, message: str) -> str | None:
         lowered = message.lower()
         for column, aliases in cls.DIMENSION_ALIASES:
+            if any(alias.lower() in lowered for alias in aliases):
+                return column
+        return None
+
+    @classmethod
+    def _infer_breakdown_dimension(cls, message: str, *, grouping_dimension: str) -> str | None:
+        lowered = message.lower()
+        for column, aliases in cls.DIMENSION_ALIASES:
+            if column == grouping_dimension:
+                continue
             if any(alias.lower() in lowered for alias in aliases):
                 return column
         return None
@@ -787,6 +822,14 @@ class MultiChartPreflightPlanner:
         match = re.search(r"\b(?:generate|create|make|build|show)\s+(\d{1,2})\s+(?:charts|graphs|visualizations)\b", lowered)
         if match:
             return max(2, int(match.group(1)))
+        localized_match = re.search(
+            r"(?P<count>\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:张|个)\s*(?:#?[\w-]+)?\s*(?:图|图表|chart|charts|graph|graphs)?",
+            lowered,
+        )
+        if localized_match:
+            parsed = _parse_small_count(localized_match.group("count"))
+            if parsed is not None:
+                return max(2, parsed)
         return None
 
     async def _discover_values(
@@ -847,6 +890,7 @@ class MultiChartGenerationService:
                     request=request,
                     run_context=run_context,
                     append_event=append_event,
+                    plan=plan,
                     item=item,
                     index=index,
                 )
@@ -912,19 +956,30 @@ class MultiChartGenerationService:
         request: AgentRequest,
         run_context: SDKRunContext,
         append_event: Any,
+        plan: MultiChartPlan,
         item: MultiChartItem,
         index: int,
     ) -> list[dict[str, Any]]:
         table = _quote_sql_identifier(request.dataset_table)
         field = _quote_sql_identifier(item.filter_field)
         literal = _sql_literal(item.filter_value)
-        sql = (
-            f"SELECT {field} AS segment, COUNT(*) AS metric_value "
-            f"FROM {table} "
-            f"WHERE {field} = {literal} "
-            f"GROUP BY {field} "
-            f"ORDER BY metric_value DESC"
-        )
+        if plan.breakdown_dimension and plan.breakdown_dimension != item.filter_field:
+            segment_field = _quote_sql_identifier(plan.breakdown_dimension)
+            sql = (
+                f"SELECT {segment_field} AS segment, COUNT(*) AS metric_value "
+                f"FROM {table} "
+                f"WHERE {field} = {literal} "
+                f"GROUP BY {segment_field} "
+                f"ORDER BY metric_value DESC, segment ASC"
+            )
+        else:
+            sql = (
+                f"SELECT {field} AS segment, COUNT(*) AS metric_value "
+                f"FROM {table} "
+                f"WHERE {field} = {literal} "
+                f"GROUP BY {field} "
+                f"ORDER BY metric_value DESC"
+            )
         response = await _invoke_guarded_bi_tool(
             tool_service=self.tool_service,
             request=request,
@@ -1537,6 +1592,7 @@ class AgentRuntime:
             "confirmation_type": "multi_chart_generation",
             "confirmation_id": plan.confirmation_id,
             "grouping_dimension": plan.grouping_dimension,
+            "breakdown_dimension": plan.breakdown_dimension,
             "proposed_count": len(plan.items),
             "max_chart_count": plan.max_chart_count,
             "expires_at": plan.expires_at,
@@ -2882,6 +2938,41 @@ def _sql_literal(value: Any) -> str:
         return str(value)
     text = str(value).replace("'", "''")
     return f"'{text}'"
+
+
+def _parse_small_count(value: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+
+    digits = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if text == "十":
+        return 10
+    if text.startswith("十") and len(text) == 2:
+        suffix = digits.get(text[1])
+        return 10 + suffix if suffix is not None else None
+    if text.endswith("十") and len(text) == 2:
+        prefix = digits.get(text[0])
+        return prefix * 10 if prefix is not None else None
+    if "十" in text and len(text) == 3:
+        prefix = digits.get(text[0])
+        suffix = digits.get(text[2])
+        if prefix is not None and suffix is not None:
+            return prefix * 10 + suffix
+    return digits.get(text)
 
 
 # ---------------------------------------------------------------------------

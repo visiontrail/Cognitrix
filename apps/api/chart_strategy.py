@@ -125,7 +125,7 @@ class ChartStrategyRouter:
         # Recharts owns only the simple, default chart shapes. Any explicit
         # request for a richer type (line, scatter, treemap, heatmap, …) goes
         # to ECharts so we honour the caller's intent without second-guessing.
-        recharts_supported = {"bar", "table", "single_value"}
+        recharts_supported = {"bar", "pie", "table", "single_value"}
         return "recharts" if chart_type in recharts_supported else "echarts"
 
     @staticmethod

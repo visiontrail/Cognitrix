@@ -166,8 +166,8 @@ function IngestionAgentTrace({ trace, onToggle }: IngestionAgentTraceProps) {
   const isExpanded = trace.state === "expanded";
 
   const chipLabel = hasError
-    ? `分析出错 (${durationStr})`
-    : `分析完成 · ${durationStr} · ${toolCount} 次工具调用`;
+    ? t("ingestion.lifecycle.traceError", { duration: durationStr })
+    : t("ingestion.lifecycle.traceCompleted", { duration: durationStr, count: toolCount });
 
   return (
     <div className="mb-2">

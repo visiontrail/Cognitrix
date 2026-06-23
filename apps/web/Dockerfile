@@ -1,7 +1,21 @@
 FROM node:20-alpine AS deps
 WORKDIR /app/apps/web
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_FETCH_RETRIES=5
+ARG NPM_FETCH_RETRY_MINTIMEOUT=20000
+ARG NPM_FETCH_RETRY_MAXTIMEOUT=120000
+ARG NPM_FETCH_TIMEOUT=600000
+ARG NPM_HTTP_PROXY=
+ARG NPM_HTTPS_PROXY=
 COPY apps/web/package.json apps/web/package-lock.json ./
-RUN npm ci
+RUN npm config set registry "${NPM_REGISTRY}" \
+    && npm config set fetch-retries "${NPM_FETCH_RETRIES}" \
+    && npm config set fetch-retry-mintimeout "${NPM_FETCH_RETRY_MINTIMEOUT}" \
+    && npm config set fetch-retry-maxtimeout "${NPM_FETCH_RETRY_MAXTIMEOUT}" \
+    && npm config set fetch-timeout "${NPM_FETCH_TIMEOUT}" \
+    && if [ -n "${NPM_HTTP_PROXY}" ]; then npm config set proxy "${NPM_HTTP_PROXY}"; fi \
+    && if [ -n "${NPM_HTTPS_PROXY}" ]; then npm config set https-proxy "${NPM_HTTPS_PROXY}"; fi \
+    && npm ci --no-audit --progress=false
 
 FROM deps AS builder
 COPY apps/web ./

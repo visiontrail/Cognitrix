@@ -59,6 +59,14 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        NPM_FETCH_RETRIES: ${NPM_FETCH_RETRIES:-5}
+        NPM_FETCH_RETRY_MINTIMEOUT: ${NPM_FETCH_RETRY_MINTIMEOUT:-20000}
+        NPM_FETCH_RETRY_MAXTIMEOUT: ${NPM_FETCH_RETRY_MAXTIMEOUT:-120000}
+        NPM_FETCH_TIMEOUT: ${NPM_FETCH_TIMEOUT:-600000}
+        NPM_HTTP_PROXY: ${NPM_HTTP_PROXY:-}
+        NPM_HTTPS_PROXY: ${NPM_HTTPS_PROXY:-}
     container_name: cognitrix-web
     restart: unless-stopped
     environment:

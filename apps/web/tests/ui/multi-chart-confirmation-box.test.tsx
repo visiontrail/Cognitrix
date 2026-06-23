@@ -34,7 +34,10 @@ describe("MultiChartConfirmationBox", () => {
   it("submits an adjusted selected chart set", async () => {
     render(<MultiChartConfirmationBox sessionId="session-a" confirmation={confirmation} />);
 
+    expect(screen.getByText("1 selected · max 2")).toBeInTheDocument();
+
     await userEvent.click(screen.getByLabelText("PM"));
+    expect(screen.getByText("2 selected · max 2")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Generate 2" }));
 
     expect(mutate).toHaveBeenCalledWith({

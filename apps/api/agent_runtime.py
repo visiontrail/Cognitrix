@@ -823,6 +823,9 @@ class MultiChartPreflightPlanner:
 
     @classmethod
     def _infer_dimension(cls, message: str) -> str | None:
+        explicit_fields = cls._explicit_field_mentions(message)
+        if explicit_fields:
+            return cls._resolve_field_mention(explicit_fields[0])
         for column, aliases in cls.DIMENSION_ALIASES:
             if any(cls._mentions_alias(message, alias) for alias in aliases):
                 return column
@@ -830,6 +833,14 @@ class MultiChartPreflightPlanner:
 
     @classmethod
     def _infer_breakdown_dimension(cls, message: str, *, grouping_dimension: str) -> str | None:
+        explicit_fields = [
+            cls._resolve_field_mention(field)
+            for field in cls._explicit_field_mentions(message)
+        ]
+        if len(explicit_fields) >= 2:
+            for field in explicit_fields:
+                if field != grouping_dimension:
+                    return field
         grouping_aliases = next(
             (aliases for column, aliases in cls.DIMENSION_ALIASES if column == grouping_dimension),
             (),
@@ -871,6 +882,24 @@ class MultiChartPreflightPlanner:
             return re.search(pattern, lowered) is not None
 
         return re.search(rf"(?<![a-z0-9_]){re.escape(normalized_alias)}(?![a-z0-9_])", lowered) is not None
+
+    @staticmethod
+    def _explicit_field_mentions(message: str) -> list[str]:
+        fields: list[str] = []
+        seen: set[str] = set()
+        for field in re.findall(r"@([\w\u4e00-\u9fff-]+)", message.lower()):
+            normalized = re.sub(r"[\s-]+", "_", field.strip())
+            if normalized and normalized not in seen:
+                fields.append(normalized)
+                seen.add(normalized)
+        return fields
+
+    @classmethod
+    def _resolve_field_mention(cls, field: str) -> str:
+        for column, aliases in cls.DIMENSION_ALIASES:
+            if any(cls._mentions_alias(f"@{field}", alias) for alias in aliases):
+                return column
+        return field
 
     @classmethod
     def _remove_alias_mentions(cls, message: str, aliases: tuple[str, ...]) -> str:
@@ -1180,6 +1209,12 @@ class AgentRuntime:
             tool_trace=tool_trace,
             event_queue=event_queue,
         )
+        self._log_turn_start_debug(
+            request=request,
+            session=session,
+            response_locale=response_locale,
+            multi_chart_confirmation=request.multi_chart_confirmation is not None,
+        )
 
         if request.multi_chart_confirmation is not None:
             return await self._handle_multi_chart_confirmation(
@@ -1209,25 +1244,6 @@ class AgentRuntime:
                 started=started,
                 response_locale=response_locale,
             )
-
-        logger.info(
-            "agent_turn_start_debug conversation_id=%s request_id=%s agent_session_id=%s\n%s",
-            request.conversation_id,
-            request.request_id,
-            session.agent_session_id,
-            format_agent_debug_blocks(
-                ai_input={
-                    "conversation_id": request.conversation_id,
-                    "request_id": request.request_id,
-                    "agent_session_id": session.agent_session_id,
-                    "dataset_table": request.dataset_table,
-                    "message": request.message,
-                    "response_locale": response_locale,
-                    "runtime_backend": SDK_RUNTIME_BACKEND,
-                    "sdk_tools": list(SDK_ALLOWED_TOOL_NAMES),
-                },
-            ),
-        )
 
         final_answer: dict[str, Any] | None = None
         options = self._build_sdk_options(
@@ -1415,6 +1431,34 @@ class AgentRuntime:
 
     def get_persisted_session(self, conversation_id: str) -> AgentSessionState | None:
         return self._store.load(conversation_id)
+
+    @staticmethod
+    def _log_turn_start_debug(
+        *,
+        request: AgentRequest,
+        session: AgentSessionState,
+        response_locale: str | None,
+        multi_chart_confirmation: bool,
+    ) -> None:
+        logger.info(
+            "agent_turn_start_debug conversation_id=%s request_id=%s agent_session_id=%s\n%s",
+            request.conversation_id,
+            request.request_id,
+            session.agent_session_id,
+            format_agent_debug_blocks(
+                ai_input={
+                    "conversation_id": request.conversation_id,
+                    "request_id": request.request_id,
+                    "agent_session_id": session.agent_session_id,
+                    "dataset_table": request.dataset_table,
+                    "message": request.message,
+                    "response_locale": response_locale,
+                    "runtime_backend": SDK_RUNTIME_BACKEND,
+                    "sdk_tools": list(SDK_ALLOWED_TOOL_NAMES),
+                    "multi_chart_confirmation": multi_chart_confirmation,
+                },
+            ),
+        )
 
     async def _handle_multi_chart_confirmation(
         self,

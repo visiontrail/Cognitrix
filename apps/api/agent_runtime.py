@@ -338,6 +338,7 @@ class AgentRequest:
     workspace_id: str | None = None
     preferred_chart_type: str | None = None
     response_locale: str | None = None
+    generation_strategy: str | None = None
     multi_chart_confirmation: dict[str, Any] | None = None
 
 
@@ -747,8 +748,9 @@ class MultiChartPreflightPlanner:
             return None
         breakdown_dimension = self._infer_breakdown_dimension(request.message, grouping_dimension=dimension)
 
+        force_multi_chart = request.generation_strategy == "multi_chart"
         has_multi_cue = self._has_multi_chart_cue(request.message)
-        if requested_count is None and not has_multi_cue:
+        if requested_count is None and not has_multi_cue and not force_multi_chart:
             return None
 
         values_payload = await self._discover_values(
@@ -813,7 +815,7 @@ class MultiChartPreflightPlanner:
             breakdown_dimension=breakdown_dimension,
             chart_type=request.preferred_chart_type,
             dataset_table=request.dataset_table,
-            confidence=0.86 if has_multi_cue else 0.72,
+            confidence=0.91 if force_multi_chart else (0.86 if has_multi_cue else 0.72),
             truncated=(
                 bool(values_payload.get("truncated"))
                 or len(items) > max_count

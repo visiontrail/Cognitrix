@@ -152,6 +152,33 @@ def test_multi_chart_prompt_emits_confirmation_before_any_spec(monkeypatch, tmp_
     assert [item["label"] for item in confirmation["items"]] == ["HR", "ENG", "PM"]
 
 
+def test_forced_multi_chart_strategy_emits_confirmation_without_multi_cue(monkeypatch, tmp_path: Path) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = _seed_dataset(client)
+        events = _stream_events(
+            client,
+            payload={
+                **_request_payload(
+                    "multi-chart-forced-strategy",
+                    "multi-chart-forced-strategy-request-plan",
+                    dataset_table,
+                    "Show headcount by department",
+                ),
+                "generation_strategy": "multi_chart",
+            },
+            headers=_headers(client),
+        )
+
+    event_names = [event["event"] for event in events]
+    assert "confirmation_required" in event_names
+    confirmation = next(event["data"] for event in events if event["event"] == "confirmation_required")
+    assert confirmation["confirmation_type"] == "multi_chart_generation"
+    assert confirmation["grouping_dimension"] == "department"
+    assert [item["label"] for item in confirmation["items"]] == ["HR", "ENG", "PM"]
+
+
 def test_confirmed_multi_chart_generation_streams_grouped_specs(monkeypatch, tmp_path: Path) -> None:
     set_agent_env(monkeypatch, tmp_path)
 

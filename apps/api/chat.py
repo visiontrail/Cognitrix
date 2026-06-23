@@ -35,6 +35,7 @@ class ChatStreamRequest(BaseModel):
     dataset_table: str
     message: str | None = None
     preferred_chart_type: str | None = None
+    generation_strategy: Literal["multi_chart"] | None = None
     response_locale: str | None = None
     conversation_id: str | None = None
     request_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -298,6 +299,7 @@ class ChatStreamService:
             dataset_table=request.dataset_table,
             message=message,
             preferred_chart_type=request.preferred_chart_type,
+            generation_strategy=request.generation_strategy,
             response_locale=request.response_locale,
             role=request.role,
             department=request.department,
@@ -411,6 +413,7 @@ class ChatStreamService:
                 dataset_table=request.dataset_table,
                 message=message,
                 preferred_chart_type=request.preferred_chart_type,
+                generation_strategy=request.generation_strategy,
                 response_locale=request.response_locale,
                 role=request.role,
                 department=request.department,

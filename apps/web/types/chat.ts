@@ -53,6 +53,7 @@ export type SendMessageRequest = {
   content: string;
   attachment?: File;
   preferredChartType?: import("./chart").KnownChartType;
+  generationStrategy?: "multi_chart";
   multiChartConfirmation?: MultiChartConfirmationSubmission;
 };
 

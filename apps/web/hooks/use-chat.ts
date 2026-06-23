@@ -152,6 +152,7 @@ export function useSendMessage() {
       attachment,
       approvedAction,
       preferredChartType,
+      generationStrategy,
       multiChartConfirmation,
     }: {
       sessionId: string;
@@ -159,6 +160,7 @@ export function useSendMessage() {
       attachment?: File;
       approvedAction?: IngestionProposalAction;
       preferredChartType?: QueryChartType;
+      generationStrategy?: "multi_chart";
       multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
       const workspaceId = getActiveWorkspaceIdOrThrow(t);
@@ -222,6 +224,7 @@ export function useSendMessage() {
           sessionId,
           content: trimmedContent,
           preferredChartType,
+          generationStrategy,
           multiChartConfirmation,
           workspaceId,
           signal: abortController.signal,
@@ -457,6 +460,7 @@ async function streamAssistantResponse({
   sessionId,
   content,
   preferredChartType,
+  generationStrategy,
   multiChartConfirmation,
   workspaceId,
   signal,
@@ -466,6 +470,7 @@ async function streamAssistantResponse({
   sessionId: string;
   content: string;
   preferredChartType?: QueryChartType;
+  generationStrategy?: "multi_chart";
   multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
   signal?: AbortSignal;
@@ -532,6 +537,7 @@ async function streamAssistantResponse({
         dataset_table: DEFAULT_DATASET_TABLE,
         message: aiMessage,
         preferred_chart_type: preferredChartType ?? null,
+        generation_strategy: generationStrategy ?? null,
         response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),

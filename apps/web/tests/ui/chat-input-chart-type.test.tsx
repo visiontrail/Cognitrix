@@ -104,6 +104,29 @@ describe("ChatInput chart type picker", () => {
     );
   });
 
+  it("selects multi-chart generation from the action menu and sends the strategy", async () => {
+    const user = userEvent.setup();
+    render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
+    expect(screen.getByRole("menu", { name: "Chat actions" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
+    expect(screen.getByText("Multi-chart mode is on for this message. Include the grouping dimension, then press Enter.")).toBeInTheDocument();
+    expect(screen.getByText("Multi-chart generation")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Chat Input"), "show headcount by department");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        content: "show headcount by department",
+        generationStrategy: "multi_chart",
+      })
+    );
+  });
+
   it("shows human-readable column labels in @ suggestions while inserting physical names", async () => {
     const user = userEvent.setup();
     workspaceColumns.push({

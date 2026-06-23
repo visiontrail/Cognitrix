@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { Send, Paperclip, Square, X } from "lucide-react";
+import { BarChart3, FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -32,9 +32,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const confirmSetup = useConfirmIngestionSetup();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [customApprovalInput, setCustomApprovalInput] = useState(false);
   const [selectedChartType, setSelectedChartType] = useState<QueryChartType | null>(null);
+  const [selectedGenerationStrategy, setSelectedGenerationStrategy] = useState<GenerationStrategy | null>(null);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [chartTrigger, setChartTrigger] = useState<ChartTriggerState | null>(null);
   const [activeChartIndex, setActiveChartIndex] = useState(0);
   const [columnTrigger, setColumnTrigger] = useState<ColumnTriggerState | null>(null);
@@ -59,6 +62,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (pendingApproval || pendingSetup) {
       setSelectedFile(null);
+      setSelectedGenerationStrategy(null);
+      setActionMenuOpen(false);
       setChartTrigger(null);
       setColumnTrigger(null);
       if (fileInputRef.current) {
@@ -68,6 +73,23 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     }
     setCustomApprovalInput(false);
   }, [pendingApproval, pendingSetup]);
+
+  useEffect(() => {
+    if (!actionMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && actionMenuRef.current?.contains(target)) {
+        return;
+      }
+      setActionMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [actionMenuOpen]);
 
   useEffect(() => {
     if (activeChartIndex >= filteredChartOptions.length) {
@@ -94,9 +116,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       content,
       attachment: selectedFile ?? undefined,
       preferredChartType: chartType ?? undefined,
+      generationStrategy: selectedGenerationStrategy ?? undefined,
     });
     setComposerText("");
     setSelectedChartType(null);
+    setSelectedGenerationStrategy(null);
+    setActionMenuOpen(false);
     setChartTrigger(null);
     setColumnTrigger(null);
     setSelectedFile(null);
@@ -112,6 +137,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     inputLockedByApproval,
     isSending,
     selectedChartType,
+    selectedGenerationStrategy,
     selectedFile,
     sendMessage,
     sessionId,
@@ -139,6 +165,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       });
       setComposerText("");
       setSelectedChartType(null);
+      setSelectedGenerationStrategy(null);
+      setActionMenuOpen(false);
       setChartTrigger(null);
       setColumnTrigger(null);
       setCustomApprovalInput(false);
@@ -354,25 +382,45 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           </div>
         ) : null}
 
-        {selectedFile ? (
-          <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border-cream bg-parchment px-3 py-1 text-caption text-near-black">
-            <span className="truncate" title={selectedFile.name}>
-              {t("chat.fileAttached", { fileName: selectedFile.name })}
-            </span>
-            <button
-              type="button"
-              className="rounded-full p-0.5 text-stone-gray hover:text-near-black"
-              onClick={() => {
-                setSelectedFile(null);
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = "";
-                }
-              }}
-              aria-label={t("chat.removeFile")}
-              disabled={isSending}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+        {selectedFile || selectedGenerationStrategy ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedFile ? (
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border-cream bg-parchment px-3 py-1 text-caption text-near-black">
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-stone-gray" />
+                <span className="truncate" title={selectedFile.name}>
+                  {t("chat.fileAttached", { fileName: selectedFile.name })}
+                </span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 text-stone-gray hover:text-near-black"
+                  onClick={() => {
+                    setSelectedFile(null);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.value = "";
+                    }
+                  }}
+                  aria-label={t("chat.removeFile")}
+                  disabled={isSending}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
+            {selectedGenerationStrategy === "multi_chart" ? (
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-focus-blue/30 bg-focus-blue/10 px-3 py-1 text-caption font-medium text-focus-blue">
+                <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+                <span>{t("chat.strategy.multiChart")}</span>
+                <button
+                  type="button"
+                  className="rounded-full p-0.5 text-focus-blue/75 hover:text-focus-blue"
+                  onClick={() => setSelectedGenerationStrategy(null)}
+                  aria-label={t("chat.strategy.remove")}
+                  disabled={isSending}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -388,17 +436,63 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             disabled={isSending}
           />
 
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            className="h-[44px] w-[44px] shrink-0 self-center"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isSending || Boolean(pendingApproval) || Boolean(pendingSetup)}
-            aria-label={t("chat.attachFile")}
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
+          <div ref={actionMenuRef} className="relative shrink-0 self-center">
+            <Button
+              type="button"
+              variant={actionMenuOpen ? "secondary" : "outline"}
+              size="icon-sm"
+              className={cn(
+                "h-[44px] w-[44px] rounded-full transition-transform",
+                actionMenuOpen && "rotate-45"
+              )}
+              onClick={() => setActionMenuOpen((open) => !open)}
+              disabled={isSending || Boolean(pendingApproval) || Boolean(pendingSetup)}
+              aria-label={t("chat.actions.open")}
+              aria-haspopup="menu"
+              aria-expanded={actionMenuOpen}
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
+            {actionMenuOpen ? (
+              <div
+                role="menu"
+                aria-label={t("chat.actions.menuLabel")}
+                className="absolute bottom-[52px] left-0 z-30 w-64 overflow-hidden rounded-comfortable border border-border-cream bg-ivory p-1.5 shadow-xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                  onClick={() => {
+                    setActionMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0 text-stone-gray" />
+                  <span>{t("chat.actions.attachFile")}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={selectedGenerationStrategy === "multi_chart"}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm focus:outline-none",
+                    selectedGenerationStrategy === "multi_chart"
+                      ? "bg-focus-blue/10 text-focus-blue"
+                      : "text-near-black hover:bg-parchment focus:bg-parchment"
+                  )}
+                  onClick={() => {
+                    setSelectedGenerationStrategy((current) => current === "multi_chart" ? null : "multi_chart");
+                    setActionMenuOpen(false);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                >
+                  <BarChart3 className="h-4 w-4 shrink-0" />
+                  <span>{t("chat.actions.multiChart")}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
 
           <div className="relative flex-1">
             <textarea
@@ -482,7 +576,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       </div>
 
       <p className="text-label text-stone-gray text-center mt-2">
-        {selectedChartType
+        {selectedGenerationStrategy === "multi_chart"
+          ? t("chat.inputHintWithMultiChart")
+          : selectedChartType
           ? t("chat.inputHintWithChartType", { chartType: selectedChartType })
           : t("chat.inputHintWithAttachment")}
       </p>
@@ -503,6 +599,8 @@ type ColumnTriggerState = {
   end: number;
   query: string;
 };
+
+type GenerationStrategy = "multi_chart";
 
 // ─── Trigger detection ─────────────────────────────────────────────────────
 

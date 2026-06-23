@@ -231,6 +231,26 @@ describe("use-chat workspace isolation", () => {
     });
   });
 
+  it("sends an explicit generation strategy when multi-chart mode is selected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sseResponse('event: final\ndata: {"status":"completed","text":"Done."}\n\n')
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSendMessage(), { wrapper: wrapperFor(makeQueryClient()) });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        sessionId: "session-a",
+        content: "show headcount by department",
+        generationStrategy: "multi_chart",
+      });
+    });
+
+    const chatCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/chat/stream"));
+    const body = JSON.parse(String(chatCall?.[1]?.body));
+    expect(body.generation_strategy).toBe("multi_chart");
+  });
+
   it("sends ingestion setup confirmation with active workspace and rejects cross-workspace sessions", async () => {
     useChatStore.getState().setPendingIngestionSetup("session-a", { upload: pendingUpload, plan: pendingSetup });
     const fetchMock = vi.fn().mockResolvedValue(

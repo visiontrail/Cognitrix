@@ -82,6 +82,22 @@ def test_api_waits_for_healthy_storage(compose_path: Path) -> None:
 
 
 @pytest.mark.parametrize("compose_path", COMPOSE_FILES, ids=lambda p: p.name)
+def test_api_persistence_paths_are_fixed_to_mounted_volume(compose_path: Path) -> None:
+    api_env = load_compose(compose_path)["services"]["api"].get("environment", {})
+    assert api_env.get("UPLOAD_DIR") == "/app/data/uploads", (
+        f"api in {compose_path} must write uploads to the mounted Docker volume"
+    )
+    assert (
+        api_env.get("DATABASE_URL")
+        == "sqlite:////app/data/uploads/state/ai_views.sqlite3"
+    ), f"api in {compose_path} must keep SQLite state under the mounted Docker volume"
+
+    raw_text = compose_path.read_text(encoding="utf-8")
+    assert "UPLOAD_DIR: ${UPLOAD_DIR" not in raw_text
+    assert "DATABASE_URL: ${DATABASE_URL" not in raw_text
+
+
+@pytest.mark.parametrize("compose_path", COMPOSE_FILES, ids=lambda p: p.name)
 def test_persistent_volume_key_is_preserved(compose_path: Path) -> None:
     volumes = load_compose(compose_path).get("volumes", {})
     assert VOLUME_KEY in volumes, (

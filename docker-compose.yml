@@ -41,7 +41,11 @@ services:
     environment:
       APP_NAME: Cognitrix API
       APP_ENV: ${APP_ENV:-production}
-      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/uploads/state/ai_views.sqlite3}
+      # Keep Docker runtime state on the mounted volume. Do not interpolate
+      # DATABASE_URL/UPLOAD_DIR from the host env here: local-dev values such as
+      # ./data/uploads would make the container write into its ephemeral image
+      # layer, so data appears to vanish after docker_restart.sh rebuilds it.
+      DATABASE_URL: sqlite:////app/data/uploads/state/ai_views.sqlite3
       MODEL_PROVIDER_URL: ${MODEL_PROVIDER_URL:-https://api.deepseek.com}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-deepseek-chat}
@@ -74,7 +78,7 @@ services:
       LEGACY_XLSX_PARSER_ENABLED: ${LEGACY_XLSX_PARSER_ENABLED:-true}
       APP_URL: ${APP_URL:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      UPLOAD_DIR: ${UPLOAD_DIR:-/app/data/uploads}
+      UPLOAD_DIR: /app/data/uploads
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
     ports:
       - "${API_PORT:-8000}:8000"

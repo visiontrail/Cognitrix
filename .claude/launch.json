@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--turbopack", "-p", "3001"],
+      "port": 3001,
+      "cwd": "apps/web"
+    }
+  ]
+}

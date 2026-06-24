@@ -12,6 +12,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
 import { stopChatResponse } from "@/hooks/use-chat";
+import { syncSessionToServer } from "@/lib/chat/server-sync";
 import { API_BASE_URL } from "@/lib/api-base";
 import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session";
 import { generateId } from "@/lib/utils";
@@ -137,6 +138,9 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
     setIsRegenerating(true);
     stopChatResponse(sessionId);
     resetConversation(sessionId);
+    if (activeWorkspaceId) {
+      void syncSessionToServer(activeWorkspaceId, sessionId);
+    }
     try {
       await resetBackendConversation({
         conversationId: sessionId,

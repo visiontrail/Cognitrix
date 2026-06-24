@@ -14,6 +14,7 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useChatStore } from "@/stores/chat-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useSession } from "@/lib/auth/use-session";
+import { hydrateWorkspaceStateFromServer } from "@/lib/chat/server-sync";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -44,8 +45,14 @@ export function AppShell() {
 
   useEffect(() => {
     if (user?.id) {
+      // Load the localStorage cache synchronously first, then merge the server's
+      // durable cross-device copy on top. Order matters: hydration reads the
+      // just-loaded local stores, so it must run after the inits.
       initChatForWorkspace(user.id, activeWorkspaceId);
       initAssetsForUser(user.id);
+      if (activeWorkspaceId) {
+        void hydrateWorkspaceStateFromServer(activeWorkspaceId);
+      }
     }
   }, [activeWorkspaceId, user?.id, initChatForWorkspace, initAssetsForUser]);
 

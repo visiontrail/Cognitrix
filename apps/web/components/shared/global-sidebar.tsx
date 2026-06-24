@@ -46,6 +46,7 @@ import { useAssetStore } from "@/stores/asset-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore, type AppMode } from "@/stores/ui-store";
 import { chatSessionsQueryKey, useCreateSession, useDeleteSession } from "@/hooks/use-chat";
+import { syncSessionToServer } from "@/lib/chat/server-sync";
 import { useCreateWorkspace, useDeleteWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
@@ -130,6 +131,9 @@ export function GlobalSidebar() {
 
   const handleRenameSession = (sessionId: string, nextTitle: string) => {
     renameSession(sessionId, nextTitle);
+    if (activeWorkspaceId) {
+      void syncSessionToServer(activeWorkspaceId, sessionId);
+    }
     queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(activeWorkspaceId) });
   };
 

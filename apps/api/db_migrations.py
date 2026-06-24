@@ -17,6 +17,7 @@ MIGRATION_FILES = [
     "0003_workspace_agentic_ingestion_init.sql",
     "0004_published_pages_init.sql",
     "0005_users_and_collab.sql",
+    "0006_workspace_state_init.sql",
 ]
 
 _ALTER_STATEMENTS = [

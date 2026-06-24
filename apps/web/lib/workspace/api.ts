@@ -132,20 +132,75 @@ export async function fetchWorkspaceSnapshot(workspaceId: string): Promise<Works
   if (!workspaceId.trim()) {
     return null;
   }
-  const snapshots = loadWorkspaceSnapshots();
-  return snapshots[workspaceId] ?? null;
+  const local = loadWorkspaceSnapshots()[workspaceId] ?? null;
+
+  let server: WorkspaceSnapshot | null;
+  try {
+    server = await fetchServerWorkspaceSnapshot(workspaceId);
+  } catch {
+    // Offline / server unavailable: fall back to the localStorage cache.
+    return local;
+  }
+
+  if (server) {
+    // Server is the cross-device source of truth; refresh the local cache.
+    cacheWorkspaceSnapshotLocally(server);
+    return server;
+  }
+
+  // No server snapshot yet. Migrate a pre-existing local canvas up to the
+  // server (data created before server persistence existed) so it appears on
+  // other devices, then return it.
+  if (local) {
+    void putServerWorkspaceSnapshot(local).catch(() => undefined);
+  }
+  return local;
 }
 
 export async function saveWorkspaceSnapshot(snapshot: WorkspaceSnapshot): Promise<void> {
+  // Write the local cache first so the canvas stays responsive even if the
+  // network call fails, then persist durably to the server.
+  cacheWorkspaceSnapshotLocally(snapshot);
+  await putServerWorkspaceSnapshot(snapshot);
+}
+
+async function fetchServerWorkspaceSnapshot(workspaceId: string): Promise<WorkspaceSnapshot | null> {
+  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const response = await fetch(
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/canvas-snapshot`,
+    { method: "GET", headers }
+  );
+  if (!response.ok) {
+    throw toApiError(await readPayload(response), response.status, "workspace_snapshot_get_failed");
+  }
+  const data = asRecord(await readPayload(response));
+  return isRecord(data.snapshot) ? (data.snapshot as WorkspaceSnapshot) : null;
+}
+
+async function putServerWorkspaceSnapshot(snapshot: WorkspaceSnapshot): Promise<void> {
+  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const response = await fetch(
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(snapshot.workspaceId)}/canvas-snapshot`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ snapshot }),
+    }
+  );
+  if (!response.ok) {
+    throw toApiError(await readPayload(response), response.status, "workspace_snapshot_save_failed");
+  }
+}
+
+function cacheWorkspaceSnapshotLocally(snapshot: WorkspaceSnapshot): void {
   const persisted = loadPersistedWorkspaceSnapshots();
-  const next: PersistedWorkspaceSnapshots = {
+  savePersistedWorkspaceSnapshots({
     version: 1,
     snapshots: {
       ...persisted.snapshots,
       [snapshot.workspaceId]: snapshot,
     },
-  };
-  savePersistedWorkspaceSnapshots(next);
+  });
 }
 
 export async function fetchWorkspaceCatalog(workspaceId: string): Promise<TableCatalogEntry[]> {

@@ -533,6 +533,24 @@ class WorkspaceService:
                     "published_pages",
                     "DELETE FROM published_pages WHERE workspace_id = ?",
                 ),
+                # Server-side chat history, chart assets, and canvas snapshot
+                # (see workspace_state.py). These live in this same SQLite file.
+                (
+                    "chat_messages",
+                    "DELETE FROM chat_messages WHERE workspace_id = ?",
+                ),
+                (
+                    "chat_sessions",
+                    "DELETE FROM chat_sessions WHERE workspace_id = ?",
+                ),
+                (
+                    "chart_assets",
+                    "DELETE FROM chart_assets WHERE workspace_id = ?",
+                ),
+                (
+                    "workspace_snapshots",
+                    "DELETE FROM workspace_snapshots WHERE workspace_id = ?",
+                ),
                 (
                     "workspace_invites",
                     "DELETE FROM workspace_invites WHERE workspace_id = ?",

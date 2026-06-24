@@ -64,10 +64,12 @@ from .views import (
 )
 from .db_migrations import apply_migrations
 from .workspaces import WorkspaceError, get_workspace_service, router as workspaces_router
+from .workspace_state import router as workspace_state_router
 
 app = FastAPI(title="Cognitrix API", version="0.1.0")
 app.include_router(ingestion_router)
 app.include_router(workspaces_router)
+app.include_router(workspace_state_router)
 app.include_router(table_catalog_router)
 app.include_router(portal_router)
 app.include_router(jobs_router)

@@ -9,6 +9,9 @@ export function useChartAssets() {
   return useQuery({
     queryKey: ["chart-assets"],
     queryFn: async () => {
+      // The store is the live view; cross-device hydration happens once per
+      // workspace in AppShell (hydrateWorkspaceStateFromServer). This query just
+      // mirrors the store and re-runs idempotently on invalidation.
       const assets = useAssetStore.getState().assets;
       setAssets(assets);
       return assets;

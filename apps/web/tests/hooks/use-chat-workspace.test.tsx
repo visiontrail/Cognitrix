@@ -178,7 +178,10 @@ describe("use-chat workspace isolation", () => {
     });
 
     await expect(result.current.mutateAsync({ sessionId: "session-a", content: "leak" })).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The rejected cross-workspace send must not trigger another chat stream.
+    // (Successful sends also fire best-effort server-sync PUTs, so assert on the
+    // stream endpoint specifically rather than the total fetch count.)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/chat/stream"))).toHaveLength(1);
   });
 
   it("collects grouped spec events as multi-asset assistant messages", async () => {
@@ -280,6 +283,11 @@ describe("use-chat workspace isolation", () => {
     await expect(
       result.current.mutateAsync({ sessionId: "session-a", seed: pendingSetup.suggestedCatalogSeed })
     ).rejects.toThrow();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The rejected cross-workspace send must not trigger another setup stream.
+    // (Successful sends also fire best-effort server-sync PUTs, so assert on the
+    // stream endpoint specifically rather than the total fetch count.)
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/ingestion/setup/confirm/stream"))
+    ).toHaveLength(1);
   });
 });

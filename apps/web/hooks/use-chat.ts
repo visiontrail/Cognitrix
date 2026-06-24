@@ -18,6 +18,12 @@ import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session
 import { useI18n } from "@/lib/i18n/context";
 import { refreshWorkspaceCatalog } from "@/lib/workspace/query-keys";
 import {
+  fetchServerMessages,
+  putServerMessages,
+  mergeMessages,
+} from "@/lib/chat/persistence-api";
+import { removeSessionFromServer, syncSessionToServer } from "@/lib/chat/server-sync";
+import {
   approveIngestionProposal,
   createIngestionUpload,
   mapPlanLikePayload,
@@ -29,6 +35,7 @@ import type { IngestionSSEEvent } from "@/lib/ingestion/api";
 import type { QueryChartType } from "@/lib/charts/chart-type-options";
 import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/charts/kpi-options";
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
+import { applyDataLabels } from "@/lib/charts/data-labels";
 import { generateId, isRecord } from "@/lib/utils";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 import type {
@@ -77,6 +84,10 @@ export function useChatSessions() {
       if (!workspaceId) {
         return [];
       }
+      // The store is the live view; cross-device hydration happens once per
+      // workspace in AppShell (hydrateWorkspaceStateFromServer), strictly after
+      // the localStorage cache is loaded, to avoid an init/fetch race. This
+      // query just mirrors the store and re-runs idempotently on invalidation.
       const sessions = useChatStore.getState().sessions;
       setSessions(sessions);
       return sessions;
@@ -94,9 +105,21 @@ export function useChatMessages(sessionId: string | null) {
       if (!workspaceId || !sessionId) {
         return EMPTY_MESSAGES;
       }
-      const messages = useChatStore.getState().messagesBySession[sessionId] ?? EMPTY_MESSAGES;
-      setMessages(sessionId, messages);
-      return messages;
+      const local = useChatStore.getState().messagesBySession[sessionId] ?? EMPTY_MESSAGES;
+      let server: ChatMessage[];
+      try {
+        server = await fetchServerMessages(workspaceId, sessionId);
+      } catch {
+        setMessages(sessionId, local);
+        return local;
+      }
+      const merged = mergeMessages(server, local);
+      setMessages(sessionId, merged);
+      // Backfill messages this device has but the server does not yet.
+      if (local.length > server.length) {
+        void putServerMessages(workspaceId, sessionId, merged).catch(() => undefined);
+      }
+      return merged;
     },
     enabled: Boolean(workspaceId && sessionId),
     staleTime: Infinity,
@@ -118,6 +141,9 @@ export function useCreateSession() {
     onSuccess: (session) => {
       addSession(session);
       setActiveSession(session.id);
+      if (workspaceId) {
+        void syncSessionToServer(workspaceId, session.id);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
     },
   });
@@ -132,6 +158,9 @@ export function useDeleteSession() {
     mutationFn: async (_sessionId: string) => undefined,
     onSuccess: (_, sessionId) => {
       removeSession(sessionId);
+      if (workspaceId) {
+        void removeSessionFromServer(workspaceId, sessionId);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
     },
   });
@@ -153,6 +182,7 @@ export function useSendMessage() {
       approvedAction,
       preferredChartType,
       generationStrategy,
+      showDataLabels,
       multiChartConfirmation,
     }: {
       sessionId: string;
@@ -161,6 +191,7 @@ export function useSendMessage() {
       approvedAction?: IngestionProposalAction;
       preferredChartType?: QueryChartType;
       generationStrategy?: "multi_chart";
+      showDataLabels?: boolean;
       multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
       const workspaceId = getActiveWorkspaceIdOrThrow(t);
@@ -225,6 +256,7 @@ export function useSendMessage() {
           content: trimmedContent,
           preferredChartType,
           generationStrategy,
+          showDataLabels,
           multiChartConfirmation,
           workspaceId,
           signal: abortController.signal,
@@ -295,6 +327,9 @@ export function useSendMessage() {
         messageDelta: 1,
       });
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (workspaceId) {
+        void syncSessionToServer(workspaceId, sessionId);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
       queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
       if (catalogRefreshWorkspaceId) {
@@ -318,6 +353,9 @@ export function useSendMessage() {
         messageDelta: 1,
       });
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (workspaceId) {
+        void syncSessionToServer(workspaceId, sessionId);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
       queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
     },
@@ -461,6 +499,7 @@ async function streamAssistantResponse({
   content,
   preferredChartType,
   generationStrategy,
+  showDataLabels,
   multiChartConfirmation,
   workspaceId,
   signal,
@@ -471,6 +510,7 @@ async function streamAssistantResponse({
   content: string;
   preferredChartType?: QueryChartType;
   generationStrategy?: "multi_chart";
+  showDataLabels?: boolean;
   multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
   signal?: AbortSignal;
@@ -694,6 +734,7 @@ async function streamAssistantResponse({
         prompt: content,
         assetId: event.chartId ? `asset-${event.chartId}` : undefined,
         title: event.chartLabel,
+        showDataLabels,
       })
     )
     .filter((asset): asset is ChartAsset => Boolean(asset));
@@ -1428,6 +1469,9 @@ export function useConfirmIngestionSetup() {
         messageDelta: 1,
       });
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (workspaceId) {
+        void syncSessionToServer(workspaceId, sessionId);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
       queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
       if (catalogRefreshWorkspaceId) {
@@ -1451,6 +1495,9 @@ export function useConfirmIngestionSetup() {
         messageDelta: 1,
       });
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (workspaceId) {
+        void syncSessionToServer(workspaceId, sessionId);
+      }
       queryClient.invalidateQueries({ queryKey: chatSessionsQueryKey(workspaceId) });
       queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(workspaceId, sessionId) });
     },
@@ -1826,7 +1873,14 @@ function extractUploadStats(upload: IngestionUploadResult): { sheetCount: number
 
 function toChartAsset(
   rawSpec: unknown,
-  source: { sessionId: string; messageId: string; prompt: string; assetId?: string; title?: string }
+  source: {
+    sessionId: string;
+    messageId: string;
+    prompt: string;
+    assetId?: string;
+    title?: string;
+    showDataLabels?: boolean;
+  }
 ): ChartAsset | null {
   if (!isRecord(rawSpec)) {
     return null;
@@ -1837,10 +1891,11 @@ function toChartAsset(
     return null;
   }
   const title = source.title || (typeof rawSpec.title === "string" && rawSpec.title.trim() ? rawSpec.title : "Chart");
-  const echartsOption = resolveEchartsOption(rawSpec);
-  if (!echartsOption) {
+  const resolvedOption = resolveEchartsOption(rawSpec);
+  if (!resolvedOption) {
     return null;
   }
+  const echartsOption = source.showDataLabels ? applyDataLabels(resolvedOption) : resolvedOption;
 
   const spec: ChartSpec = {
     chartType,

@@ -113,7 +113,8 @@ describe("ChatInput chart type picker", () => {
 
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
     expect(screen.getByText("Multi-chart mode is on for this message. Include the grouping dimension, then press Enter.")).toBeInTheDocument();
-    expect(screen.getByText("Multi-chart generation")).toBeInTheDocument();
+    // The chip (distinct from the still-open menu item) carries the remove control.
+    expect(screen.getByRole("button", { name: "Remove selected strategy" })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Chat Input"), "show headcount by department");
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -125,6 +126,92 @@ describe("ChatInput chart type picker", () => {
         generationStrategy: "multi_chart",
       })
     );
+  });
+
+  it("toggles data labels from the action menu and sends the flag", async () => {
+    const user = userEvent.setup();
+    render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
+
+    expect(
+      screen.getByText(
+        "Data labels are on for this message — the chart will print each value directly on the bars, slices, or points."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Data labels on")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Chat Input"), "headcount by department");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        content: "headcount by department",
+        showDataLabels: true,
+      })
+    );
+  });
+
+  it("multi-selects several generation options and sends all of them together", async () => {
+    const user = userEvent.setup();
+    render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
+    // The menu stays open between toggles so multiple options can be picked.
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
+
+    expect(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" })).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    expect(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" })).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+
+    // Both chips are present, and the hint switches to the combined form.
+    expect(screen.getByRole("button", { name: "Remove selected strategy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Turn off data labels" })).toBeInTheDocument();
+    expect(
+      screen.getByText("2 generation options are on for this message. Press Enter to send.")
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Chat Input"), "headcount by department");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        content: "headcount by department",
+        generationStrategy: "multi_chart",
+        showDataLabels: true,
+      })
+    );
+  });
+
+  it("removes one selected option from its chip without affecting the others", async () => {
+    const user = userEvent.setup();
+    render(React.createElement(ChatInput, { sessionId: "session-1" }));
+
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
+
+    // Drop multi-chart via its chip; data labels stays on.
+    await user.click(screen.getByRole("button", { name: "Remove selected strategy" }));
+
+    expect(screen.queryByRole("button", { name: "Remove selected strategy" })).not.toBeInTheDocument();
+    expect(screen.getByText("Data labels on")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Chat Input"), "headcount by department");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const payload = mutate.mock.calls.at(-1)?.[0] ?? {};
+    expect(payload).toMatchObject({ showDataLabels: true });
+    expect(payload).not.toHaveProperty("generationStrategy");
   });
 
   it("shows human-readable column labels in @ suggestions while inserting physical names", async () => {

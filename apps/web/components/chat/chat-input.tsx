@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart3, FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
+import { FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -16,8 +16,34 @@ import {
   type ChartTypeOption,
   type QueryChartType,
 } from "@/lib/charts/chart-type-options";
+import {
+  GENERATION_OPTIONS,
+  buildGenerationOptionPayload,
+  selectedGenerationOptions,
+  toggleGenerationOption,
+  type GenerationOptionId,
+  type GenerationOptionTone,
+} from "@/lib/chat/generation-options";
 import type { IngestionCatalogSetupSeed, IngestionProposalAction, IngestionTimeGrain } from "@/types/ingestion";
 import { IngestionSetupCard } from "@/components/workspace/ingestion-setup-card";
+
+// Concrete Tailwind classes per generation-option tone. Kept as full literal
+// strings (not interpolated) so the JIT compiler always emits them.
+const OPTION_TONE_CHIP: Record<GenerationOptionTone, { container: string; remove: string }> = {
+  blue: {
+    container: "border-focus-blue/30 bg-focus-blue/10 text-focus-blue",
+    remove: "text-focus-blue/75 hover:text-focus-blue",
+  },
+  terracotta: {
+    container: "border-terracotta/30 bg-terracotta/10 text-terracotta",
+    remove: "text-terracotta/75 hover:text-terracotta",
+  },
+};
+
+const OPTION_TONE_MENU_ACTIVE: Record<GenerationOptionTone, string> = {
+  blue: "bg-focus-blue/10 text-focus-blue",
+  terracotta: "bg-terracotta/10 text-terracotta",
+};
 
 export function ChatInput({ sessionId }: { sessionId: string }) {
   const { locale, t } = useI18n();
@@ -36,13 +62,14 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [customApprovalInput, setCustomApprovalInput] = useState(false);
   const [selectedChartType, setSelectedChartType] = useState<QueryChartType | null>(null);
-  const [selectedGenerationStrategy, setSelectedGenerationStrategy] = useState<GenerationStrategy | null>(null);
+  const [selectedOptions, setSelectedOptions] = useState<Set<GenerationOptionId>>(() => new Set());
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [chartTrigger, setChartTrigger] = useState<ChartTriggerState | null>(null);
   const [activeChartIndex, setActiveChartIndex] = useState(0);
   const [columnTrigger, setColumnTrigger] = useState<ColumnTriggerState | null>(null);
   const [activeColumnIndex, setActiveColumnIndex] = useState(0);
   const chartOptions = useMemo(() => getQueryChartTypeOptions(locale), [locale]);
+  const activeOptions = useMemo(() => selectedGenerationOptions(selectedOptions), [selectedOptions]);
   const columns = useWorkspaceColumns(activeWorkspaceId);
   const approvalOptions = useMemo(
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
@@ -62,7 +89,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (pendingApproval || pendingSetup) {
       setSelectedFile(null);
-      setSelectedGenerationStrategy(null);
+      setSelectedOptions(new Set());
       setActionMenuOpen(false);
       setChartTrigger(null);
       setColumnTrigger(null);
@@ -116,11 +143,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       content,
       attachment: selectedFile ?? undefined,
       preferredChartType: chartType ?? undefined,
-      generationStrategy: selectedGenerationStrategy ?? undefined,
+      ...buildGenerationOptionPayload(selectedOptions),
     });
     setComposerText("");
     setSelectedChartType(null);
-    setSelectedGenerationStrategy(null);
+    setSelectedOptions(new Set());
     setActionMenuOpen(false);
     setChartTrigger(null);
     setColumnTrigger(null);
@@ -137,7 +164,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     inputLockedByApproval,
     isSending,
     selectedChartType,
-    selectedGenerationStrategy,
+    selectedOptions,
     selectedFile,
     sendMessage,
     sessionId,
@@ -165,7 +192,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       });
       setComposerText("");
       setSelectedChartType(null);
-      setSelectedGenerationStrategy(null);
+      setSelectedOptions(new Set());
       setActionMenuOpen(false);
       setChartTrigger(null);
       setColumnTrigger(null);
@@ -382,7 +409,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           </div>
         ) : null}
 
-        {selectedFile || selectedGenerationStrategy ? (
+        {selectedFile || activeOptions.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             {selectedFile ? (
               <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border-cream bg-parchment px-3 py-1 text-caption text-near-black">
@@ -406,21 +433,31 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                 </button>
               </div>
             ) : null}
-            {selectedGenerationStrategy === "multi_chart" ? (
-              <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-focus-blue/30 bg-focus-blue/10 px-3 py-1 text-caption font-medium text-focus-blue">
-                <BarChart3 className="h-3.5 w-3.5 shrink-0" />
-                <span>{t("chat.strategy.multiChart")}</span>
-                <button
-                  type="button"
-                  className="rounded-full p-0.5 text-focus-blue/75 hover:text-focus-blue"
-                  onClick={() => setSelectedGenerationStrategy(null)}
-                  aria-label={t("chat.strategy.remove")}
-                  disabled={isSending}
+            {activeOptions.map((option) => {
+              const Icon = option.icon;
+              const tone = OPTION_TONE_CHIP[option.tone];
+              return (
+                <div
+                  key={option.id}
+                  className={cn(
+                    "inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1 text-caption font-medium",
+                    tone.container
+                  )}
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : null}
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span>{t(option.chipLabelKey)}</span>
+                  <button
+                    type="button"
+                    className={cn("rounded-full p-0.5", tone.remove)}
+                    onClick={() => setSelectedOptions((current) => toggleGenerationOption(current, option.id))}
+                    aria-label={t(option.removeLabelKey)}
+                    disabled={isSending}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         ) : null}
 
@@ -471,25 +508,29 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                   <FileSpreadsheet className="h-4 w-4 shrink-0 text-stone-gray" />
                   <span>{t("chat.actions.attachFile")}</span>
                 </button>
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={selectedGenerationStrategy === "multi_chart"}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm focus:outline-none",
-                    selectedGenerationStrategy === "multi_chart"
-                      ? "bg-focus-blue/10 text-focus-blue"
-                      : "text-near-black hover:bg-parchment focus:bg-parchment"
-                  )}
-                  onClick={() => {
-                    setSelectedGenerationStrategy((current) => current === "multi_chart" ? null : "multi_chart");
-                    setActionMenuOpen(false);
-                    requestAnimationFrame(() => textareaRef.current?.focus());
-                  }}
-                >
-                  <BarChart3 className="h-4 w-4 shrink-0" />
-                  <span>{t("chat.actions.multiChart")}</span>
-                </button>
+                {GENERATION_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  const checked = selectedOptions.has(option.id);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={checked}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm focus:outline-none",
+                        checked
+                          ? OPTION_TONE_MENU_ACTIVE[option.tone]
+                          : "text-near-black hover:bg-parchment focus:bg-parchment"
+                      )}
+                      // Keep the menu open so several options can be toggled in one pass.
+                      onClick={() => setSelectedOptions((current) => toggleGenerationOption(current, option.id))}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span>{t(option.menuLabelKey)}</span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -576,8 +617,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       </div>
 
       <p className="text-label text-stone-gray text-center mt-2">
-        {selectedGenerationStrategy === "multi_chart"
-          ? t("chat.inputHintWithMultiChart")
+        {activeOptions.length > 1
+          ? t("chat.inputHintWithOptions", { count: activeOptions.length })
+          : activeOptions.length === 1
+          ? t(activeOptions[0].hintKey)
           : selectedChartType
           ? t("chat.inputHintWithChartType", { chartType: selectedChartType })
           : t("chat.inputHintWithAttachment")}
@@ -599,8 +642,6 @@ type ColumnTriggerState = {
   end: number;
   query: string;
 };
-
-type GenerationStrategy = "multi_chart";
 
 // ─── Trigger detection ─────────────────────────────────────────────────────
 

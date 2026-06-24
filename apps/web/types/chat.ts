@@ -54,6 +54,7 @@ export type SendMessageRequest = {
   attachment?: File;
   preferredChartType?: import("./chart").KnownChartType;
   generationStrategy?: "multi_chart";
+  showDataLabels?: boolean;
   multiChartConfirmation?: MultiChartConfirmationSubmission;
 };
 

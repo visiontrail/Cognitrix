@@ -54,6 +54,22 @@ describe("MultiChartConfirmationBox", () => {
     });
   });
 
+  it("replays the captured showDataLabels flag on confirm", async () => {
+    render(
+      <MultiChartConfirmationBox
+        sessionId="session-a"
+        confirmation={{ ...confirmation, showDataLabels: true }}
+      />
+    );
+
+    await userEvent.click(screen.getByLabelText("PM"));
+    await userEvent.click(screen.getByRole("button", { name: "Generate 2" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ showDataLabels: true })
+    );
+  });
+
   it("blocks confirmation above the maximum and supports cancel", async () => {
     render(<MultiChartConfirmationBox sessionId="session-a" confirmation={confirmation} />);
 

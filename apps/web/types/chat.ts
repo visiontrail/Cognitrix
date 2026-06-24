@@ -73,6 +73,11 @@ export type MultiChartConfirmation = {
   expiresAt?: number;
   truncated?: boolean;
   items: MultiChartConfirmationItem[];
+  // Client-only generation options captured on the request turn that opened
+  // this confirmation, so they can be replayed when the user confirms (the
+  // spec-bearing turn). `showDataLabels` drives the post-processing transform
+  // in `toChartAsset`; it is never sent to the backend.
+  showDataLabels?: boolean;
 };
 
 export type MultiChartConfirmationSubmission = {

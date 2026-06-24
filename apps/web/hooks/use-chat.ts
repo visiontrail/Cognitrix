@@ -669,7 +669,11 @@ async function streamAssistantResponse({
 
       if (streamEvent.event === "confirmation_required") {
         if (payload.confirmation_type === "multi_chart_generation") {
-          pendingMultiChartConfirmation = mapMultiChartConfirmation(payload);
+          // Stash the client-only generation options from this turn so the
+          // confirmation turn (which is where specs are actually produced) can
+          // replay them. Without this, "show data labels" is dropped across the
+          // confirm round-trip and the generated charts render without labels.
+          pendingMultiChartConfirmation = { ...mapMultiChartConfirmation(payload), showDataLabels };
           useChatStore.getState().setPendingMultiChartConfirmation(sessionId, pendingMultiChartConfirmation);
         }
         continue;

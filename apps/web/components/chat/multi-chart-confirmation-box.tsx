@@ -45,6 +45,9 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
     sendMessage.mutate({
       sessionId,
       content: t("chat.multiChart.confirmMessage", { count: selectedCount }),
+      // Replay the data-labels option captured when this confirmation opened —
+      // the specs are produced on this turn, so the flag must travel with it.
+      showDataLabels: confirmation.showDataLabels,
       multiChartConfirmation: {
         confirmationId: confirmation.confirmationId,
         action: selectedCount === confirmation.items.length ? "confirm" : "adjust",

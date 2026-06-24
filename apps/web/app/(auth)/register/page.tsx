@@ -104,8 +104,15 @@ function RegisterForm() {
     router.push("/login");
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLFormElement>) {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing && !loading) {
+      e.preventDefault();
+      e.currentTarget.requestSubmit();
+    }
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-5">
       <div className="space-y-1.5">
         <label htmlFor="displayName" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
           {t("auth.displayName")}

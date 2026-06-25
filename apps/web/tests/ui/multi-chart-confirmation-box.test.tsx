@@ -88,4 +88,22 @@ describe("MultiChartConfirmationBox", () => {
       },
     });
   });
+
+  it("locks the selection UI after the user submits a selection", async () => {
+    render(<MultiChartConfirmationBox sessionId="session-a" confirmation={confirmation} />);
+
+    await userEvent.click(screen.getByLabelText("PM"));
+    await userEvent.click(screen.getByRole("button", { name: "Generate 2" }));
+
+    expect(screen.getByLabelText("HR")).toBeDisabled();
+    expect(screen.getByLabelText("PM")).toBeDisabled();
+    expect(screen.getByLabelText("ENG")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    await userEvent.click(screen.getByLabelText("ENG"));
+
+    expect(screen.getByText("2 selected · max 2")).toBeInTheDocument();
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
 });

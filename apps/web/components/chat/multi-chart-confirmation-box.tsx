@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSendMessage } from "@/hooks/use-chat";
 import { useI18n } from "@/lib/i18n/context";
+import { cn } from "@/lib/utils";
 import type { MultiChartConfirmation } from "@/types/chat";
 
 type Props = {
@@ -19,6 +20,12 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
     () => new Set(confirmation.items.filter((item) => item.selected !== false).map((item) => item.key))
   );
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    setSelectedKeys(new Set(confirmation.items.filter((item) => item.selected !== false).map((item) => item.key)));
+    setSubmitted(false);
+  }, [confirmation.confirmationId, confirmation.items]);
 
   const selectedItems = useMemo(
     () => confirmation.items.filter((item) => selectedKeys.has(item.key)),
@@ -26,9 +33,11 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
   );
   const selectedCount = selectedItems.length;
   const overLimit = selectedCount > confirmation.maxChartCount;
-  const canConfirm = selectedCount > 0 && !overLimit && !sendMessage.isPending;
+  const interactionsLocked = submitted || sendMessage.isPending;
+  const canConfirm = selectedCount > 0 && !overLimit && !interactionsLocked;
 
   const toggleItem = (key: string) => {
+    if (interactionsLocked) return;
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -42,6 +51,7 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
 
   const confirm = () => {
     if (!canConfirm) return;
+    setSubmitted(true);
     sendMessage.mutate({
       sessionId,
       content: t("chat.multiChart.confirmMessage", { count: selectedCount }),
@@ -57,6 +67,8 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
   };
 
   const cancel = () => {
+    if (interactionsLocked) return;
+    setSubmitted(true);
     sendMessage.mutate({
       sessionId,
       content: t("chat.multiChart.cancelMessage"),
@@ -90,12 +102,17 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
         {confirmation.items.map((item) => (
           <label
             key={item.key}
-            className="flex min-h-9 cursor-pointer items-center gap-2 rounded-subtle border border-border-cream bg-parchment px-2 py-1.5 text-body-sm text-charcoal-warm"
+            aria-disabled={interactionsLocked}
+            className={cn(
+              "flex min-h-9 items-center gap-2 rounded-subtle border border-border-cream bg-parchment px-2 py-1.5 text-body-sm text-charcoal-warm",
+              interactionsLocked ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+            )}
           >
             <input
               type="checkbox"
               className="h-4 w-4 accent-terracotta"
               checked={selectedKeys.has(item.key)}
+              disabled={interactionsLocked}
               onChange={() => toggleItem(item.key)}
             />
             <span className="min-w-0 flex-1 break-words">{item.label}</span>
@@ -116,7 +133,7 @@ export function MultiChartConfirmationBox({ sessionId, confirmation }: Props) {
           <Check className="h-3.5 w-3.5" />
           {t("chat.multiChart.generateSelected", { count: selectedCount })}
         </Button>
-        <Button size="sm" variant="ghost" onClick={cancel} disabled={sendMessage.isPending}>
+        <Button size="sm" variant="ghost" onClick={cancel} disabled={interactionsLocked}>
           <X className="h-3.5 w-3.5" />
           {t("chat.multiChart.cancel")}
         </Button>

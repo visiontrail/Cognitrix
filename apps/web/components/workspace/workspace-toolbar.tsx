@@ -11,6 +11,8 @@ import {
   LayoutTemplate,
   Loader2,
   MessageSquare,
+  Heading1,
+  Heading2,
   Minus,
   NotebookPen,
   Pencil,
@@ -35,6 +37,7 @@ import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { toast } from "sonner";
 import { CANVAS_FORMAT_PRESETS, getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import {
   exportInfiniteCanvasToPng,
   exportFixedCanvasToPng,
@@ -61,6 +64,48 @@ import type {
 
 const DEFAULT_TEXT_NODE_WIDTH = 480;
 const DEFAULT_TEXT_NODE_HEIGHT = 220;
+
+type TextLevel = "title" | "heading" | "body";
+
+type TextLevelPreset = {
+  level: TextLevel;
+  fontSize: number;
+  fontWeight: "normal" | "bold";
+  width: number;
+  height: number;
+  labelKey: string;
+  contentKey: string;
+};
+
+const TEXT_LEVEL_PRESETS: Record<TextLevel, TextLevelPreset> = {
+  title: {
+    level: "title",
+    fontSize: 34,
+    fontWeight: "bold",
+    width: 620,
+    height: 88,
+    labelKey: "workspace.addTitle",
+    contentKey: "workspace.defaultTitleContent",
+  },
+  heading: {
+    level: "heading",
+    fontSize: 24,
+    fontWeight: "bold",
+    width: 560,
+    height: 72,
+    labelKey: "workspace.addHeading",
+    contentKey: "workspace.defaultHeadingContent",
+  },
+  body: {
+    level: "body",
+    fontSize: 18,
+    fontWeight: "normal",
+    width: DEFAULT_TEXT_NODE_WIDTH,
+    height: DEFAULT_TEXT_NODE_HEIGHT,
+    labelKey: "workspace.addTextBlock",
+    contentKey: "workspace.defaultTextContent",
+  },
+};
 
 export function WorkspaceToolbar() {
   const { t } = useI18n();
@@ -239,26 +284,33 @@ export function WorkspaceToolbar() {
     }
   };
 
-  const handleAddTextNode = () => {
+  const handleAddTextNode = (level: TextLevel = "body") => {
+    const preset = TEXT_LEVEL_PRESETS[level];
     const nodeData: TextNodeData = {
       type: "text",
-      content: t("workspace.defaultTextContent"),
-      fontSize: 18,
-      fontWeight: "normal",
+      content: t(preset.contentKey),
+      fontSize: preset.fontSize,
+      fontWeight: preset.fontWeight,
       color: "#3f3d39",
-      width: DEFAULT_TEXT_NODE_WIDTH,
-      height: DEFAULT_TEXT_NODE_HEIGHT,
+      width: preset.width,
+      height: preset.height,
     };
+
+    const position = findOpenCanvasPosition(
+      nodes,
+      { width: preset.width, height: preset.height },
+      canvasFormat.id
+    );
 
     addNode({
       id: `node-${generateId()}`,
       type: "textNode",
-      position: { x: 50 + (nodes.length % 3) * 520, y: 50 + Math.floor(nodes.length / 3) * 260 },
+      position,
       dragHandle: ".text-node-drag-handle",
-      width: DEFAULT_TEXT_NODE_WIDTH,
-      height: DEFAULT_TEXT_NODE_HEIGHT,
-      initialWidth: DEFAULT_TEXT_NODE_WIDTH,
-      initialHeight: DEFAULT_TEXT_NODE_HEIGHT,
+      width: preset.width,
+      height: preset.height,
+      initialWidth: preset.width,
+      initialHeight: preset.height,
       data: nodeData,
     });
   };
@@ -273,10 +325,11 @@ export function WorkspaceToolbar() {
       height: 200,
       rotation: rotations[nodes.length % rotations.length],
     };
+    const position = findOpenCanvasPosition(nodes, { width: 240, height: 200 }, canvasFormat.id);
     addNode({
       id: `node-${generateId()}`,
       type: "stickyNoteNode",
-      position: { x: 60 + (nodes.length % 4) * 260, y: 60 + Math.floor(nodes.length / 4) * 220 },
+      position,
       dragHandle: ".sticky-note-drag-handle",
       width: 240,
       height: 200,
@@ -293,10 +346,11 @@ export function WorkspaceToolbar() {
       width: 480,
       rotation: 0,
     };
+    const position = findOpenCanvasPosition(nodes, { width: 480, height: 24 }, canvasFormat.id);
     addNode({
       id: `node-${generateId()}`,
       type: "dividerNode",
-      position: { x: 50, y: 60 + nodes.length * 80 },
+      position,
       dragHandle: ".divider-node-drag-handle",
       width: 480,
       height: 24,
@@ -581,7 +635,25 @@ export function WorkspaceToolbar() {
           </span>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={handleAddTextNode}>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={() => handleAddTextNode("title")}>
+                <Heading1 className="w-3.5 h-3.5" />
+                <span className="text-xs">{t("workspace.addTitle")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.addTitle")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={() => handleAddTextNode("heading")}>
+                <Heading2 className="w-3.5 h-3.5" />
+                <span className="text-xs">{t("workspace.addHeading")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.addHeading")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2" onClick={() => handleAddTextNode("body")}>
                 <Type className="w-3.5 h-3.5" />
                 <span className="text-xs">{t("workspace.addTextBlock")}</span>
               </Button>

@@ -226,9 +226,10 @@ describe("ChartMessageCard", () => {
     const nodes = useWorkspaceStore.getState().nodes;
     expect(nodes).toHaveLength(2);
     expect(nodes.map((node) => node.data.assetId)).toEqual(["asset-1", "asset-2"]);
+    // Charts are packed side-by-side with a gap so they never overlap.
     expect(nodes.map((node) => node.position)).toEqual([
       { x: 50, y: 50 },
-      { x: 610, y: 50 },
+      { x: 598, y: 50 },
     ]);
   });
 });

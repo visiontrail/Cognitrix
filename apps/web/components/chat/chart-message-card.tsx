@@ -18,6 +18,7 @@ import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
@@ -68,8 +69,14 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
       return;
     }
 
-    const offsetX = 50 + (nodes.length % 3) * 560;
-    const offsetY = 50 + Math.floor(nodes.length / 3) * 420;
+    const position =
+      canvasFormat.id === "web-design"
+        ? { x: 0, y: 0 }
+        : findOpenCanvasPosition(
+            nodes,
+            { width: DEFAULT_CHART_NODE_WIDTH, height: DEFAULT_CHART_NODE_HEIGHT },
+            canvasFormat.id
+          );
 
     const nodeData: ChartNodeData = {
       type: "chart",
@@ -84,7 +91,7 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
     const node = {
       id: `node-${generateId()}`,
       type: "chartNode",
-      position: { x: offsetX, y: offsetY },
+      position,
       width: DEFAULT_CHART_NODE_WIDTH,
       height: DEFAULT_CHART_NODE_HEIGHT,
       initialWidth: DEFAULT_CHART_NODE_WIDTH,
@@ -100,7 +107,7 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
 
     setActivePanel("both");
     toast.success(t("chat.toast.addedToWorkspace", { title: asset.title, canvasName }));
-  }, [asset, activeWorkspaceId, nodes.length, canvasFormat.id, addNode, addNodeToWebDesign, setActivePanel, t, canvasName]);
+  }, [asset, activeWorkspaceId, nodes, canvasFormat.id, addNode, addNodeToWebDesign, setActivePanel, t, canvasName]);
 
   const handleCopyAsPng = useCallback(async () => {
     if (!asset || !chartCaptureRef.current) {
@@ -255,10 +262,11 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
       return;
     }
 
-    resolvedAssets.forEach((asset, index) => {
-      const positionIndex = nodes.length + index;
-      const offsetX = 50 + (positionIndex % 3) * 560;
-      const offsetY = 50 + Math.floor(positionIndex / 3) * 420;
+    // Track nodes placed in this batch so each new chart avoids both existing
+    // canvas nodes and siblings added earlier in the same loop.
+    const placedNodes = [...nodes];
+
+    resolvedAssets.forEach((asset) => {
       const nodeData: ChartNodeData = {
         type: "chart",
         assetId: asset.id,
@@ -268,10 +276,18 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
         width: DEFAULT_CHART_NODE_WIDTH,
         height: DEFAULT_CHART_NODE_HEIGHT,
       };
+      const position =
+        canvasFormat.id === "web-design"
+          ? { x: 0, y: 0 }
+          : findOpenCanvasPosition(
+              placedNodes,
+              { width: DEFAULT_CHART_NODE_WIDTH, height: DEFAULT_CHART_NODE_HEIGHT },
+              canvasFormat.id
+            );
       const node = {
         id: `node-${generateId()}`,
         type: "chartNode",
-        position: { x: offsetX, y: offsetY },
+        position,
         width: DEFAULT_CHART_NODE_WIDTH,
         height: DEFAULT_CHART_NODE_HEIGHT,
         initialWidth: DEFAULT_CHART_NODE_WIDTH,
@@ -281,6 +297,7 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
       if (canvasFormat.id === "web-design") {
         addNodeToWebDesign(node);
       } else {
+        placedNodes.push(node as (typeof placedNodes)[number]);
         addNode(node);
       }
     });
@@ -295,7 +312,7 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
     canvasFormat.id,
     canvasName,
     getAsset,
-    nodes.length,
+    nodes,
     setActivePanel,
     t,
   ]);

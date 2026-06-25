@@ -115,7 +115,7 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
         aria-expanded={open}
       />
       {loading && (
-        <div className="absolute right-2 top-2 text-xs text-muted-foreground">...</div>
+        <div className="absolute right-2 top-2 text-xs text-[#777166]">...</div>
       )}
       {open && results.length > 0 && (
         <ul
@@ -128,7 +128,7 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
               role="option"
               aria-selected={idx === focusedIndex}
               className={`px-3 py-2 cursor-pointer text-sm transition-colors ${
-                idx === focusedIndex ? "bg-warm-sand" : "hover:bg-muted"
+                idx === focusedIndex ? "bg-warm-sand" : "hover:bg-warm-sand"
               }`}
               onMouseDown={() => {
                 onSelect(user);
@@ -137,10 +137,10 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
                 setOpen(false);
               }}
             >
-              <span className="font-medium">{user.display_name}</span>
-              <span className="ml-2 text-muted-foreground">{user.email_masked}</span>
+              <span className="font-medium text-[#2f332f]">{user.display_name}</span>
+              <span className="ml-2 text-[#777166]">{user.email_masked}</span>
               {user.job_label && (
-                <span className="ml-2 text-xs text-muted-foreground">·{user.job_label}</span>
+                <span className="ml-2 text-xs text-[#777166]">·{user.job_label}</span>
               )}
             </li>
           ))}

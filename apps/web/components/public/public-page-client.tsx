@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PublicPageGrid } from "@/components/public/public-page-grid";
 import { PublicPageSidebar } from "@/components/public/public-page-sidebar";
+import { PublishedFixedCanvas, PublishedFreeCanvas } from "@/components/public/published-canvas-renderers";
 import {
   fetchPublicManifest,
   type PublicManifestResponse,
@@ -23,14 +24,20 @@ export function PublicPageClient({ token }: { token: string }) {
     fetchPublicManifest(token)
       .then((payload) => {
         if (cancelled) return;
+        if (!isSupportedManifest(payload.manifest)) {
+          setState("invalid");
+          return;
+        }
         setPage(payload);
-        const firstSidebarPageId =
-          payload.manifest.sidebar?.[0]?.pageId ?? payload.manifest.sidebar?.[0]?.id;
-        setActivePageId(
-          payload.manifest.layout.activePageId ??
-            payload.manifest.layout.pages?.[0]?.id ??
-            firstSidebarPageId
-        );
+        if ((payload.manifest.canvas?.kind ?? "web_page") === "web_page") {
+          const firstSidebarPageId =
+            payload.manifest.sidebar?.[0]?.pageId ?? payload.manifest.sidebar?.[0]?.id;
+          setActivePageId(
+            payload.manifest.layout.activePageId ??
+              payload.manifest.layout.pages?.[0]?.id ??
+              firstSidebarPageId
+          );
+        }
         setState("ready");
       })
       .catch(() => {
@@ -60,6 +67,14 @@ export function PublicPageClient({ token }: { token: string }) {
     );
   }
 
+  const canvasKind = page.manifest.canvas?.kind ?? "web_page";
+  if (canvasKind === "free_layout") {
+    return <PublishedFreeCanvas token={token} manifest={page.manifest} />;
+  }
+  if (canvasKind === "fixed_size") {
+    return <PublishedFixedCanvas token={token} manifest={page.manifest} />;
+  }
+
   return (
     <div className="flex h-screen min-h-0 overflow-hidden bg-[#f7f4eb] text-[#2f332f]">
       <PublicPageSidebar
@@ -72,4 +87,17 @@ export function PublicPageClient({ token }: { token: string }) {
       </main>
     </div>
   );
+}
+
+function isSupportedManifest(manifest: PublicManifestResponse["manifest"]): boolean {
+  const kind = manifest.canvas?.kind ?? "web_page";
+  const supportedKinds = ["free_layout", "fixed_size", "web_page"];
+  if (!supportedKinds.includes(kind)) return false;
+  if (kind === "fixed_size") {
+    return Boolean(manifest.canvas?.page?.width && manifest.canvas.page.height);
+  }
+  if (kind === "web_page") {
+    return Boolean(manifest.layout?.grid?.rows);
+  }
+  return Array.isArray(manifest.content?.nodes);
 }

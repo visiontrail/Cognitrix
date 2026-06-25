@@ -48,6 +48,22 @@ export type PublishedSidebarItem = {
 };
 
 export type PublishedManifest = {
+  schema_version?: 2;
+  canvas?: {
+    format_id: string;
+    kind: "free_layout" | "fixed_size" | "web_page";
+    viewport?: { x: number; y: number; zoom: number };
+    bounds?: { x: number; y: number; width: number; height: number };
+    page?: { preset_id: string; width: number; height: number };
+  };
+  content?: {
+    nodes?: PublishedCanvasNode[];
+    edges?: PublishedCanvasEdge[];
+    web_design?: {
+      layout: PublishedManifest["layout"];
+      sidebar: PublishedSidebarItem[];
+    };
+  };
   layout: {
     grid: { columns: number; rows: { id: string; height: number }[] };
     zones: PublishedZone[];
@@ -56,6 +72,64 @@ export type PublishedManifest = {
   };
   sidebar: PublishedSidebarItem[];
   charts: PublishedChartEntry[];
+};
+
+export type PublishedCanvasNode = {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+  hidden?: boolean;
+  zIndex?: number | null;
+  data:
+    | {
+        type: "chart";
+        assetId: string;
+        title?: string;
+        chartType?: string;
+        width?: number;
+        height?: number;
+      }
+    | {
+        type: "text";
+        content?: string;
+        fontSize?: number;
+        fontWeight?: "normal" | "bold";
+        color?: string;
+        width?: number;
+        height?: number;
+      }
+    | {
+        type: "stickyNote";
+        content?: string;
+        color?: "yellow" | "blue" | "green" | "pink";
+        width?: number;
+        height?: number;
+        rotation?: number;
+      }
+    | {
+        type: "divider";
+        label?: string;
+        lineStyle?: "solid" | "dashed";
+        width?: number;
+        rotation?: number;
+      }
+    | {
+        type: "section";
+        title?: string;
+        width?: number;
+        height?: number;
+      };
+};
+
+export type PublishedCanvasEdge = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  type?: string | null;
 };
 
 export type PublicManifestResponse = {

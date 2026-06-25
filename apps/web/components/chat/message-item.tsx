@@ -42,7 +42,11 @@ export function MessageItem({ message }: { message: ChatMessage }) {
       >
         {/* Agent Trace — shown above the text bubble for assistant messages */}
         {!isUser && (
-          <AgentTrace messageId={message.id} traceSummary={message.traceSummary} />
+          <AgentTrace
+            messageId={message.id}
+            traceSummary={message.traceSummary}
+            generationOptions={message.generationOptions}
+          />
         )}
 
         {/* Text Bubble — hidden while content is empty (placeholder during streaming) */}

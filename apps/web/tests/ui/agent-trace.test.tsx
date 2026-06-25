@@ -191,4 +191,51 @@ describe("AgentTrace component", () => {
     // Should display the thoughtFor i18n key text (mock returns key string)
     expect(screen.getByText(/chat\.trace\.(thoughtFor|toolCallsCount)/)).toBeInTheDocument();
   });
+
+  it("renders selected generation-option pills on the post-reload summary chip", () => {
+    render(
+      <AgentTrace
+        messageId="msg-no-trace-opts"
+        traceSummary={{ stepCount: 2, durationMs: 3100, status: "ok" }}
+        generationOptions={["multi_chart", "data_labels"]}
+      />
+    );
+    // chip label keys come from the generation-options registry
+    expect(screen.getByText("chat.strategy.multiChart")).toBeInTheDocument();
+    expect(screen.getByText("chat.dataLabels.chip")).toBeInTheDocument();
+  });
+
+  it("renders generation-option pills next to the collapsed in-memory trace chip", () => {
+    const now = Date.now();
+    seedTrace({
+      state: "collapsed",
+      startedAt: now - 4000,
+      endedAt: now,
+      steps: [
+        {
+          kind: "tool",
+          id: "step-1",
+          tool: "run_semantic_query",
+          args: {},
+          startedAt: now - 3500,
+          completedAt: now - 3000,
+          status: "ok",
+        },
+      ],
+    });
+    render(<AgentTrace messageId={MSG_ID} generationOptions={["multi_chart"]} />);
+    expect(screen.getByText("chat.strategy.multiChart")).toBeInTheDocument();
+    expect(screen.queryByText("chat.dataLabels.chip")).toBeNull();
+  });
+
+  it("renders no pills when no generation options were selected", () => {
+    render(
+      <AgentTrace
+        messageId="msg-no-trace-no-opts"
+        traceSummary={{ stepCount: 1, durationMs: 1200, status: "ok" }}
+      />
+    );
+    expect(screen.queryByText("chat.strategy.multiChart")).toBeNull();
+    expect(screen.queryByText("chat.dataLabels.chip")).toBeNull();
+  });
 });

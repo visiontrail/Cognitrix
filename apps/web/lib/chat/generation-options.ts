@@ -102,3 +102,26 @@ export function buildGenerationOptionPayload(
   }
   return payload;
 }
+
+/**
+ * Reverse of `buildGenerationOptionPayload`: recover which option ids were
+ * active from the payload fields sent on a turn. Used to surface the user's
+ * "+" menu selections in the assistant message's agent-trace summary line.
+ *
+ * An option matches only when every field of its declared `payload` is present
+ * with the same value in `payload` — so an option whose contribution was
+ * overridden or absent is not reported.
+ */
+export function generationOptionIdsFromPayload(
+  payload: GenerationOptionPayload
+): GenerationOptionId[] {
+  return GENERATION_OPTIONS.filter((option) => {
+    const entries = Object.entries(option.payload);
+    return (
+      entries.length > 0 &&
+      entries.every(
+        ([key, value]) => payload[key as keyof GenerationOptionPayload] === value
+      )
+    );
+  }).map((option) => option.id);
+}

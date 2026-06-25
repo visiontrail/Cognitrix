@@ -36,6 +36,7 @@ import type { QueryChartType } from "@/lib/charts/chart-type-options";
 import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/charts/kpi-options";
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { applyDataLabels } from "@/lib/charts/data-labels";
+import { generationOptionIdsFromPayload } from "@/lib/chat/generation-options";
 import { generateId, isRecord } from "@/lib/utils";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 import type {
@@ -725,6 +726,8 @@ async function streamAssistantResponse({
   const traceStatus: "ok" | "error" | "incomplete" =
     terminalReason === "final" ? "ok" : terminalReason === "error" ? "error" : "incomplete";
 
+  const generationOptions = generationOptionIdsFromPayload({ generationStrategy, showDataLabels });
+
   const specEvents = groupedSpecs.length > 0
     ? [...groupedSpecs].sort((a, b) => (a.chartIndex ?? 0) - (b.chartIndex ?? 0))
     : latestSpec
@@ -773,6 +776,7 @@ async function streamAssistantResponse({
       traceSteps.length > 0
         ? { stepCount: toolCallCount, durationMs, status: traceStatus }
         : undefined,
+    generationOptions: generationOptions.length > 0 ? generationOptions : undefined,
   };
   return {
     assistantMessage,

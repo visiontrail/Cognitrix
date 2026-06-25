@@ -37,13 +37,13 @@ export function MembersList({ members, onRemove }: Props) {
           <div key={member.user_id} className="flex items-center justify-between gap-2 py-1.5">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium truncate">{member.display_name}</p>
-              <p className="text-xs text-muted-foreground truncate">{member.email || member.user_id}</p>
+              <p className="text-xs text-[#777166] truncate">{member.email || member.user_id}</p>
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {isOwner ? (
-                <span className="text-xs text-muted-foreground px-2">{t("collab.roleOwner")}</span>
+                <span className="text-xs text-[#777166] px-2">{t("collab.roleOwner")}</span>
               ) : (
-                <span className="text-xs text-muted-foreground px-2">{t("collab.roleEditor")}</span>
+                <span className="text-xs text-[#777166] px-2">{t("collab.roleEditor")}</span>
               )}
               {!isOwner && (
                 <Button

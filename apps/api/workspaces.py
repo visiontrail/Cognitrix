@@ -21,9 +21,13 @@ from .auth import AuthIdentity, get_current_identity, require_permission
 from .config import get_settings
 from .datasets import DuckDBSessionManager
 from .published_pages import (
+    CANVAS_KIND_WEB_PAGE,
+    PublishedPageError,
     PublishWorkspaceRequest,
     get_published_page_store,
     get_snapshot_writer,
+    manifest_canvas_format_id,
+    manifest_canvas_kind,
 )
 
 logger = logging.getLogger("cognitrix.workspaces")
@@ -1328,15 +1332,23 @@ async def publish_workspace(
     writer = get_snapshot_writer()
     version = store.next_version(workspace_id=workspace_id)
     published_at = _utc_now()
-    snapshot = writer.write(
-        workspace_id=workspace_id,
-        version=version,
-        layout=request.layout,
-        sidebar=request.sidebar,
-        charts=request.charts,
-        actor_role=identity.role,
-        published_at=published_at,
-    )
+    try:
+        snapshot = writer.write(
+            workspace_id=workspace_id,
+            version=version,
+            canvas_format_id=request.canvas_format_id(),
+            viewport=request.viewport,
+            nodes=request.nodes,
+            edges=request.edges,
+            web_design=request.web_design_payload(),
+            layout=request.layout,
+            sidebar=request.sidebar,
+            charts=request.charts,
+            actor_role=identity.role,
+            published_at=published_at,
+        )
+    except PublishedPageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
     page = store.create(
         workspace_id=workspace_id,
         version=version,
@@ -1351,7 +1363,10 @@ async def publish_workspace(
         published_at=published_at,
     )
     public_url = _build_public_url_for_request(publication.token, http_request)
-    return publication.to_status(public_url=public_url)
+    status = publication.to_status(public_url=public_url)
+    status["canvas_format_id"] = request.canvas_format_id()
+    status["canvas_kind"] = snapshot.manifest.get("canvas", {}).get("kind", CANVAS_KIND_WEB_PAGE)
+    return status
 
 
 @router.get("/{workspace_id}/publish")
@@ -1374,7 +1389,14 @@ async def get_workspace_publication(
     if publication is None or not publication.is_active:
         return {"is_active": False}
     public_url = _build_public_url_for_request(publication.token, http_request)
-    return publication.to_status(public_url=public_url)
+    status = publication.to_status(public_url=public_url)
+    try:
+        page = get_published_page_store().get(page_id=publication.active_page_id)
+        status["canvas_format_id"] = manifest_canvas_format_id(page)
+        status["canvas_kind"] = manifest_canvas_kind(page)
+    except Exception:
+        pass
+    return status
 
 
 @router.delete("/{workspace_id}/publish")
@@ -1418,6 +1440,8 @@ async def list_workspace_published_pages(
             "version": page.version,
             "published_at": page.published_at,
             "published_by": page.published_by,
+            "canvas_format_id": manifest_canvas_format_id(page),
+            "canvas_kind": manifest_canvas_kind(page),
         }
         for page in pages
     ]

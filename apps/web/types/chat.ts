@@ -25,6 +25,10 @@ export type ChatMessage = {
   multiChartConfirmation?: MultiChartConfirmation;
   timestamp: string;
   traceSummary?: TraceSummary;
+  // The "+" menu generation options the user selected on the request turn that
+  // produced this assistant message (e.g. multi-chart, data labels). Surfaced
+  // in the agent-trace summary line; persisted so it survives a reload.
+  generationOptions?: import("@/lib/chat/generation-options").GenerationOptionId[];
 };
 
 export type ChartAssetReference = {

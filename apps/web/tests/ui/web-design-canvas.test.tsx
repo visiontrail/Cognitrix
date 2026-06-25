@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { WebDesignCanvas } from "../../components/workspace/web-design-canvas";
 import { WorkspaceToolbar } from "../../components/workspace/workspace-toolbar";
+import { clearInMemoryToken, setInMemoryToken } from "../../lib/auth/session";
 import { DEFAULT_CANVAS_FORMAT } from "../../lib/workspace/canvas-formats";
 import { useWorkspaceStore } from "../../stores/workspace-store";
 import type { WorkspaceNode } from "../../types/workspace";
@@ -68,6 +69,7 @@ function renderWithProviders(ui: React.ReactElement) {
 
 describe("WebDesignCanvas state", () => {
   beforeEach(() => {
+    setInMemoryToken("test-token", Math.floor(Date.now() / 1000) + 3600);
     toBlobMock.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
     clipboardWriteMock.mockResolvedValue(undefined);
     class ClipboardItemMock {
@@ -112,6 +114,7 @@ describe("WebDesignCanvas state", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    clearInMemoryToken();
     useWorkspaceStore.setState({
       workspaces: [],
       activeWorkspaceId: null,
@@ -119,6 +122,18 @@ describe("WebDesignCanvas state", () => {
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
       canvasFormat: DEFAULT_CANVAS_FORMAT,
+      webDesign: {
+        grid: {
+          columns: 2,
+          rows: [
+            { id: "row-1", height: 400 },
+            { id: "row-2", height: 400 },
+          ],
+        },
+        zones: [],
+        sidebar: [{ id: "section-1", label: "Section 1", anchorRowId: "row-1", children: [] }],
+        preview: false,
+      },
       hasUnsavedChanges: false,
     });
   });
@@ -176,7 +191,9 @@ describe("WebDesignCanvas state", () => {
     renderWithProviders(<WebDesignCanvas />);
 
     const dataTransfer = createDataTransfer();
-    fireEvent.dragStart(screen.getByLabelText("Chart zone Headcount"), { dataTransfer });
+    const dragHandle = screen.getByText("Headcount").closest("[draggable='true']");
+    expect(dragHandle).not.toBeNull();
+    fireEvent.dragStart(dragHandle!, { dataTransfer });
     fireEvent.dragOver(screen.getByLabelText("Grid cell row 2 column 2"), { dataTransfer });
     fireEvent.drop(screen.getByLabelText("Grid cell row 2 column 2"), { dataTransfer });
 
@@ -290,7 +307,27 @@ describe("WebDesignCanvas state", () => {
       },
     });
 
-    renderWithProviders(<WebDesignCanvas />);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ is_active: false }), { status: 200 })))
+    );
+    useWorkspaceStore.setState({
+      workspaces: [
+        {
+          id: "ws-test",
+          title: "Canvas",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          nodeCount: 1,
+          role: "owner",
+        },
+      ],
+      canvasFormat: { id: "web-design" },
+    });
+
+    renderWithProviders(<WorkspaceToolbar />);
 
     expect(screen.getByRole("button", { name: /Publish/i })).toBeEnabled();
   });
@@ -329,7 +366,27 @@ describe("WebDesignCanvas state", () => {
       },
     });
 
-    renderWithProviders(<WebDesignCanvas />);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ is_active: false }), { status: 200 })))
+    );
+    useWorkspaceStore.setState({
+      workspaces: [
+        {
+          id: "ws-test",
+          title: "Canvas",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          nodeCount: 1,
+          role: "owner",
+        },
+      ],
+      canvasFormat: { id: "web-design" },
+    });
+
+    renderWithProviders(<WorkspaceToolbar />);
 
     expect(screen.getByRole("button", { name: /Publish/i })).toBeEnabled();
   });

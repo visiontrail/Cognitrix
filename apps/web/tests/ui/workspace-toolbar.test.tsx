@@ -2,10 +2,11 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { WorkspaceToolbar } from "../../components/workspace/workspace-toolbar";
+import { clearInMemoryToken, setInMemoryToken } from "../../lib/auth/session";
 import { DEFAULT_CANVAS_FORMAT } from "../../lib/workspace/canvas-formats";
 import { useWorkspaceStore } from "../../stores/workspace-store";
 
@@ -26,6 +27,7 @@ function renderWithProviders(ui: React.ReactElement) {
 
 describe("WorkspaceToolbar", () => {
   beforeEach(() => {
+    setInMemoryToken("test-token", Math.floor(Date.now() / 1000) + 3600);
     useWorkspaceStore.setState({
       workspaces: [
         {
@@ -46,6 +48,8 @@ describe("WorkspaceToolbar", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
+    clearInMemoryToken();
     useWorkspaceStore.setState({
       workspaces: [],
       activeWorkspaceId: null,
@@ -58,6 +62,7 @@ describe("WorkspaceToolbar", () => {
   });
 
   it("renames the active workspace from the canvas toolbar", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 }))));
     renderWithProviders(<WorkspaceToolbar />);
 
     await userEvent.click(screen.getByRole("button", { name: "Rename workspace" }));

@@ -6,6 +6,18 @@ import { useI18n } from "@/lib/i18n/context";
 import { AgentTraceStep } from "./agent-trace-step";
 import { Brain } from "lucide-react";
 import type { TraceSummary } from "@/types/chat";
+import {
+  GENERATION_OPTIONS,
+  type GenerationOptionId,
+  type GenerationOptionTone,
+} from "@/lib/chat/generation-options";
+
+// Subtle tone-colored pills for the generation options the user picked in the
+// "+" menu, echoing the composer chips. Full literal classes so JIT emits them.
+const OPTION_TONE_PILL: Record<GenerationOptionTone, string> = {
+  blue: "border-focus-blue/30 bg-focus-blue/10 text-focus-blue",
+  terracotta: "border-terracotta/30 bg-terracotta/10 text-terracotta",
+};
 
 function ThinkingDots() {
   return (
@@ -24,12 +36,29 @@ function formatDurationSec(ms: number): string {
 type Props = {
   messageId: string;
   traceSummary?: TraceSummary;
+  generationOptions?: GenerationOptionId[];
 };
 
-export function AgentTrace({ messageId, traceSummary }: Props) {
+export function AgentTrace({ messageId, traceSummary, generationOptions }: Props) {
   const { t } = useI18n();
   const trace = useChatStore((s) => s.traceByMessageId[messageId]);
   const setTraceState = useChatStore((s) => s.setTraceState);
+
+  // Tone-colored pills for the "+" menu options selected on this turn, rendered
+  // right after the tool-call count in the summary line. Empty array → nothing.
+  const selectedOptionPills = GENERATION_OPTIONS.filter((option) =>
+    generationOptions?.includes(option.id)
+  );
+  const renderOptionPills = () =>
+    selectedOptionPills.map((option) => (
+      <span
+        key={option.id}
+        className={`text-[10px] leading-none rounded border px-1.5 py-0.5 select-none ${OPTION_TONE_PILL[option.tone]}`}
+        title={t(option.menuLabelKey)}
+      >
+        {t(option.chipLabelKey)}
+      </span>
+    ));
 
   // 1Hz tick for elapsed time display while live
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -68,6 +97,7 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
         >
           {label}
         </span>
+        {renderOptionPills()}
         <span className="text-[10px] text-stone-gray/75 select-none">{t("chat.trace.aiDisclaimer")}</span>
       </div>
     );
@@ -159,6 +189,7 @@ export function AgentTrace({ messageId, traceSummary }: Props) {
         >
           {chipLabel}
         </button>
+        {renderOptionPills()}
         <span className="text-[10px] text-stone-gray/75 select-none">{t("chat.trace.aiDisclaimer")}</span>
       </div>
 

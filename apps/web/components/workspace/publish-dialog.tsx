@@ -13,6 +13,7 @@ type Props = {
   onCancel: () => void;
   isPublishing?: boolean;
   isCancelling?: boolean;
+  modeLabel?: string;
 };
 
 export function PublishPanel({
@@ -21,6 +22,7 @@ export function PublishPanel({
   onCancel,
   isPublishing,
   isCancelling,
+  modeLabel,
 }: Props) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -50,6 +52,7 @@ export function PublishPanel({
           {t("publish.title")}
         </p>
         <p className="mt-0.5 text-xs text-[#777166]">{t("publish.anyoneWithLink")}</p>
+        {modeLabel && <p className="mt-1 text-xs font-medium text-[#996b35]">{modeLabel}</p>}
       </div>
 
       {!isActive ? (

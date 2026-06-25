@@ -399,7 +399,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           zones: [
             ...page.zones,
             {
-              id: `zone-${Date.now().toString(36)}`,
+              id: `zone-${nodeId}-${Date.now().toString(36)}`,
               nodeId,
               chartId: chartData.assetId,
               column: safeColumn,

@@ -76,15 +76,15 @@ export function CollaboratorsDialog({ open, workspaceId, workspaceName, onClose 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg space-y-4 max-h-[80vh] overflow-y-auto">
+      <div className="w-full max-w-md rounded-lg border border-[#d8d1c1] bg-white p-6 shadow-lg space-y-4 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{t("collab.collaboratorsTitle", { workspaceName })}</h2>
+          <h2 className="text-lg font-semibold text-[#2f332f]">{t("collab.collaboratorsTitle", { workspaceName })}</h2>
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
         </div>
 
         {/* Search to invite */}
         <div className="space-y-2">
-          <p className="text-sm font-medium">{t("collab.invite")}</p>
+          <p className="text-sm font-medium text-[#2f332f]">{t("collab.invite")}</p>
           <UserSearchInput
             onSelect={handleInviteUser}
             excludeIds={existingMemberIds}
@@ -94,9 +94,9 @@ export function CollaboratorsDialog({ open, workspaceId, workspaceName, onClose 
 
         {/* Members list */}
         <div className="space-y-2">
-          <p className="text-sm font-medium">{t("collab.collaborators")}</p>
+          <p className="text-sm font-medium text-[#2f332f]">{t("collab.collaborators")}</p>
           {loading ? (
-            <p className="text-xs text-muted-foreground">{t("collab.loading")}</p>
+            <p className="text-xs text-[#777166]">{t("collab.loading")}</p>
           ) : (
             <MembersList
               members={members}

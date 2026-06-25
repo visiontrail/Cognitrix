@@ -58,7 +58,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm font-medium">{t("collab.inviteLink")}</p>
+      <p className="text-sm font-medium text-[#2f332f]">{t("collab.inviteLink")}</p>
 
       <div className="flex items-center gap-2">
         <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generating}>
@@ -67,13 +67,13 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       </div>
 
       {inviteUrl && (
-        <div className="flex items-center gap-2 rounded border bg-muted p-2 text-xs">
+        <div className="flex items-center gap-2 rounded-md border border-[#e2dccf] bg-[#fbf8f1] p-2 text-xs text-[#2f332f]">
           <span className="flex-1 truncate">{inviteUrl}</span>
           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs shrink-0"
             onClick={() => handleCopy(inviteUrl)}>
             {t("collab.copyLink")}
           </Button>
-          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs shrink-0 text-destructive"
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs shrink-0 text-error-crimson hover:bg-error-crimson/10"
             disabled={revoking === activeInvite?.id}
             onClick={() => activeInvite && handleRevoke(activeInvite.id)}>
             {t("collab.revokeLink")}
@@ -82,9 +82,9 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       )}
 
       {invites.filter((i) => !i.revoked_at && i.id !== newInvite?.id).slice(0, 3).map((inv) => (
-        <div key={inv.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div key={inv.id} className="flex items-center gap-2 text-xs text-[#777166]">
           <span className="flex-1">{t("collab.roleEditor")} · {new Date(inv.expires_at).toLocaleDateString()}</span>
-          <Button size="sm" variant="ghost" className="h-5 px-1 text-xs text-destructive"
+          <Button size="sm" variant="ghost" className="h-5 px-1 text-xs text-error-crimson hover:bg-error-crimson/10"
             disabled={revoking === inv.id}
             onClick={() => handleRevoke(inv.id)}>
             {t("collab.revokeLink")}

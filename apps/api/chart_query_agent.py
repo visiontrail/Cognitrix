@@ -85,7 +85,7 @@ class SnapshotDuckDBCache:
             self._entries.clear()
 
     def _load_page(self, *, page: PublishedPage, now: float) -> SnapshotDuckDBEntry:
-        manifest = read_manifest(page)
+        manifest = read_manifest(page, include_internal_paths=True)
         manifest_dir = Path(page.manifest_path).parent
         charts = manifest.get("charts")
         if not isinstance(charts, list):

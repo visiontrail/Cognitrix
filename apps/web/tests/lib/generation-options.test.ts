@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   GENERATION_OPTIONS,
   buildGenerationOptionPayload,
+  generationOptionIdsFromPayload,
   isGenerationOptionId,
   selectedGenerationOptions,
   toggleGenerationOption,
@@ -59,5 +60,18 @@ describe("generation-options registry", () => {
       generationStrategy: "multi_chart",
       showDataLabels: true,
     });
+  });
+
+  it("recovers option ids from a sent payload (round-trips buildGenerationOptionPayload)", () => {
+    expect(generationOptionIdsFromPayload({})).toEqual([]);
+    expect(generationOptionIdsFromPayload({ generationStrategy: "multi_chart" })).toEqual([
+      "multi_chart",
+    ]);
+    expect(generationOptionIdsFromPayload({ showDataLabels: true })).toEqual(["data_labels"]);
+    expect(
+      generationOptionIdsFromPayload({ generationStrategy: "multi_chart", showDataLabels: true })
+    ).toEqual(["multi_chart", "data_labels"]);
+    // a falsey/absent data-labels flag must not be reported as selected
+    expect(generationOptionIdsFromPayload({ showDataLabels: false })).toEqual([]);
   });
 });

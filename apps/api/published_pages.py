@@ -22,19 +22,56 @@ from .data_policy import forbidden_sensitive_columns, redact_rows
 SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent
 PUBLISHED_SCHEMA_PATH = SQLITE_RELATIVE_BASE / "migrations" / "0004_published_pages_init.sql"
 
+CANVAS_KIND_FREE_LAYOUT = "free_layout"
+CANVAS_KIND_FIXED_SIZE = "fixed_size"
+CANVAS_KIND_WEB_PAGE = "web_page"
+SUPPORTED_CANVAS_KINDS = {CANVAS_KIND_FREE_LAYOUT, CANVAS_KIND_FIXED_SIZE, CANVAS_KIND_WEB_PAGE}
+CANVAS_FORMAT_INFINITE = "infinite"
+CANVAS_FORMAT_WEB_DESIGN = "web-design"
+FIXED_CANVAS_PRESETS: dict[str, dict[str, int]] = {
+    "a4-portrait": {"width": 794, "height": 1123},
+    "a4-landscape": {"width": 1123, "height": 794},
+    "a3-portrait": {"width": 1123, "height": 1587},
+    "letter-portrait": {"width": 816, "height": 1056},
+    "wide-16-9": {"width": 1280, "height": 720},
+}
+CANVAS_FORMAT_KINDS: dict[str, str] = {
+    CANVAS_FORMAT_INFINITE: CANVAS_KIND_FREE_LAYOUT,
+    CANVAS_FORMAT_WEB_DESIGN: CANVAS_KIND_WEB_PAGE,
+    **{preset_id: CANVAS_KIND_FIXED_SIZE for preset_id in FIXED_CANVAS_PRESETS},
+}
+PUBLIC_NODE_TYPES = {"chart", "text", "stickyNote", "divider", "section"}
+PUBLIC_NODE_DATA_FIELDS: dict[str, set[str]] = {
+    "chart": {"type", "assetId", "title", "chartType", "width", "height"},
+    "text": {"type", "content", "fontSize", "fontWeight", "color", "width", "height"},
+    "stickyNote": {"type", "content", "color", "width", "height", "rotation"},
+    "divider": {"type", "label", "lineStyle", "width", "rotation"},
+    "section": {"type", "title", "width", "height"},
+}
+
 
 class PublishedPageError(Exception):
-    def __init__(self, *, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.extra = extra or {}
 
-    def to_detail(self) -> dict[str, str]:
-        return {
+    def to_detail(self) -> dict[str, Any]:
+        detail: dict[str, Any] = {
             "code": self.code,
             "message": self.message,
         }
+        detail.update(self.extra)
+        return detail
 
 
 class PublishedChartSnapshot(BaseModel):
@@ -53,6 +90,24 @@ class PublishedChartSnapshot(BaseModel):
         return normalized
 
 
+class PublishedCanvasFormat(BaseModel):
+    id: str = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def validate_canvas_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("canvas format id is required")
+        return normalized
+
+
+class PublishedViewport(BaseModel):
+    x: float = 0
+    y: float = 0
+    zoom: float = 1
+
+
 # Legacy visibility modes retained only for read-compat with rows written before
 # the public-link migration. New publishes do not write visibility decisions.
 VISIBILITY_MODES = {"private", "registered", "allowlist"}
@@ -62,17 +117,31 @@ PUBLIC_TOKEN_BYTES = 32
 
 
 class PublishWorkspaceRequest(BaseModel):
-    """Publish payload after the public-link migration: layout/sidebar/charts only.
+    """Publish payload for the public-link snapshot lifecycle.
 
-    Visibility fields are intentionally absent; the backend manages a single
-    active public link per workspace instead.
+    Legacy Web Design clients may still submit ``layout`` and ``sidebar``.
+    Canvas-aware clients submit the active ``canvas_format`` plus mode-specific
+    ``nodes``/``edges`` or ``web_design`` payload.
     """
 
     model_config = {"extra": "ignore"}
 
+    canvas_format: PublishedCanvasFormat | None = None
+    viewport: PublishedViewport = Field(default_factory=PublishedViewport)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    web_design: dict[str, Any] | None = None
     layout: dict[str, Any] = Field(default_factory=dict)
     sidebar: list[dict[str, Any]] = Field(default_factory=list)
     charts: list[PublishedChartSnapshot] = Field(default_factory=list)
+
+    def canvas_format_id(self) -> str:
+        return self.canvas_format.id if self.canvas_format else CANVAS_FORMAT_WEB_DESIGN
+
+    def web_design_payload(self) -> dict[str, Any]:
+        if isinstance(self.web_design, dict):
+            return dict(self.web_design)
+        return {"layout": self.layout, "sidebar": self.sidebar}
 
 
 class PublishedPage(BaseModel):
@@ -93,6 +162,8 @@ class PublishedPage(BaseModel):
             "published_at": self.published_at,
             "published_by": self.published_by,
             "manifest_path": self.manifest_path,
+            "canvas_format_id": manifest_canvas_format_id(self),
+            "canvas_kind": manifest_canvas_kind(self),
             "visibility_mode": self.visibility_mode,
             "visibility_user_count": user_count,
             "visibility_user_ids": self.visibility_user_ids if self.visibility_mode == "allowlist" else [],
@@ -172,6 +243,11 @@ class SnapshotWriter:
         *,
         workspace_id: str,
         version: int,
+        canvas_format_id: str,
+        viewport: PublishedViewport | dict[str, Any] | None = None,
+        nodes: list[dict[str, Any]] | None = None,
+        edges: list[dict[str, Any]] | None = None,
+        web_design: dict[str, Any] | None = None,
         layout: dict[str, Any],
         sidebar: list[dict[str, Any]],
         charts: list[PublishedChartSnapshot],
@@ -185,6 +261,21 @@ class SnapshotWriter:
                 message="workspace_id is required",
                 status_code=422,
             )
+        canvas = build_canvas_metadata(canvas_format_id=canvas_format_id, viewport=viewport)
+        canvas_kind = canvas["kind"]
+        safe_nodes = normalize_public_nodes(nodes or [])
+        safe_edges = normalize_public_edges(edges or [])
+        if canvas_kind == CANVAS_KIND_FIXED_SIZE:
+            offending_node_ids = validate_fixed_size_node_bounds(safe_nodes, canvas=canvas)
+            if offending_node_ids:
+                raise PublishedPageError(
+                    code="PUBLISH_FIXED_NODE_OUT_OF_BOUNDS",
+                    message="Fixed-size canvas contains nodes outside the page bounds",
+                    status_code=422,
+                    extra={"node_ids": offending_node_ids},
+                )
+        if canvas_kind == CANVAS_KIND_FREE_LAYOUT:
+            canvas["bounds"] = compute_content_bounds(safe_nodes)
 
         target_dir = self.upload_dir / "published" / _safe_path_segment(normalized_workspace_id) / str(version)
         if target_dir.exists():
@@ -227,14 +318,36 @@ class SnapshotWriter:
                 }
             )
 
+        if canvas_kind == CANVAS_KIND_WEB_PAGE:
+            web_payload = dict(web_design or {})
+            manifest_layout = web_payload.get("layout") if isinstance(web_payload.get("layout"), dict) else layout
+            manifest_sidebar = (
+                web_payload.get("sidebar") if isinstance(web_payload.get("sidebar"), list) else sidebar
+            )
+            content: dict[str, Any] = {
+                "nodes": safe_nodes,
+                "edges": safe_edges,
+                "web_design": {"layout": manifest_layout, "sidebar": manifest_sidebar},
+            }
+        else:
+            manifest_layout = {}
+            manifest_sidebar = []
+            content = {"nodes": safe_nodes, "edges": safe_edges}
+
         manifest = {
+            "schema_version": 2,
             "workspace_id": normalized_workspace_id,
             "version": version,
             "published_at": published_at,
-            "layout": layout,
-            "sidebar": sidebar,
+            "canvas": canvas,
+            "content": content,
             "charts": chart_entries,
         }
+        if canvas_kind == CANVAS_KIND_WEB_PAGE:
+            # Keep legacy top-level fields for older public clients while schema
+            # v2 renderers read through content.web_design.
+            manifest["layout"] = manifest_layout
+            manifest["sidebar"] = manifest_sidebar
         manifest_path = target_dir / "manifest.json"
         _write_json(manifest_path, manifest)
         return SnapshotWriteResult(manifest_path=manifest_path, manifest=manifest)
@@ -675,7 +788,137 @@ def get_snapshot_writer() -> SnapshotWriter:
     return SnapshotWriter(upload_dir=settings.upload_dir, max_rows=settings.agent_max_sql_rows)
 
 
-def read_manifest(page: PublishedPage) -> dict[str, Any]:
+def build_canvas_metadata(
+    *,
+    canvas_format_id: str,
+    viewport: PublishedViewport | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_format_id = canvas_format_id.strip()
+    canvas_kind = CANVAS_FORMAT_KINDS.get(normalized_format_id)
+    if not canvas_kind:
+        raise PublishedPageError(
+            code="PUBLISH_UNSUPPORTED_CANVAS_FORMAT",
+            message=f"Unsupported canvas format: {normalized_format_id}",
+            status_code=422,
+        )
+
+    viewport_payload = _normalize_viewport(viewport)
+    canvas: dict[str, Any] = {
+        "format_id": normalized_format_id,
+        "kind": canvas_kind,
+        "viewport": viewport_payload,
+    }
+    if canvas_kind == CANVAS_KIND_FIXED_SIZE:
+        preset = FIXED_CANVAS_PRESETS[normalized_format_id]
+        canvas["page"] = {
+            "preset_id": normalized_format_id,
+            "width": preset["width"],
+            "height": preset["height"],
+        }
+    return canvas
+
+
+def normalize_public_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        data_type = str(data.get("type") or "").strip()
+        if data_type not in PUBLIC_NODE_TYPES:
+            continue
+        position = node.get("position") if isinstance(node.get("position"), dict) else {}
+        width = _positive_float(node.get("width"), _positive_float(data.get("width"), 240))
+        height = _positive_float(node.get("height"), _positive_float(data.get("height"), 160))
+        allowed_fields = PUBLIC_NODE_DATA_FIELDS.get(data_type, {"type"})
+        safe_data = {
+            key: value
+            for key, value in data.items()
+            if key in allowed_fields and _is_json_safe_scalar_or_container(value)
+        }
+        safe_data["type"] = data_type
+        if data_type == "chart" and "assetId" not in safe_data:
+            continue
+        normalized.append(
+            {
+                "id": str(node.get("id") or uuid.uuid4().hex),
+                "type": str(node.get("type") or ""),
+                "position": {
+                    "x": _finite_float(position.get("x"), 0),
+                    "y": _finite_float(position.get("y"), 0),
+                },
+                "width": width,
+                "height": height,
+                "data": safe_data,
+                "hidden": bool(node.get("hidden", False)),
+                "zIndex": _optional_int(node.get("zIndex")),
+            }
+        )
+    return normalized
+
+
+def normalize_public_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = str(edge.get("source") or "").strip()
+        target = str(edge.get("target") or "").strip()
+        if not source or not target:
+            continue
+        normalized.append(
+            {
+                "id": str(edge.get("id") or f"{source}-{target}"),
+                "source": source,
+                "target": target,
+                "sourceHandle": str(edge["sourceHandle"]) if edge.get("sourceHandle") else None,
+                "targetHandle": str(edge["targetHandle"]) if edge.get("targetHandle") else None,
+                "type": str(edge["type"]) if edge.get("type") else None,
+            }
+        )
+    return normalized
+
+
+def validate_fixed_size_node_bounds(nodes: list[dict[str, Any]], *, canvas: dict[str, Any]) -> list[str]:
+    page = canvas.get("page") if isinstance(canvas.get("page"), dict) else {}
+    page_width = _positive_float(page.get("width"), 0)
+    page_height = _positive_float(page.get("height"), 0)
+    if page_width <= 0 or page_height <= 0:
+        return [str(node.get("id") or "") for node in nodes if node.get("id")]
+    offending: list[str] = []
+    for node in nodes:
+        if node.get("hidden"):
+            continue
+        position = node.get("position") if isinstance(node.get("position"), dict) else {}
+        x = _finite_float(position.get("x"), 0)
+        y = _finite_float(position.get("y"), 0)
+        width = _positive_float(node.get("width"), 0)
+        height = _positive_float(node.get("height"), 0)
+        if x < 0 or y < 0 or x + width > page_width or y + height > page_height:
+            offending.append(str(node.get("id") or "unknown"))
+    return offending
+
+
+def compute_content_bounds(nodes: list[dict[str, Any]]) -> dict[str, float]:
+    visible_nodes = [node for node in nodes if not node.get("hidden")]
+    if not visible_nodes:
+        return {"x": 0, "y": 0, "width": 0, "height": 0}
+    left = min(_finite_float((node.get("position") or {}).get("x"), 0) for node in visible_nodes)
+    top = min(_finite_float((node.get("position") or {}).get("y"), 0) for node in visible_nodes)
+    right = max(
+        _finite_float((node.get("position") or {}).get("x"), 0) + _positive_float(node.get("width"), 0)
+        for node in visible_nodes
+    )
+    bottom = max(
+        _finite_float((node.get("position") or {}).get("y"), 0) + _positive_float(node.get("height"), 0)
+        for node in visible_nodes
+    )
+    return {"x": left, "y": top, "width": max(0, right - left), "height": max(0, bottom - top)}
+
+
+def read_raw_manifest(page: PublishedPage) -> dict[str, Any]:
     manifest_path = Path(page.manifest_path)
     if not manifest_path.exists():
         raise PublishedPageError(
@@ -693,8 +936,84 @@ def read_manifest(page: PublishedPage) -> dict[str, Any]:
     return decoded
 
 
+def read_manifest(page: PublishedPage, *, include_internal_paths: bool = False) -> dict[str, Any]:
+    return normalize_manifest(read_raw_manifest(page), include_internal_paths=include_internal_paths)
+
+
+def normalize_manifest(raw_manifest: dict[str, Any], *, include_internal_paths: bool = False) -> dict[str, Any]:
+    if raw_manifest.get("schema_version") == 2:
+        manifest = dict(raw_manifest)
+        canvas = manifest.get("canvas") if isinstance(manifest.get("canvas"), dict) else {}
+        canvas_format_id = str(canvas.get("format_id") or CANVAS_FORMAT_WEB_DESIGN)
+        try:
+            normalized_canvas = build_canvas_metadata(
+                canvas_format_id=canvas_format_id,
+                viewport=canvas.get("viewport") if isinstance(canvas, dict) else None,
+            )
+        except PublishedPageError:
+            normalized_canvas = {
+                "format_id": canvas_format_id,
+                "kind": str(canvas.get("kind") or ""),
+                "viewport": _normalize_viewport(canvas.get("viewport")),
+            }
+            if isinstance(canvas.get("page"), dict):
+                normalized_canvas["page"] = dict(canvas["page"])
+        if isinstance(canvas.get("bounds"), dict):
+            normalized_canvas["bounds"] = {
+                "x": _finite_float(canvas["bounds"].get("x"), 0),
+                "y": _finite_float(canvas["bounds"].get("y"), 0),
+                "width": _positive_float(canvas["bounds"].get("width"), 0),
+                "height": _positive_float(canvas["bounds"].get("height"), 0),
+            }
+        manifest["canvas"] = normalized_canvas
+        content = manifest.get("content") if isinstance(manifest.get("content"), dict) else {}
+        manifest["content"] = {
+            "nodes": normalize_public_nodes(content.get("nodes") if isinstance(content.get("nodes"), list) else []),
+            "edges": normalize_public_edges(content.get("edges") if isinstance(content.get("edges"), list) else []),
+            **({"web_design": content["web_design"]} if isinstance(content.get("web_design"), dict) else {}),
+        }
+        manifest["charts"] = _normalize_chart_entries(manifest.get("charts"), include_internal_paths=include_internal_paths)
+        return manifest
+
+    layout = raw_manifest.get("layout") if isinstance(raw_manifest.get("layout"), dict) else {}
+    sidebar = raw_manifest.get("sidebar") if isinstance(raw_manifest.get("sidebar"), list) else []
+    return {
+        "schema_version": 2,
+        "workspace_id": str(raw_manifest.get("workspace_id") or ""),
+        "version": int(raw_manifest.get("version") or 0),
+        "published_at": str(raw_manifest.get("published_at") or ""),
+        "canvas": build_canvas_metadata(canvas_format_id=CANVAS_FORMAT_WEB_DESIGN),
+        "content": {
+            "nodes": [],
+            "edges": [],
+            "web_design": {"layout": layout, "sidebar": sidebar},
+        },
+        "layout": layout,
+        "sidebar": sidebar,
+        "charts": _normalize_chart_entries(raw_manifest.get("charts"), include_internal_paths=include_internal_paths),
+    }
+
+
+def manifest_canvas_format_id(page: PublishedPage) -> str:
+    try:
+        manifest = read_manifest(page)
+        canvas = manifest.get("canvas") if isinstance(manifest.get("canvas"), dict) else {}
+        return str(canvas.get("format_id") or CANVAS_FORMAT_WEB_DESIGN)
+    except PublishedPageError:
+        return CANVAS_FORMAT_WEB_DESIGN
+
+
+def manifest_canvas_kind(page: PublishedPage) -> str:
+    try:
+        manifest = read_manifest(page)
+        canvas = manifest.get("canvas") if isinstance(manifest.get("canvas"), dict) else {}
+        return str(canvas.get("kind") or CANVAS_KIND_WEB_PAGE)
+    except PublishedPageError:
+        return CANVAS_KIND_WEB_PAGE
+
+
 def read_chart_data(page: PublishedPage, *, chart_id: str) -> dict[str, Any]:
-    manifest = read_manifest(page)
+    manifest = read_manifest(page, include_internal_paths=True)
     chart_entries = manifest.get("charts")
     if not isinstance(chart_entries, list):
         chart_entries = []
@@ -751,6 +1070,81 @@ def _read_json_file(path: Path) -> Any:
             status_code=404,
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _normalize_chart_entries(value: Any, *, include_internal_paths: bool) -> list[dict[str, Any]]:
+    entries = value if isinstance(value, list) else []
+    normalized: list[dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        chart_id = str(item.get("chart_id") or "").strip()
+        if not chart_id:
+            continue
+        entry = {
+            "chart_id": chart_id,
+            "title": str(item.get("title") or chart_id),
+            "chart_type": str(item["chart_type"]) if item.get("chart_type") else None,
+            "row_count": int(item.get("row_count") or 0),
+            "source_row_count": int(item.get("source_row_count") or 0),
+            "data_truncated": bool(item.get("data_truncated")),
+        }
+        if include_internal_paths:
+            entry["spec_path"] = str(item.get("spec_path") or "")
+            entry["data_path"] = str(item.get("data_path") or "")
+        normalized.append(entry)
+    return normalized
+
+
+def _normalize_viewport(value: PublishedViewport | dict[str, Any] | None) -> dict[str, float]:
+    if isinstance(value, PublishedViewport):
+        raw = value.model_dump()
+    elif isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
+    zoom = _finite_float(raw.get("zoom"), 1)
+    if zoom <= 0:
+        zoom = 1
+    return {
+        "x": _finite_float(raw.get("x"), 0),
+        "y": _finite_float(raw.get("y"), 0),
+        "zoom": zoom,
+    }
+
+
+def _finite_float(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number or number in {float("inf"), float("-inf")}:
+        return default
+    return number
+
+
+def _positive_float(value: Any, default: float) -> float:
+    return max(0, _finite_float(value, default))
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_json_safe_scalar_or_container(value: Any) -> bool:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_safe_scalar_or_container(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_safe_scalar_or_container(item)
+            for key, item in value.items()
+        )
+    return False
 
 
 def _safe_path_segment(value: str) -> str:

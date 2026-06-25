@@ -14,7 +14,6 @@ import {
   Minus,
   PanelLeft,
   Plus,
-  Send,
   Trash2,
   Type,
 } from "lucide-react";
@@ -27,16 +26,6 @@ import { ChartPreview } from "@/components/charts/chart-preview";
 import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
-import { extractChartRows } from "@/lib/workspace/chart-rows";
-import {
-  publishWorkspace,
-  fetchPublishHistory,
-  fetchPublicationStatus,
-  cancelPublication,
-  type PublishHistoryItem,
-  type PublicationState,
-} from "@/lib/workspace/publish";
-import { PublishPanel } from "@/components/workspace/publish-dialog";
 import { CollaboratorsDialog } from "@/components/sharing/share-dialog";
 import { Users } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -62,40 +51,7 @@ export function WebDesignCanvas() {
   const removeTextZone = useWorkspaceStore((s) => s.removeWebDesignTextZone);
   const setPreview = useWorkspaceStore((s) => s.setWebDesignPreview);
   const activePage = getActivePage(layout);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [history, setHistory] = useState<PublishHistoryItem[]>([]);
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [publishPanelOpen, setPublishPanelOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [publication, setPublication] = useState<PublicationState | null>(null);
-  const publishPanelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!activeWorkspaceId) {
-      setPublication(null);
-      return;
-    }
-    fetchPublicationStatus(activeWorkspaceId)
-      .then(setPublication)
-      .catch(() => setPublication(null));
-  }, [activeWorkspaceId]);
-
-  useEffect(() => {
-    if (!publishPanelOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (!publishPanelRef.current) return;
-      // Use composedPath() instead of e.target because React 18 flushes DOM
-      // updates synchronously before the event bubbles to document, which
-      // detaches the clicked element and makes contains() return false.
-      const path = e.composedPath();
-      if (!path.includes(publishPanelRef.current)) {
-        setPublishPanelOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [publishPanelOpen]);
   const activeWorkspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === activeWorkspaceId));
   const userWorkspaceRole = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === activeWorkspaceId)?.role ?? "viewer"
@@ -107,70 +63,6 @@ export function WebDesignCanvas() {
     [nodes]
   );
   const pages = getPages(layout);
-  const publishBlocked = pages.flatMap((page) => page.zones).some((zone) => {
-    const node = chartNodes.find((item) => item.id === zone.nodeId);
-    return !node || extractChartRows(node.data).length === 0;
-  });
-  const publishZoneCount = pages.reduce(
-    (sum, page) => sum + page.zones.length + (page.textZones?.length ?? 0),
-    0
-  );
-
-  const handlePublishClick = () => {
-    setPublishPanelOpen((prev) => !prev);
-  };
-
-  const handlePublishConfirm = async () => {
-    if (!activeWorkspaceId) return;
-    setIsPublishing(true);
-    try {
-      const result = await publishWorkspace(activeWorkspaceId, layout, nodes);
-      setPublication({ ...result, is_active: true });
-      toast.success(t("workspace.webDesign.toast.published"), {
-        description: t("workspace.webDesign.toast.versionReady", { version: result.version }),
-        action: {
-          label: t("workspace.webDesign.viewPublishedPage"),
-          onClick: () => {
-            window.open(result.public_url, "_blank", "noreferrer");
-          },
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error && error.message !== "Publish failed"
-        ? error.message
-        : t("workspace.webDesign.toast.publishFailed");
-      toast.error(message);
-    } finally {
-      setIsPublishing(false);
-    }
-  };
-
-  const handleCancelPublication = async () => {
-    if (!activeWorkspaceId) return;
-    setIsCancelling(true);
-    try {
-      await cancelPublication(activeWorkspaceId);
-      setPublication({ is_active: false });
-      toast.success(t("publish.cancelled"));
-    } catch {
-      toast.error(t("publish.cancelFailed"));
-    } finally {
-      setIsCancelling(false);
-    }
-  };
-
-  const loadHistory = async () => {
-    if (!activeWorkspaceId) return;
-    setHistoryOpen((value) => !value);
-    if (!historyOpen) {
-      try {
-        setHistory(await fetchPublishHistory(activeWorkspaceId));
-      } catch {
-        toast.error(t("workspace.webDesign.toast.historyFailed"));
-      }
-    }
-  };
-
   return (
     <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f]">
       <main className="flex min-w-0 flex-1 flex-col">
@@ -241,62 +133,14 @@ export function WebDesignCanvas() {
               {layout.preview ? <Check className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               {layout.preview ? t("workspace.webDesign.edit") : t("workspace.webDesign.preview")}
             </Button>
-            <div className="relative" ref={publishPanelRef}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      size="sm"
-                      onClick={handlePublishClick}
-                      disabled={publishBlocked || isPublishing || publishZoneCount === 0}
-                    >
-                      <Send className="h-4 w-4" />
-                      {isPublishing ? t("workspace.webDesign.publishing") : t("workspace.webDesign.publish")}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                {publishBlocked && (
-                  <TooltipContent>{t("workspace.webDesign.publishBlocked")}</TooltipContent>
-                )}
-              </Tooltip>
-              {publishPanelOpen && (
-                <PublishPanel
-                  publication={publication}
-                  onPublish={handlePublishConfirm}
-                  onCancel={handleCancelPublication}
-                  isPublishing={isPublishing}
-                  isCancelling={isCancelling}
-                />
-              )}
-            </div>
             {canEdit && (
               <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
                 <Users className="h-4 w-4" />
                 {t("workspace.webDesign.collaborators")}
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={loadHistory}>
-              {historyOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              {t("workspace.webDesign.history")}
-            </Button>
           </div>
         </div>
-
-        {historyOpen && (
-          <div className="border-b border-[#d8d1c1] bg-[#fffaf0] px-4 py-2 text-sm">
-            {history.length === 0 ? (
-              <span className="text-[#777166]">{t("workspace.webDesign.noPublishedVersions")}</span>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {history.map((item) => (
-                  <span key={item.page_id} className="rounded-md border border-[#d8d1c1] bg-white px-2 py-1">
-                    v{item.version} · {new Date(item.published_at).toLocaleString()}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] overflow-hidden">
           <SidebarEditor preview={layout.preview} />

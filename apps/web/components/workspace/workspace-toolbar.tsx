@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
+  ChevronUp,
   Check,
   Download,
   FileImage,
@@ -12,6 +14,7 @@ import {
   Minus,
   NotebookPen,
   Pencil,
+  Send,
   Type,
   X,
 } from "lucide-react";
@@ -37,7 +40,23 @@ import {
   exportFixedCanvasToPng,
   exportFixedCanvasToPdf,
 } from "@/lib/workspace/canvas-export";
-import type { DividerNodeData, StickyNoteNodeData, TextNodeData } from "@/types/workspace";
+import {
+  buildActiveCanvasPublishPayload,
+  cancelPublication,
+  fetchPublicationStatus,
+  fetchPublishHistory,
+  publishWorkspace,
+  type CanvasPublishSnapshot,
+  type PublicationState,
+  type PublishHistoryItem,
+} from "@/lib/workspace/publish";
+import { PublishPanel } from "@/components/workspace/publish-dialog";
+import type {
+  DividerNodeData,
+  StickyNoteNodeData,
+  TextNodeData,
+  WorkspaceCanvasFormatId,
+} from "@/types/workspace";
 
 const DEFAULT_TEXT_NODE_WIDTH = 480;
 const DEFAULT_TEXT_NODE_HEIGHT = 220;
@@ -49,7 +68,10 @@ export function WorkspaceToolbar() {
   const addNode = useWorkspaceStore((s) => s.addNode);
   const hasUnsavedChanges = useWorkspaceStore((s) => s.hasUnsavedChanges);
   const nodes = useWorkspaceStore((s) => s.nodes);
+  const edges = useWorkspaceStore((s) => s.edges);
+  const viewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const webDesign = useWorkspaceStore((s) => s.webDesign);
   const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
   const activePanel = useUIStore((s) => s.activePanel);
   const isSaving = useUIStore((s) => s.isSaving);
@@ -62,15 +84,40 @@ export function WorkspaceToolbar() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [isExporting, setIsExporting] = useState(false);
+  const [publishPanelOpen, setPublishPanelOpen] = useState(false);
+  const [publication, setPublication] = useState<PublicationState | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<PublishHistoryItem[]>([]);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const isChatVisible = activePanel === "both";
 
   const workspace = workspaces.find((w) => w.id === activeWorkspaceId);
   const activeCanvasPreset = getCanvasFormatPreset(canvasFormat.id);
+  const canPublish = workspace?.role === "owner" || workspace?.role === "editor";
+  const activePublishSnapshot = useMemo(
+    () => buildActiveCanvasPublishPayload({ canvasFormat, viewport, nodes, edges, webDesign }),
+    [canvasFormat, viewport, nodes, edges, webDesign]
+  );
+  const publishValidation = useMemo(
+    () => validatePublishSnapshot(activePublishSnapshot),
+    [activePublishSnapshot]
+  );
 
   useEffect(() => {
     setTitleDraft(workspace?.title ?? "");
     setIsEditingTitle(false);
   }, [workspace?.id, workspace?.title]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !canPublish) {
+      setPublication(null);
+      return;
+    }
+    fetchPublicationStatus(activeWorkspaceId)
+      .then(setPublication)
+      .catch(() => setPublication(null));
+  }, [activeWorkspaceId, canPublish]);
 
   const handleRename = () => {
     if (!activeWorkspaceId) return;
@@ -139,6 +186,55 @@ export function WorkspaceToolbar() {
       toast.error(t("workspace.export.error"));
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handlePublishConfirm = async () => {
+    if (!activeWorkspaceId) return;
+    setIsPublishing(true);
+    try {
+      const result = await publishWorkspace(activeWorkspaceId, activePublishSnapshot);
+      setPublication({ ...result, is_active: true });
+      toast.success(t("workspace.publish.toast.published"), {
+        description: t("workspace.publish.toast.versionReady", { version: result.version }),
+        action: {
+          label: t("workspace.publish.viewPublishedPage"),
+          onClick: () => window.open(result.public_url, "_blank", "noreferrer"),
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error && error.message !== "Publish failed"
+        ? error.message
+        : t("workspace.publish.toast.publishFailed");
+      toast.error(message);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleCancelPublication = async () => {
+    if (!activeWorkspaceId) return;
+    setIsCancelling(true);
+    try {
+      await cancelPublication(activeWorkspaceId);
+      setPublication({ is_active: false });
+      toast.success(t("publish.cancelled"));
+    } catch {
+      toast.error(t("publish.cancelFailed"));
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const loadHistory = async () => {
+    if (!activeWorkspaceId) return;
+    setHistoryOpen((value) => !value);
+    if (!historyOpen) {
+      try {
+        setHistory(await fetchPublishHistory(activeWorkspaceId));
+      } catch {
+        toast.error(t("workspace.publish.toast.historyFailed"));
+      }
     }
   };
 
@@ -363,6 +459,45 @@ export function WorkspaceToolbar() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {canPublish && (
+            <>
+              <Separator orientation="vertical" className="h-6 mx-1" />
+              <div className="relative">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        size="sm"
+                        onClick={() => setPublishPanelOpen((value) => !value)}
+                        disabled={Boolean(publishValidation.reason) || isPublishing}
+                      >
+                        <Send className="h-4 w-4" />
+                        {isPublishing ? t("workspace.publish.publishing") : t("workspace.publish.publish")}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {publishValidation.reason && (
+                    <TooltipContent>{t(publishValidation.reason)}</TooltipContent>
+                  )}
+                </Tooltip>
+                {publishPanelOpen && (
+                  <PublishPanel
+                    publication={publication}
+                    onPublish={handlePublishConfirm}
+                    onCancel={handleCancelPublication}
+                    isPublishing={isPublishing}
+                    isCancelling={isCancelling}
+                    modeLabel={t(activeCanvasPreset.labelKey)}
+                  />
+                )}
+              </div>
+              <Button variant="ghost" size="sm" onClick={loadHistory}>
+                {historyOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {t("workspace.publish.history")}
+              </Button>
+            </>
+          )}
+
           {!isWebDesign && (
             <>
               <Separator orientation="vertical" className="h-6 mx-1" />
@@ -420,6 +555,23 @@ export function WorkspaceToolbar() {
         </div>
       </div>
 
+      {historyOpen && (
+        <div className="border-t border-border-cream bg-[#fffaf0] px-4 py-2 text-sm">
+          {history.length === 0 ? (
+            <span className="text-[#777166]">{t("workspace.publish.noPublishedVersions")}</span>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {history.map((item) => (
+                <span key={item.page_id} className="rounded-md border border-[#d8d1c1] bg-white px-2 py-1">
+                  v{item.version} · {formatCanvasMode(item.canvas_format_id, t)} ·{" "}
+                  {new Date(item.published_at).toLocaleString()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Content palette row — only for free-canvas modes */}
       {!isWebDesign && (
         <div className="flex items-center gap-1 border-t border-border-cream bg-parchment/50 px-4 py-1">
@@ -457,4 +609,68 @@ export function WorkspaceToolbar() {
       )}
     </header>
   );
+}
+
+function validatePublishSnapshot(snapshot: CanvasPublishSnapshot): { reason?: string } {
+  const emptyChart = snapshot.charts.some((chart) => chart.rows.length === 0);
+  if (emptyChart) {
+    return { reason: "workspace.publish.emptyChartData" };
+  }
+
+  if (snapshot.canvas_format.id === "web-design") {
+    const pages = snapshot.web_design?.layout.pages ?? [];
+    const hasChartZone = pages.some((page) => page.zones.length > 0);
+    const hasText = pages.some((page) =>
+      (page.textZones ?? []).some((zone) => zone.content.trim().length > 0)
+    );
+    return hasChartZone || hasText ? {} : { reason: "workspace.publish.emptyCanvas" };
+  }
+
+  const publishableNodes = snapshot.nodes.filter(
+    (node) =>
+      !node.hidden &&
+      ["chart", "text", "stickyNote", "divider", "section"].includes(node.data.type)
+  );
+  if (publishableNodes.length === 0) {
+    return { reason: "workspace.publish.emptyCanvas" };
+  }
+
+  const preset = getCanvasFormatPreset(snapshot.canvas_format.id);
+  if (preset.width && preset.height) {
+    const outOfBounds = publishableNodes.some((node) => {
+      const width = Number(node.width ?? node.data.width ?? 0);
+      const dataHeight = "height" in node.data ? node.data.height : 24;
+      const height = Number(node.height ?? dataHeight ?? 0);
+      return (
+        node.position.x < 0 ||
+        node.position.y < 0 ||
+        node.position.x + width > preset.width! ||
+        node.position.y + height > preset.height!
+      );
+    });
+    if (outOfBounds) {
+      return { reason: "workspace.publish.outOfBounds" };
+    }
+  }
+
+  return {};
+}
+
+function formatCanvasMode(
+  formatId: string | undefined,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  const ids: WorkspaceCanvasFormatId[] = [
+    "infinite",
+    "web-design",
+    "a4-portrait",
+    "a4-landscape",
+    "a3-portrait",
+    "letter-portrait",
+    "wide-16-9",
+  ];
+  const id = ids.includes(formatId as WorkspaceCanvasFormatId)
+    ? (formatId as WorkspaceCanvasFormatId)
+    : "web-design";
+  return t(getCanvasFormatPreset(id).labelKey);
 }

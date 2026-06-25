@@ -160,10 +160,22 @@ export function WorkspaceToolbar() {
       setPublication(null);
       return;
     }
-    fetchPublicationStatus(activeWorkspaceId)
-      .then(setPublication)
-      .catch(() => setPublication(null));
-  }, [activeWorkspaceId, canPublish]);
+    // Publications are scoped per canvas type, so the displayed link/state must
+    // track the active canvas format. Clear stale state before the refetch so a
+    // previous canvas's link never flashes for the newly-selected one.
+    let cancelled = false;
+    setPublication(null);
+    fetchPublicationStatus(activeWorkspaceId, canvasFormat.id)
+      .then((status) => {
+        if (!cancelled) setPublication(status);
+      })
+      .catch(() => {
+        if (!cancelled) setPublication(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, canPublish, canvasFormat.id]);
 
   const handleRename = () => {
     if (!activeWorkspaceId) return;
@@ -262,7 +274,7 @@ export function WorkspaceToolbar() {
     if (!activeWorkspaceId) return;
     setIsCancelling(true);
     try {
-      await cancelPublication(activeWorkspaceId);
+      await cancelPublication(activeWorkspaceId, canvasFormat.id);
       setPublication({ is_active: false });
       toast.success(t("publish.cancelled"));
     } catch {

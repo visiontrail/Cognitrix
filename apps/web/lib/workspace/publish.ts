@@ -180,11 +180,15 @@ export async function publishWorkspace(
 }
 
 export async function fetchPublicationStatus(
-  workspaceId: string
+  workspaceId: string,
+  canvasFormatId?: string
 ): Promise<PublicationState> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const query = canvasFormatId
+    ? `?canvas_format_id=${encodeURIComponent(canvasFormatId)}`
+    : "";
   const response = await fetch(
-    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish`,
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish${query}`,
     { method: "GET", headers }
   );
   const payload = await response.json().catch(() => null);
@@ -192,10 +196,16 @@ export async function fetchPublicationStatus(
   return payload as PublicationState;
 }
 
-export async function cancelPublication(workspaceId: string): Promise<void> {
+export async function cancelPublication(
+  workspaceId: string,
+  canvasFormatId?: string
+): Promise<void> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const query = canvasFormatId
+    ? `?canvas_format_id=${encodeURIComponent(canvasFormatId)}`
+    : "";
   const response = await fetch(
-    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish`,
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish${query}`,
     { method: "DELETE", headers }
   );
   if (!response.ok) throw new Error("Cancel publication failed");

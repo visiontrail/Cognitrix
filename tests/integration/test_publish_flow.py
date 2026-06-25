@@ -187,11 +187,19 @@ def test_publish_flow_supports_free_and_fixed_canvas_modes(monkeypatch, tmp_path
         )
         fixed_response.raise_for_status()
         fixed_body = fixed_response.json()
-        assert fixed_body["token"] == token
+        # Each canvas kind owns an independent public link: publishing the
+        # fixed-size canvas must not overwrite the free-layout publication.
+        fixed_token = fixed_body["token"]
+        assert fixed_token != token
         assert fixed_body["canvas_format_id"] == "a4-portrait"
         assert fixed_body["canvas_kind"] == "fixed_size"
 
-        fixed_manifest_response = client.get(f"/public/pages/{token}/manifest")
+        # The free-layout link is still live and still serves its own manifest.
+        free_still_live = client.get(f"/public/pages/{token}/manifest")
+        free_still_live.raise_for_status()
+        assert free_still_live.json()["manifest"]["canvas"]["kind"] == "free_layout"
+
+        fixed_manifest_response = client.get(f"/public/pages/{fixed_token}/manifest")
         fixed_manifest_response.raise_for_status()
         fixed_manifest = fixed_manifest_response.json()["manifest"]
         assert fixed_manifest["canvas"]["kind"] == "fixed_size"
@@ -203,12 +211,12 @@ def test_publish_flow_supports_free_and_fixed_canvas_modes(monkeypatch, tmp_path
         assert fixed_manifest["canvas"]["viewport"] == {"x": 999.0, "y": 999.0, "zoom": 9.0}
 
 
-def test_publish_keeps_token_when_switching_canvas_modes(monkeypatch, tmp_path: Path) -> None:
+def test_publish_creates_independent_links_per_canvas_kind(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
         headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
-        workspace_response = client.post("/workspaces", json={"name": "Token Stable"}, headers=headers)
+        workspace_response = client.post("/workspaces", json={"name": "Independent Links"}, headers=headers)
         workspace_response.raise_for_status()
         workspace_id = workspace_response.json()["workspace_id"]
 
@@ -228,7 +236,7 @@ def test_publish_keeps_token_when_switching_canvas_modes(monkeypatch, tmp_path: 
             },
         )
         web_response.raise_for_status()
-        token = web_response.json()["token"]
+        web_token = web_response.json()["token"]
         assert web_response.json()["canvas_kind"] == "web_page"
 
         fixed_response = client.post(
@@ -237,7 +245,7 @@ def test_publish_keeps_token_when_switching_canvas_modes(monkeypatch, tmp_path: 
             json={"canvas_format": {"id": "a4-portrait"}, "nodes": [], "edges": [], "charts": []},
         )
         fixed_response.raise_for_status()
-        assert fixed_response.json()["token"] == token
+        fixed_token = fixed_response.json()["token"]
         assert fixed_response.json()["canvas_kind"] == "fixed_size"
 
         infinite_response = client.post(
@@ -246,14 +254,54 @@ def test_publish_keeps_token_when_switching_canvas_modes(monkeypatch, tmp_path: 
             json={"canvas_format": {"id": "infinite"}, "nodes": [], "edges": [], "charts": []},
         )
         infinite_response.raise_for_status()
-        assert infinite_response.json()["token"] == token
+        free_token = infinite_response.json()["token"]
         assert infinite_response.json()["canvas_kind"] == "free_layout"
 
-        manifest_response = client.get(f"/public/pages/{token}/manifest")
-        manifest_response.raise_for_status()
-        manifest = manifest_response.json()["manifest"]
-        assert manifest["canvas"]["format_id"] == "infinite"
-        assert manifest["canvas"]["kind"] == "free_layout"
+        # Three distinct canvas kinds → three distinct, simultaneously-live links.
+        assert len({web_token, fixed_token, free_token}) == 3
+        for token, expected_kind, expected_format in (
+            (web_token, "web_page", "web-design"),
+            (fixed_token, "fixed_size", "a4-portrait"),
+            (free_token, "free_layout", "infinite"),
+        ):
+            manifest_response = client.get(f"/public/pages/{token}/manifest")
+            manifest_response.raise_for_status()
+            manifest = manifest_response.json()["manifest"]
+            assert manifest["canvas"]["kind"] == expected_kind
+            assert manifest["canvas"]["format_id"] == expected_format
+
+        # Re-publishing within the same kind (another fixed-size preset) refreshes
+        # in place and keeps the existing token.
+        landscape_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={"canvas_format": {"id": "a4-landscape"}, "nodes": [], "edges": [], "charts": []},
+        )
+        landscape_response.raise_for_status()
+        assert landscape_response.json()["token"] == fixed_token
+        assert landscape_response.json()["canvas_kind"] == "fixed_size"
+
+        # Status reads are scoped by canvas format and return per-kind tokens.
+        free_status = client.get(
+            f"/workspaces/{workspace_id}/publish",
+            params={"canvas_format_id": "infinite"},
+            headers=headers,
+        )
+        free_status.raise_for_status()
+        assert free_status.json()["token"] == free_token
+
+        # Revoking one kind leaves the other kinds' links untouched.
+        revoke = client.delete(
+            f"/workspaces/{workspace_id}/publish",
+            params={"canvas_format_id": "a4-landscape"},
+            headers=headers,
+        )
+        revoke.raise_for_status()
+        assert revoke.json()["is_active"] is False
+
+        assert client.get(f"/public/pages/{fixed_token}/manifest").status_code == 404
+        client.get(f"/public/pages/{web_token}/manifest").raise_for_status()
+        client.get(f"/public/pages/{free_token}/manifest").raise_for_status()
 
 
 def test_publish_rejects_unsupported_format_and_fixed_out_of_bounds(monkeypatch, tmp_path: Path) -> None:

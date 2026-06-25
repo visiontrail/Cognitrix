@@ -94,7 +94,10 @@ def test_publish_returns_public_link_and_status_and_revoke(monkeypatch, tmp_path
         assert revoke.status_code == 200
         assert revoke.json()["is_active"] is False
 
-        assert client.get(f"/workspaces/{workspace_id}/publish", headers=headers).json() == {"is_active": False}
+        inactive_status = client.get(f"/workspaces/{workspace_id}/publish", headers=headers).json()
+        assert inactive_status["is_active"] is False
+        assert "token" not in inactive_status
+        assert inactive_status["canvas_kind"] == "web_page"
         assert client.get(f"/public/pages/{token}/manifest").status_code == 404
 
 

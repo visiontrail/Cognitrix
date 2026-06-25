@@ -184,13 +184,17 @@ class PublishedPage(BaseModel):
 
 
 class PublicPublication(BaseModel):
-    """Mutable public-link state pointing at the workspace's active snapshot version.
+    """Mutable public-link state pointing at a workspace canvas's active snapshot.
 
     Decoupled from workspace_id/page_id/version/user/timestamps via a high-entropy
-    token. One active publication per workspace; revoke flips ``is_active`` to False.
+    token. Each canvas *kind* (free layout / web page / fixed size) owns its own
+    independent publication, so a workspace can have several live public links at
+    once — one per canvas type. Revoking flips ``is_active`` to False for that
+    kind only.
     """
 
     workspace_id: str
+    canvas_kind: str = CANVAS_KIND_WEB_PAGE
     token: str
     active_page_id: str
     version: int
@@ -207,6 +211,7 @@ class PublicPublication(BaseModel):
             "version": self.version,
             "published_at": self.published_at,
             "is_active": self.is_active,
+            "canvas_kind": self.canvas_kind,
         }
 
 
@@ -552,18 +557,23 @@ class PublishedPageStore:
         workspace_id: str,
         active_page_id: str,
         version: int,
+        canvas_kind: str = CANVAS_KIND_WEB_PAGE,
         published_at: str | None = None,
     ) -> PublicPublication:
-        """Create or refresh the workspace's active public link.
+        """Create or refresh the active public link for a workspace canvas kind.
 
-        If an active publication already exists, its token and creation time are
-        reused (refresh-in-place) and only the active snapshot pointer is updated.
-        If none exists, or the previous one was revoked, a fresh high-entropy
-        token is minted so revoked links never come back to life.
+        Publications are keyed by ``(workspace_id, canvas_kind)`` so each canvas
+        type (free layout / web page / fixed size) is published independently and
+        never overwrites another's link. If an active publication already exists
+        for this kind, its token and creation time are reused (refresh-in-place)
+        and only the active snapshot pointer is updated. If none exists for the
+        kind, or the previous one was revoked, a fresh high-entropy token is
+        minted so revoked links never come back to life.
         """
 
         normalized_workspace_id = workspace_id.strip()
         normalized_page_id = active_page_id.strip()
+        normalized_kind = _normalize_canvas_kind(canvas_kind)
         if not normalized_workspace_id:
             raise PublishedPageError(
                 code="WORKSPACE_ID_REQUIRED",
@@ -574,12 +584,12 @@ class PublishedPageStore:
         with self._lock, self._connect() as conn:
             existing = conn.execute(
                 """
-                SELECT workspace_id, token, active_page_id, version, is_active,
+                SELECT workspace_id, canvas_kind, token, active_page_id, version, is_active,
                        published_at, updated_at, revoked_at
                 FROM workspace_publications
-                WHERE workspace_id = ?
+                WHERE workspace_id = ? AND canvas_kind = ?
                 """,
-                (normalized_workspace_id,),
+                (normalized_workspace_id, normalized_kind),
             ).fetchone()
 
             if existing is not None and int(existing["is_active"]) == 1:
@@ -590,9 +600,9 @@ class PublishedPageStore:
                     UPDATE workspace_publications
                     SET active_page_id = ?, version = ?, updated_at = ?,
                         is_active = 1, revoked_at = NULL
-                    WHERE workspace_id = ?
+                    WHERE workspace_id = ? AND canvas_kind = ?
                     """,
-                    (normalized_page_id, version, now, normalized_workspace_id),
+                    (normalized_page_id, version, now, normalized_workspace_id, normalized_kind),
                 )
             else:
                 token = secrets.token_urlsafe(PUBLIC_TOKEN_BYTES)
@@ -600,10 +610,10 @@ class PublishedPageStore:
                 conn.execute(
                     """
                     INSERT INTO workspace_publications (
-                        workspace_id, token, active_page_id, version, is_active,
+                        workspace_id, canvas_kind, token, active_page_id, version, is_active,
                         published_at, updated_at, revoked_at
-                    ) VALUES (?, ?, ?, ?, 1, ?, ?, NULL)
-                    ON CONFLICT(workspace_id) DO UPDATE SET
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, NULL)
+                    ON CONFLICT(workspace_id, canvas_kind) DO UPDATE SET
                         token = excluded.token,
                         active_page_id = excluded.active_page_id,
                         version = excluded.version,
@@ -612,12 +622,21 @@ class PublishedPageStore:
                         updated_at = excluded.updated_at,
                         revoked_at = NULL
                     """,
-                    (normalized_workspace_id, token, normalized_page_id, version, now, now),
+                    (
+                        normalized_workspace_id,
+                        normalized_kind,
+                        token,
+                        normalized_page_id,
+                        version,
+                        now,
+                        now,
+                    ),
                 )
             conn.commit()
 
         return PublicPublication(
             workspace_id=normalized_workspace_id,
+            canvas_kind=normalized_kind,
             token=token,
             active_page_id=normalized_page_id,
             version=version,
@@ -627,36 +646,59 @@ class PublishedPageStore:
             revoked_at=None,
         )
 
-    def get_publication(self, *, workspace_id: str) -> PublicPublication | None:
+    def get_publication(
+        self, *, workspace_id: str, canvas_kind: str = CANVAS_KIND_WEB_PAGE
+    ) -> PublicPublication | None:
         normalized_workspace_id = workspace_id.strip()
+        normalized_kind = _normalize_canvas_kind(canvas_kind)
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT workspace_id, token, active_page_id, version, is_active,
+                SELECT workspace_id, canvas_kind, token, active_page_id, version, is_active,
                        published_at, updated_at, revoked_at
                 FROM workspace_publications
-                WHERE workspace_id = ?
+                WHERE workspace_id = ? AND canvas_kind = ?
                 """,
-                (normalized_workspace_id,),
+                (normalized_workspace_id, normalized_kind),
             ).fetchone()
         if row is None:
             return None
         return self._serialize_publication(row)
 
-    def revoke_publication(self, *, workspace_id: str) -> PublicPublication | None:
+    def list_publications(self, *, workspace_id: str) -> list[PublicPublication]:
+        """Return every publication row for a workspace, one per canvas kind."""
+
         normalized_workspace_id = workspace_id.strip()
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT workspace_id, canvas_kind, token, active_page_id, version, is_active,
+                       published_at, updated_at, revoked_at
+                FROM workspace_publications
+                WHERE workspace_id = ?
+                ORDER BY canvas_kind
+                """,
+                (normalized_workspace_id,),
+            ).fetchall()
+        return [self._serialize_publication(row) for row in rows]
+
+    def revoke_publication(
+        self, *, workspace_id: str, canvas_kind: str = CANVAS_KIND_WEB_PAGE
+    ) -> PublicPublication | None:
+        normalized_workspace_id = workspace_id.strip()
+        normalized_kind = _normalize_canvas_kind(canvas_kind)
         now = _utc_now()
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 UPDATE workspace_publications
                 SET is_active = 0, revoked_at = ?, updated_at = ?
-                WHERE workspace_id = ?
+                WHERE workspace_id = ? AND canvas_kind = ?
                 """,
-                (now, now, normalized_workspace_id),
+                (now, now, normalized_workspace_id, normalized_kind),
             )
             conn.commit()
-        return self.get_publication(workspace_id=normalized_workspace_id)
+        return self.get_publication(workspace_id=normalized_workspace_id, canvas_kind=normalized_kind)
 
     def resolve_active_publication(self, *, token: str) -> PublicPublication | None:
         """Return the active publication for a public token, or None.
@@ -671,7 +713,7 @@ class PublishedPageStore:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT workspace_id, token, active_page_id, version, is_active,
+                SELECT workspace_id, canvas_kind, token, active_page_id, version, is_active,
                        published_at, updated_at, revoked_at
                 FROM workspace_publications
                 WHERE token = ? AND is_active = 1
@@ -686,6 +728,7 @@ class PublishedPageStore:
     def _serialize_publication(row: sqlite3.Row) -> PublicPublication:
         return PublicPublication(
             workspace_id=str(row["workspace_id"]),
+            canvas_kind=_normalize_canvas_kind(row["canvas_kind"]),
             token=str(row["token"]),
             active_page_id=str(row["active_page_id"]),
             version=int(row["version"]),
@@ -710,26 +753,111 @@ class PublishedPageStore:
                     conn.commit()
                 except Exception:
                     pass  # Column already exists
-            # Public-link companion table: one active publication per workspace.
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS workspace_publications (
-                    workspace_id TEXT PRIMARY KEY,
-                    token TEXT NOT NULL UNIQUE,
-                    active_page_id TEXT NOT NULL,
-                    version INTEGER NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    published_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    revoked_at TEXT
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_workspace_publications_token "
-                "ON workspace_publications(token)"
-            )
+            # Public-link companion table: one active publication per
+            # (workspace, canvas kind) so each canvas type publishes independently.
+            self._ensure_workspace_publications_schema(conn)
             conn.commit()
+
+    def _ensure_workspace_publications_schema(self, conn: sqlite3.Connection) -> None:
+        """Create the per-(workspace, canvas-kind) publications table.
+
+        Migrates the legacy single-row-per-workspace table (PRIMARY KEY
+        ``workspace_id``) to a composite ``(workspace_id, canvas_kind)`` key.
+        SQLite cannot alter a primary key in place, so the legacy table is
+        rebuilt: existing rows are carried over with ``canvas_kind`` backfilled
+        from the snapshot manifest (defaulting to ``web_page``), preserving the
+        already-issued public tokens.
+        """
+
+        create_sql = """
+            CREATE TABLE IF NOT EXISTS workspace_publications (
+                workspace_id TEXT NOT NULL,
+                canvas_kind TEXT NOT NULL DEFAULT 'web_page',
+                token TEXT NOT NULL UNIQUE,
+                active_page_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                published_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                revoked_at TEXT,
+                PRIMARY KEY (workspace_id, canvas_kind)
+            )
+        """
+        index_sql = (
+            "CREATE INDEX IF NOT EXISTS idx_workspace_publications_token "
+            "ON workspace_publications(token)"
+        )
+
+        existing = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_publications'"
+        ).fetchone()
+        if existing is None:
+            conn.execute(create_sql)
+            conn.execute(index_sql)
+            return
+
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(workspace_publications)").fetchall()
+        }
+        if "canvas_kind" in columns:
+            conn.execute(index_sql)
+            return
+
+        # Legacy schema detected: rebuild with the composite key.
+        legacy_rows = conn.execute(
+            """
+            SELECT workspace_id, token, active_page_id, version, is_active,
+                   published_at, updated_at, revoked_at
+            FROM workspace_publications
+            """
+        ).fetchall()
+        conn.execute("ALTER TABLE workspace_publications RENAME TO workspace_publications_legacy")
+        conn.execute(create_sql)
+        for row in legacy_rows:
+            canvas_kind = self._legacy_publication_kind(conn, str(row["active_page_id"]))
+            conn.execute(
+                """
+                INSERT INTO workspace_publications (
+                    workspace_id, canvas_kind, token, active_page_id, version, is_active,
+                    published_at, updated_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row["workspace_id"]),
+                    canvas_kind,
+                    str(row["token"]),
+                    str(row["active_page_id"]),
+                    int(row["version"]),
+                    int(row["is_active"]),
+                    str(row["published_at"]),
+                    str(row["updated_at"]),
+                    str(row["revoked_at"]) if row["revoked_at"] else None,
+                ),
+            )
+        conn.execute("DROP TABLE workspace_publications_legacy")
+        conn.execute(index_sql)
+
+    @staticmethod
+    def _legacy_publication_kind(conn: sqlite3.Connection, active_page_id: str) -> str:
+        """Best-effort canvas kind for a legacy publication via its manifest."""
+
+        try:
+            page_row = conn.execute(
+                "SELECT manifest_path FROM published_pages WHERE id = ?",
+                (active_page_id,),
+            ).fetchone()
+            if page_row is None:
+                return CANVAS_KIND_WEB_PAGE
+            manifest_path = Path(str(page_row["manifest_path"]))
+            if not manifest_path.exists():
+                return CANVAS_KIND_WEB_PAGE
+            decoded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            canvas = decoded.get("canvas") if isinstance(decoded, dict) else None
+            kind = str(canvas.get("kind") or "") if isinstance(canvas, dict) else ""
+            return kind if kind in SUPPORTED_CANVAS_KINDS else CANVAS_KIND_WEB_PAGE
+        except Exception:  # pragma: no cover - defensive backfill
+            return CANVAS_KIND_WEB_PAGE
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -786,6 +914,31 @@ def clear_published_page_store_cache() -> None:
 def get_snapshot_writer() -> SnapshotWriter:
     settings = get_settings()
     return SnapshotWriter(upload_dir=settings.upload_dir, max_rows=settings.agent_max_sql_rows)
+
+
+def _normalize_canvas_kind(value: Any) -> str:
+    kind = str(value or "").strip()
+    return kind if kind in SUPPORTED_CANVAS_KINDS else CANVAS_KIND_WEB_PAGE
+
+
+def canvas_kind_for_format(canvas_format_id: str | None) -> str:
+    """Resolve the canvas kind for a format id, raising on unknown formats.
+
+    A missing id defaults to the web-page kind so legacy clients that omit the
+    discriminator still target the historically-single publication bucket.
+    """
+
+    normalized = (canvas_format_id or "").strip()
+    if not normalized:
+        return CANVAS_KIND_WEB_PAGE
+    kind = CANVAS_FORMAT_KINDS.get(normalized)
+    if not kind:
+        raise PublishedPageError(
+            code="PUBLISH_UNSUPPORTED_CANVAS_FORMAT",
+            message=f"Unsupported canvas format: {normalized}",
+            status_code=422,
+        )
+    return kind
 
 
 def build_canvas_metadata(

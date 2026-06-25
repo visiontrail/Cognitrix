@@ -24,6 +24,7 @@ from .published_pages import (
     CANVAS_KIND_WEB_PAGE,
     PublishedPageError,
     PublishWorkspaceRequest,
+    canvas_kind_for_format,
     get_published_page_store,
     get_snapshot_writer,
     manifest_canvas_format_id,
@@ -1356,16 +1357,18 @@ async def publish_workspace(
         manifest_path=snapshot.manifest_path,
         published_at=published_at,
     )
+    canvas_kind = snapshot.manifest.get("canvas", {}).get("kind", CANVAS_KIND_WEB_PAGE)
     publication = store.upsert_publication(
         workspace_id=workspace_id,
         active_page_id=page.id,
         version=version,
+        canvas_kind=canvas_kind,
         published_at=published_at,
     )
     public_url = _build_public_url_for_request(publication.token, http_request)
     status = publication.to_status(public_url=public_url)
     status["canvas_format_id"] = request.canvas_format_id()
-    status["canvas_kind"] = snapshot.manifest.get("canvas", {}).get("kind", CANVAS_KIND_WEB_PAGE)
+    status["canvas_kind"] = canvas_kind
     return status
 
 
@@ -1373,6 +1376,7 @@ async def publish_workspace(
 async def get_workspace_publication(
     workspace_id: str,
     http_request: Request,
+    canvas_format_id: str | None = None,
     identity: AuthIdentity = Depends(get_current_identity),
 ) -> dict[str, object]:
     service = get_workspace_service()
@@ -1385,9 +1389,16 @@ async def get_workspace_publication(
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
-    publication = get_published_page_store().get_publication(workspace_id=workspace_id)
+    try:
+        canvas_kind = canvas_kind_for_format(canvas_format_id)
+    except PublishedPageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    publication = get_published_page_store().get_publication(
+        workspace_id=workspace_id, canvas_kind=canvas_kind
+    )
     if publication is None or not publication.is_active:
-        return {"is_active": False}
+        return {"is_active": False, "canvas_kind": canvas_kind}
     public_url = _build_public_url_for_request(publication.token, http_request)
     status = publication.to_status(public_url=public_url)
     try:
@@ -1402,6 +1413,7 @@ async def get_workspace_publication(
 @router.delete("/{workspace_id}/publish")
 async def revoke_workspace_publication(
     workspace_id: str,
+    canvas_format_id: str | None = None,
     identity: AuthIdentity = Depends(get_current_identity),
 ) -> dict[str, object]:
     service = get_workspace_service()
@@ -1414,8 +1426,13 @@ async def revoke_workspace_publication(
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
-    get_published_page_store().revoke_publication(workspace_id=workspace_id)
-    return {"is_active": False}
+    try:
+        canvas_kind = canvas_kind_for_format(canvas_format_id)
+    except PublishedPageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    get_published_page_store().revoke_publication(workspace_id=workspace_id, canvas_kind=canvas_kind)
+    return {"is_active": False, "canvas_kind": canvas_kind}
 
 
 @router.get("/{workspace_id}/published")

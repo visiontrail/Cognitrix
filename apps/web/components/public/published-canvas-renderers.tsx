@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+import { Minus, Plus, RotateCcw } from "lucide-react";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import {
   fetchPublicChartData,
@@ -8,7 +9,19 @@ import {
   type PublishedCanvasNode,
   type PublishedManifest,
 } from "@/lib/public/api";
+import { useI18n } from "@/lib/i18n/context";
 import type { ChartSpec } from "@/types/chart";
+
+const FREE_CANVAS_PADDING = 32;
+const MIN_FREE_CANVAS_ZOOM = 0.25;
+const MAX_FREE_CANVAS_ZOOM = 2;
+const FREE_CANVAS_ZOOM_STEP = 1.1;
+
+type FreeCanvasTransform = {
+  x: number;
+  y: number;
+  zoom: number;
+};
 
 type ChartCanvasNode = PublishedCanvasNode & {
   data: Extract<PublishedCanvasNode["data"], { type: "chart" }>;
@@ -33,20 +46,134 @@ export function PublishedFreeCanvas({
   token: string;
   manifest: PublishedManifest;
 }) {
+  const { t } = useI18n();
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
   const nodes = (manifest.content?.nodes ?? []).filter((node) => !node.hidden);
   const bounds = manifest.canvas?.bounds ?? computeBounds(nodes);
   const left = Math.min(bounds.x, ...nodes.map((node) => node.position.x), 0);
   const top = Math.min(bounds.y, ...nodes.map((node) => node.position.y), 0);
   const width = Math.max(bounds.width + Math.abs(left) + 96, 960);
   const height = Math.max(bounds.height + Math.abs(top) + 96, 640);
+  const offsetX = left < 0 ? Math.abs(left) + FREE_CANVAS_PADDING : FREE_CANVAS_PADDING;
+  const offsetY = top < 0 ? Math.abs(top) + FREE_CANVAS_PADDING : FREE_CANVAS_PADDING;
+  const initialTransform = useMemo<FreeCanvasTransform>(
+    () => ({
+      x: 0,
+      y: 0,
+      zoom: clampFreeCanvasZoom(Number(manifest.canvas?.viewport?.zoom ?? 1)),
+    }),
+    [manifest.canvas?.viewport?.zoom, token]
+  );
+  const [transform, setTransform] = useState<FreeCanvasTransform>(initialTransform);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    setTransform(initialTransform);
+  }, [initialTransform]);
+
+  const zoomAtPoint = useCallback((nextZoom: number, point?: { x: number; y: number }) => {
+    setTransform((current) => {
+      const zoom = clampFreeCanvasZoom(nextZoom);
+      if (zoom === current.zoom) return current;
+      const rect = viewportRef.current?.getBoundingClientRect();
+      const focalPoint = point ?? {
+        x: rect ? rect.width / 2 : 0,
+        y: rect ? rect.height / 2 : 0,
+      };
+      return {
+        zoom,
+        x: roundFreeCanvasTransformValue(focalPoint.x - ((focalPoint.x - current.x) / current.zoom) * zoom),
+        y: roundFreeCanvasTransformValue(focalPoint.y - ((focalPoint.y - current.y) / current.zoom) * zoom),
+      };
+    });
+  }, []);
+
+  const handleWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      const zoomMultiplier = event.deltaY > 0 ? 1 / FREE_CANVAS_ZOOM_STEP : FREE_CANVAS_ZOOM_STEP;
+      zoomAtPoint(transform.zoom * zoomMultiplier, {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+    },
+    [transform.zoom, zoomAtPoint]
+  );
+
+  const handlePointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("[data-public-canvas-control]")) return;
+    event.preventDefault();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: transform.x,
+      originY: transform.y,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setIsDragging(true);
+  }, [transform.x, transform.y]);
+
+  const handlePointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    setTransform((current) => ({
+      ...current,
+      x: roundFreeCanvasTransformValue(drag.originX + event.clientX - drag.startX),
+      y: roundFreeCanvasTransformValue(drag.originY + event.clientY - drag.startY),
+    }));
+  }, []);
+
+  const endDrag = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsDragging(false);
+  }, []);
+
+  const resetView = useCallback(() => {
+    dragRef.current = null;
+    setIsDragging(false);
+    setTransform(initialTransform);
+  }, [initialTransform]);
 
   return (
-    <div className="h-screen overflow-auto bg-[#f7f4eb] p-8 text-[#2f332f]">
+    <div
+      ref={viewportRef}
+      className={`relative h-screen overflow-hidden bg-[#f7f4eb] text-[#2f332f] ${
+        isDragging ? "cursor-grabbing" : "cursor-grab"
+      }`}
+      aria-label={t("public.canvas.viewport")}
+      data-testid="published-free-canvas-viewport"
+      onPointerCancel={endDrag}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endDrag}
+      onWheel={handleWheel}
+      style={{ touchAction: "none" }}
+    >
       <div
-        className="relative"
+        className="relative will-change-transform"
+        data-testid="published-free-canvas-stage"
         style={{
           width,
           height,
+          transform: `matrix(${transform.zoom}, 0, 0, ${transform.zoom}, ${transform.x}, ${transform.y})`,
+          transformOrigin: "top left",
         }}
       >
         {nodes.map((node) => (
@@ -54,10 +181,48 @@ export function PublishedFreeCanvas({
             key={node.id}
             token={token}
             node={node}
-            offsetX={left < 0 ? Math.abs(left) + 32 : 32}
-            offsetY={top < 0 ? Math.abs(top) + 32 : 32}
+            offsetX={offsetX}
+            offsetY={offsetY}
           />
         ))}
+      </div>
+      <div
+        className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur"
+        data-public-canvas-control
+      >
+        <button
+          type="button"
+          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          aria-label={t("public.canvas.zoomOut")}
+          title={t("public.canvas.zoomOut")}
+          onClick={() => zoomAtPoint(transform.zoom / FREE_CANVAS_ZOOM_STEP)}
+        >
+          <Minus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <output
+          className="min-w-12 px-1 text-center text-xs tabular-nums text-[#555250]"
+          aria-label={t("public.canvas.zoomLevel")}
+        >
+          {Math.round(transform.zoom * 100)}%
+        </output>
+        <button
+          type="button"
+          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          aria-label={t("public.canvas.zoomIn")}
+          title={t("public.canvas.zoomIn")}
+          onClick={() => zoomAtPoint(transform.zoom * FREE_CANVAS_ZOOM_STEP)}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="ml-1 flex h-8 w-8 items-center justify-center rounded border-l border-[#e8dfcf] pl-1 hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          aria-label={t("public.canvas.resetView")}
+          title={t("public.canvas.resetView")}
+          onClick={resetView}
+        >
+          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );
@@ -171,9 +336,18 @@ function PublishedChartNode({
       {spec ? (
         <ChartPreview spec={spec} height={Math.max(120, height - 40)} />
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-[#777166]">Loading chart...</div>
+        <PublishedChartLoading />
       )}
     </section>
+  );
+}
+
+function PublishedChartLoading() {
+  const { t } = useI18n();
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-[#777166]">
+      {t("public.loadingChart")}
+    </div>
   );
 }
 
@@ -258,6 +432,15 @@ function normalizeSpec(payload: PublicChartData): ChartSpec {
       __rows__: payload.rows,
     },
   };
+}
+
+function clampFreeCanvasZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.min(MAX_FREE_CANVAS_ZOOM, Math.max(MIN_FREE_CANVAS_ZOOM, zoom));
+}
+
+function roundFreeCanvasTransformValue(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function isChartNode(node: PublishedCanvasNode): node is ChartCanvasNode {

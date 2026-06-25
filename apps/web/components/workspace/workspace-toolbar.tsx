@@ -16,6 +16,7 @@ import {
   Minus,
   NotebookPen,
   Pencil,
+  Printer,
   Send,
   Type,
   X,
@@ -42,6 +43,7 @@ import {
   exportInfiniteCanvasToPng,
   exportFixedCanvasToPng,
   exportFixedCanvasToPdf,
+  printFixedCanvas,
 } from "@/lib/workspace/canvas-export";
 import {
   buildActiveCanvasPublishPayload,
@@ -242,6 +244,18 @@ export function WorkspaceToolbar() {
       toast.success(t("workspace.export.success"));
     } catch {
       toast.error(t("workspace.export.error"));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handlePrint = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      await printFixedCanvas(activeCanvasPreset, workspaceTitle);
+    } catch {
+      toast.error(t("workspace.print.error"));
     } finally {
       setIsExporting(false);
     }
@@ -614,6 +628,12 @@ export function WorkspaceToolbar() {
                       <FileText className="w-4 h-4 mr-2" />
                       {t("workspace.export.pdf")}
                     </DropdownMenuItem>
+                    {activeCanvasPreset.printable && (
+                      <DropdownMenuItem onSelect={handlePrint}>
+                        <Printer className="w-4 h-4 mr-2" />
+                        {t("workspace.print.button")}
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}

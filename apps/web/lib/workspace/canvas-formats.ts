@@ -6,6 +6,12 @@ export type CanvasFormatPreset = {
   descriptionKey: string;
   width: number | null;
   height: number | null;
+  /**
+   * Whether this canvas maps to a physical paper size and is therefore suitable
+   * for the browser print dialog (A4/A3/Letter). Slide- and screen-oriented
+   * fixed canvases (16:9) and free canvases (infinite/web-design) stay false.
+   */
+  printable: boolean;
 };
 
 export const DEFAULT_CANVAS_FORMAT: WorkspaceCanvasFormat = { id: "infinite" };
@@ -17,6 +23,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.infiniteDescription",
     width: null,
     height: null,
+    printable: false,
   },
   {
     id: "web-design",
@@ -24,6 +31,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.webDesignDescription",
     width: null,
     height: null,
+    printable: false,
   },
   {
     id: "a4-portrait",
@@ -31,6 +39,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.a4PortraitDescription",
     width: 794,
     height: 1123,
+    printable: true,
   },
   {
     id: "a4-landscape",
@@ -38,6 +47,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.a4LandscapeDescription",
     width: 1123,
     height: 794,
+    printable: true,
   },
   {
     id: "a3-portrait",
@@ -45,6 +55,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.a3PortraitDescription",
     width: 1123,
     height: 1587,
+    printable: true,
   },
   {
     id: "letter-portrait",
@@ -52,6 +63,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.letterPortraitDescription",
     width: 816,
     height: 1056,
+    printable: true,
   },
   {
     id: "wide-16-9",
@@ -59,6 +71,7 @@ export const CANVAS_FORMAT_PRESETS: CanvasFormatPreset[] = [
     descriptionKey: "workspace.canvasFormat.wide169Description",
     width: 1280,
     height: 720,
+    printable: false,
   },
 ];
 

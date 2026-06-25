@@ -265,6 +265,8 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "workspace.export.success": "Exported successfully",
     "workspace.export.error": "Export failed",
     "workspace.export.noContent": "No content to export",
+    "workspace.print.button": "Print",
+    "workspace.print.error": "Could not open the print dialog",
     "workspace.publish.publish": "Publish",
     "workspace.publish.publishing": "Publishing...",
     "workspace.publish.history": "History",
@@ -563,6 +565,11 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
 
     "public.loading": "Loading...",
     "public.loadingChart": "Loading chart...",
+    "public.canvas.viewport": "Published canvas viewport",
+    "public.canvas.zoomIn": "Zoom in",
+    "public.canvas.zoomOut": "Zoom out",
+    "public.canvas.resetView": "Reset view",
+    "public.canvas.zoomLevel": "Zoom level",
     "public.invalidTitle": "Link unavailable",
     "public.invalidDesc": "This link does not exist or is no longer available.",
 
@@ -875,6 +882,8 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "workspace.export.success": "导出成功",
     "workspace.export.error": "导出失败",
     "workspace.export.noContent": "暂无内容可导出",
+    "workspace.print.button": "打印",
+    "workspace.print.error": "无法打开打印对话框",
     "workspace.publish.publish": "发布",
     "workspace.publish.publishing": "发布中...",
     "workspace.publish.history": "历史记录",
@@ -1167,6 +1176,11 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
 
     "public.loading": "加载中...",
     "public.loadingChart": "图表加载中...",
+    "public.canvas.viewport": "已发布画布视口",
+    "public.canvas.zoomIn": "放大",
+    "public.canvas.zoomOut": "缩小",
+    "public.canvas.resetView": "重置视图",
+    "public.canvas.zoomLevel": "缩放比例",
     "public.invalidTitle": "链接不可用",
     "public.invalidDesc": "该链接不存在或已失效。",
 

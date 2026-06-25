@@ -76,10 +76,12 @@ export async function exportInfiniteCanvasToPng(
   downloadFile(dataUrl, `${workspaceTitle}.png`);
 }
 
-export async function exportFixedCanvasToPng(
-  preset: CanvasFormatPreset,
-  workspaceTitle: string
-): Promise<void> {
+/**
+ * Capture a fixed-size canvas preset to a PNG data URL at its exact pixel
+ * dimensions. Shared by the PNG, PDF, and print paths so they stay pixel-for-
+ * pixel identical.
+ */
+async function captureFixedCanvas(preset: CanvasFormatPreset): Promise<string> {
   if (!preset.width || !preset.height) throw new Error("Preset has no fixed dimensions");
 
   const viewportEl = getViewportElement();
@@ -88,7 +90,14 @@ export async function exportFixedCanvasToPng(
   const bounds = { x: 0, y: 0, width: preset.width, height: preset.height };
   const transform = getViewportForBounds(bounds, preset.width, preset.height, 0.1, 4, 0);
 
-  const dataUrl = await captureViewport(viewportEl, preset.width, preset.height, transform);
+  return captureViewport(viewportEl, preset.width, preset.height, transform);
+}
+
+export async function exportFixedCanvasToPng(
+  preset: CanvasFormatPreset,
+  workspaceTitle: string
+): Promise<void> {
+  const dataUrl = await captureFixedCanvas(preset);
   downloadFile(dataUrl, `${workspaceTitle}.png`);
 }
 
@@ -99,21 +108,13 @@ export async function exportFixedCanvasToPdf(
   preset: CanvasFormatPreset,
   workspaceTitle: string
 ): Promise<void> {
-  if (!preset.width || !preset.height) throw new Error("Preset has no fixed dimensions");
+  const pngDataUrl = await captureFixedCanvas(preset);
 
-  const viewportEl = getViewportElement();
-  if (!viewportEl) throw new Error("ReactFlow viewport element not found");
-
-  const bounds = { x: 0, y: 0, width: preset.width, height: preset.height };
-  const transform = getViewportForBounds(bounds, preset.width, preset.height, 0.1, 4, 0);
-
-  const pngDataUrl = await captureViewport(viewportEl, preset.width, preset.height, transform);
-
-  const widthMm = preset.width * PX_TO_MM;
-  const heightMm = preset.height * PX_TO_MM;
+  const widthMm = preset.width! * PX_TO_MM;
+  const heightMm = preset.height! * PX_TO_MM;
 
   const { jsPDF } = await import("jspdf");
-  const orientation = preset.width >= preset.height ? "landscape" : "portrait";
+  const orientation = preset.width! >= preset.height! ? "landscape" : "portrait";
   const doc = new jsPDF({
     orientation,
     unit: "mm",
@@ -122,4 +123,103 @@ export async function exportFixedCanvasToPdf(
 
   doc.addImage(pngDataUrl, "PNG", 0, 0, widthMm, heightMm);
   doc.save(`${workspaceTitle}.pdf`);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Print a fixed-size canvas via the browser's native print dialog. The captured
+ * PNG is dropped into a hidden, isolated iframe whose `@page` size matches the
+ * paper format (in mm), so the printer reproduces the canvas at true scale and
+ * the surrounding app UI is never part of the printout. From the dialog the
+ * user can pick a physical printer or "Save as PDF".
+ */
+export async function printFixedCanvas(
+  preset: CanvasFormatPreset,
+  workspaceTitle: string
+): Promise<void> {
+  const pngDataUrl = await captureFixedCanvas(preset);
+
+  const widthMm = preset.width! * PX_TO_MM;
+  const heightMm = preset.height! * PX_TO_MM;
+
+  await new Promise<void>((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.visibility = "hidden";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    const win = iframe.contentWindow;
+    if (!doc || !win) {
+      iframe.remove();
+      reject(new Error("Print iframe document unavailable"));
+      return;
+    }
+
+    let settled = false;
+    let fallbackTimer = 0;
+    const removeIframe = () => {
+      // Defer removal so the browser keeps the document alive for the dialog.
+      window.setTimeout(() => iframe.remove(), 1000);
+    };
+
+    doc.open();
+    doc.write(
+      `<!DOCTYPE html><html><head><meta charset="utf-8" />` +
+        `<title>${escapeHtml(workspaceTitle)}</title><style>` +
+        `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }` +
+        `html, body { margin: 0; padding: 0; }` +
+        `img { display: block; width: ${widthMm}mm; height: ${heightMm}mm; }` +
+        `</style></head><body><img id="print-image" alt="" /></body></html>`
+    );
+    doc.close();
+
+    const triggerPrint = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallbackTimer);
+      try {
+        win.focus();
+        win.print();
+        resolve();
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("Print failed"));
+      } finally {
+        removeIframe();
+      }
+    };
+
+    const img = doc.getElementById("print-image") as HTMLImageElement | null;
+    if (!img) {
+      iframe.remove();
+      reject(new Error("Print image element unavailable"));
+      return;
+    }
+
+    img.onload = () => window.setTimeout(triggerPrint, 50);
+    img.onerror = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallbackTimer);
+      iframe.remove();
+      reject(new Error("Print image failed to load"));
+    };
+    // Data URLs load synchronously in practice, but guard against a missed
+    // onload so the promise can never hang the export button.
+    fallbackTimer = window.setTimeout(triggerPrint, 2000);
+    img.src = pngDataUrl;
+  });
 }

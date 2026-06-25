@@ -8,7 +8,15 @@ import { TooltipProvider } from "../../components/ui/tooltip";
 import { WorkspaceToolbar } from "../../components/workspace/workspace-toolbar";
 import { clearInMemoryToken, setInMemoryToken } from "../../lib/auth/session";
 import { DEFAULT_CANVAS_FORMAT } from "../../lib/workspace/canvas-formats";
+import * as canvasExport from "../../lib/workspace/canvas-export";
 import { useWorkspaceStore } from "../../stores/workspace-store";
+
+vi.mock("../../lib/workspace/canvas-export", () => ({
+  exportInfiniteCanvasToPng: vi.fn().mockResolvedValue(undefined),
+  exportFixedCanvasToPng: vi.fn().mockResolvedValue(undefined),
+  exportFixedCanvasToPdf: vi.fn().mockResolvedValue(undefined),
+  printFixedCanvas: vi.fn().mockResolvedValue(undefined),
+}));
 
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -49,6 +57,7 @@ describe("WorkspaceToolbar", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
     clearInMemoryToken();
     useWorkspaceStore.setState({
       workspaces: [],
@@ -98,5 +107,31 @@ describe("WorkspaceToolbar", () => {
 
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/i)).toBeInTheDocument();
+  });
+
+  it("prints a printable paper canvas from the export menu", async () => {
+    useWorkspaceStore.setState({ canvasFormat: { id: "a4-portrait" } });
+    renderWithProviders(<WorkspaceToolbar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Export" }));
+    await userEvent.click(screen.getByText("Print"));
+
+    await waitFor(() => {
+      expect(canvasExport.printFixedCanvas).toHaveBeenCalledTimes(1);
+    });
+    expect(canvasExport.printFixedCanvas).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "a4-portrait", printable: true }),
+      "Original Canvas"
+    );
+  });
+
+  it("omits the print action for non-printable fixed canvases", async () => {
+    useWorkspaceStore.setState({ canvasFormat: { id: "wide-16-9" } });
+    renderWithProviders(<WorkspaceToolbar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    expect(screen.getByText("Export PNG")).toBeInTheDocument();
+    expect(screen.queryByText("Print")).not.toBeInTheDocument();
   });
 });

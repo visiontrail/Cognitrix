@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cognitrix — Redesign Concept (Editorial Intelligence)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Carried over from the existing warm system — this redesign keeps the brand DNA */
+    --parchment:#f3f1e8;
+    --ivory:#faf9f5;
+    --paper:#fffef9;
+    --ink:#141413;
+    --olive:#5e5d59;
+    --stone:#87867f;
+    --sand:#e8e6dc;
+    --cream:#f0eee6;
+    --warm-silver:#b0aea5;
+    /* Accents — terracotta stays; teal/forest promoted from chart palette to a true 2nd brand accent */
+    --terracotta:#c96442;
+    --terracotta-soft:#d97757;
+    --forest:#2f5a52;
+    --teal:#4b7f8c;
+    --sage:#9bb7a5;
+    --gold:#c79a3c;
+    --crimson:#b53333;
+
+    --r-sm:7px; --r-md:12px; --r-lg:18px; --r-xl:26px;
+    --shadow-whisper:0 4px 24px rgba(20,20,19,.05);
+    --shadow-card:0 1px 0 rgba(255,255,255,.7), 0 18px 44px -20px rgba(20,20,19,.28);
+    --ring:0 0 0 1px var(--sand);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{
+    font-family:"Hanken Grotesk",system-ui,sans-serif;
+    color:var(--ink);
+    background:
+      radial-gradient(900px 600px at 88% -8%, rgba(201,100,66,.07), transparent 60%),
+      radial-gradient(800px 520px at -6% 12%, rgba(47,90,82,.06), transparent 55%),
+      var(--parchment);
+    line-height:1.55;
+    padding:48px 24px 96px;
+  }
+  ::selection{background:rgba(201,100,66,.22)}
+  .wrap{max-width:1180px;margin:0 auto}
+  .serif{font-family:"Fraunces",Georgia,serif;font-weight:500;letter-spacing:-.01em}
+  .mono{font-family:"JetBrains Mono",monospace}
+  .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--stone);font-weight:600}
+
+  /* ---------- Document header ---------- */
+  .doc-head{margin-bottom:40px}
+  .doc-head h1{font-family:"Fraunces",serif;font-weight:500;font-size:clamp(40px,6vw,76px);line-height:.98;letter-spacing:-.025em}
+  .doc-head h1 em{font-style:italic;color:var(--terracotta)}
+  .doc-head p{max-width:640px;margin-top:18px;color:var(--olive);font-size:18px}
+  .rule{height:1px;background:linear-gradient(90deg,var(--sand),transparent);margin:28px 0}
+
+  .section-label{display:flex;align-items:baseline;gap:14px;margin:64px 0 22px}
+  .section-label .n{font-family:"Fraunces",serif;font-style:italic;font-size:22px;color:var(--terracotta)}
+  .section-label h2{font-family:"Fraunces",serif;font-weight:500;font-size:30px;letter-spacing:-.02em}
+  .section-label .meta{margin-left:auto;font-size:12.5px;color:var(--stone)}
+
+  /* ---------- App shell mock ---------- */
+  .device{
+    border-radius:var(--r-xl);
+    background:var(--ivory);
+    box-shadow:var(--shadow-card);
+    border:1px solid var(--cream);
+    overflow:hidden;
+  }
+  .app{display:grid;grid-template-columns:268px 1fr;height:660px}
+
+  /* Sidebar */
+  .side{display:flex;flex-direction:column;background:var(--ivory);border-right:1px solid var(--cream)}
+  .brand{display:flex;align-items:center;gap:11px;padding:20px 20px 16px}
+  .brand .mark{width:34px;height:34px;border-radius:10px;background:
+      conic-gradient(from 210deg at 50% 50%, var(--terracotta), var(--gold), var(--forest), var(--terracotta));
+      display:grid;place-items:center;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+  .brand .mark svg{width:18px;height:18px}
+  .brand .name{font-family:"Fraunces",serif;font-size:21px;font-weight:600;letter-spacing:-.02em}
+  .brand .name span{display:block;font-family:"Hanken Grotesk";font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--stone);font-weight:600;margin-top:1px}
+
+  .new-btn{margin:6px 16px 14px;display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--r-md);
+    background:var(--ink);color:var(--paper);font-weight:600;font-size:14px;cursor:pointer;border:none;
+    box-shadow:0 8px 18px -10px rgba(20,20,19,.6);transition:transform .15s}
+  .new-btn:hover{transform:translateY(-1px)}
+  .new-btn svg{width:16px;height:16px}
+  .new-btn kbd{margin-left:auto;font-family:"JetBrains Mono";font-size:10.5px;color:var(--warm-silver);background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px}
+
+  .nav-seg{display:flex;gap:4px;margin:0 16px 16px;background:var(--cream);padding:4px;border-radius:var(--r-md)}
+  .nav-seg button{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;border:none;background:transparent;
+    border-radius:9px;font-size:10.5px;font-weight:600;color:var(--stone);cursor:pointer;transition:.15s}
+  .nav-seg button svg{width:16px;height:16px}
+  .nav-seg button.on{background:var(--paper);color:var(--ink);box-shadow:0 1px 0 rgba(20,20,19,.04),0 2px 8px -4px rgba(20,20,19,.18)}
+  .nav-seg button.on svg{color:var(--terracotta)}
+
+  .side-scroll{flex:1;overflow:auto;padding:0 12px}
+  .grp{padding:14px 8px 6px;display:flex;align-items:center;justify-content:space-between}
+  .grp span{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--stone);font-weight:700}
+  .grp .add{width:20px;height:20px;border-radius:6px;border:1px solid var(--sand);display:grid;place-items:center;color:var(--olive);cursor:pointer}
+  .grp .add svg{width:12px;height:12px}
+  .row{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:10px;cursor:pointer;color:var(--olive);transition:.12s}
+  .row:hover{background:var(--cream)}
+  .row.on{background:var(--paper);box-shadow:var(--ring);color:var(--ink)}
+  .row .dot{width:18px;height:18px;flex:none;color:var(--stone)}
+  .row.on .dot{color:var(--terracotta)}
+  .row .tt{min-width:0;flex:1}
+  .row .tt b{display:block;font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+  .row .tt small{font-size:11px;color:var(--stone)}
+
+  .side-foot{border-top:1px solid var(--cream);padding:12px;display:flex;align-items:center;gap:10px}
+  .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,var(--terracotta),var(--terracotta-soft));color:#fff;
+    display:grid;place-items:center;font-weight:700;font-size:14px}
+  .side-foot .tt{flex:1;min-width:0}
+  .side-foot .tt b{display:block;font-size:13px;font-weight:600}
+  .side-foot .tt small{font-size:11px;color:var(--stone)}
+
+  /* Main */
+  .main{display:flex;flex-direction:column;background:
+      linear-gradient(180deg, var(--paper), var(--ivory) 120px)}
+  .top{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:1px solid var(--cream)}
+  .top h3{font-family:"Fraunces",serif;font-weight:500;font-size:19px;letter-spacing:-.01em}
+  .top .crumb{font-size:12px;color:var(--stone);display:flex;align-items:center;gap:7px}
+  .pill{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--forest);
+    background:rgba(47,90,82,.08);padding:6px 12px;border-radius:999px;font-weight:600}
+  .pill i{width:7px;height:7px;border-radius:50%;background:var(--forest);display:inline-block}
+
+  /* Empty / hero state */
+  .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px 28px 0;position:relative}
+  .hero .glyph{font-family:"Fraunces",serif;font-style:italic;font-size:13px;color:var(--terracotta);letter-spacing:.04em;margin-bottom:14px}
+  .hero h2{font-family:"Fraunces",serif;font-weight:500;font-size:38px;line-height:1.05;letter-spacing:-.025em;max-width:18ch}
+  .hero h2 em{font-style:italic;color:var(--terracotta)}
+  .hero p{margin-top:14px;color:var(--olive);max-width:46ch;font-size:15px}
+  .chips{display:flex;flex-wrap:wrap;gap:9px;justify-content:center;margin-top:26px;max-width:640px}
+  .chip{display:flex;align-items:center;gap:9px;padding:10px 15px;border-radius:999px;background:var(--paper);
+    border:1px solid var(--sand);font-size:13px;color:var(--ink);cursor:pointer;transition:.15s;box-shadow:0 1px 0 rgba(255,255,255,.6)}
+  .chip:hover{border-color:var(--terracotta);color:var(--terracotta);transform:translateY(-1px)}
+  .chip svg{width:14px;height:14px;color:var(--stone)}
+  .chip:hover svg{color:var(--terracotta)}
+
+  /* Composer */
+  .composer-wrap{padding:22px 28px 26px}
+  .composer{max-width:760px;margin:0 auto;background:var(--paper);border:1px solid var(--sand);border-radius:var(--r-lg);
+    box-shadow:var(--shadow-whisper);padding:14px 14px 11px;transition:.2s}
+  .composer:focus-within{border-color:var(--terracotta);box-shadow:0 0 0 4px rgba(201,100,66,.10)}
+  .composer .text{color:var(--ink);font-size:15.5px;min-height:26px;padding:4px 4px 8px}
+  .composer .text .ph{color:var(--stone)}
+  .composer .text .ph b{color:var(--terracotta);font-weight:500}
+  .composer .bar{display:flex;align-items:center;gap:8px;padding-top:9px;border-top:1px solid var(--cream)}
+  .tool{display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:9px;border:1px solid var(--sand);background:var(--ivory);
+    font-size:12.5px;color:var(--olive);cursor:pointer;font-weight:500}
+  .tool svg{width:14px;height:14px}
+  .tool.accent{color:var(--forest);border-color:rgba(47,90,82,.25);background:rgba(47,90,82,.06)}
+  .send{margin-left:auto;width:40px;height:40px;border-radius:12px;border:none;background:var(--terracotta);color:#fff;
+    display:grid;place-items:center;cursor:pointer;box-shadow:0 10px 18px -10px rgba(201,100,66,.9)}
+  .send svg{width:17px;height:17px}
+  .composer-hint{text-align:center;font-size:11.5px;color:var(--stone);margin-top:11px}
+  .composer-hint kbd{font-family:"JetBrains Mono";font-size:10.5px;background:var(--cream);padding:1px 5px;border-radius:4px;color:var(--olive)}
+
+  /* ---------- Conversation mock ---------- */
+  .convo{padding:26px 28px 0;display:flex;flex-direction:column;gap:22px;overflow:auto;flex:1}
+  .msg-user{align-self:flex-end;max-width:70%;background:var(--ink);color:var(--paper);padding:11px 16px;border-radius:16px 16px 4px 16px;font-size:14.5px}
+  .msg-ai{max-width:88%}
+  .ai-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .ai-head .m{width:24px;height:24px;border-radius:7px;background:conic-gradient(from 210deg,var(--terracotta),var(--gold),var(--forest),var(--terracotta));display:grid;place-items:center;color:#fff}
+  .ai-head .m svg{width:12px;height:12px}
+  .ai-head b{font-size:13px;font-weight:600}
+  .ai-head .trace{margin-left:auto;font-size:11.5px;color:var(--stone);display:flex;align-items:center;gap:6px;background:var(--cream);padding:4px 10px;border-radius:999px}
+  .ai-body{font-size:14.5px;color:var(--ink)}
+  .ai-body p{margin-bottom:12px;color:var(--olive)}
+  .ai-body strong{color:var(--ink)}
+
+  .card{background:var(--paper);border:1px solid var(--sand);border-radius:var(--r-lg);box-shadow:var(--shadow-card);overflow:hidden;margin-top:6px}
+  .card-top{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--cream)}
+  .card-top .kicker{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--stone);font-weight:700}
+  .card-top h4{font-family:"Fraunces",serif;font-weight:500;font-size:17px;letter-spacing:-.01em;margin-top:1px}
+  .card-actions{margin-left:auto;display:flex;gap:6px}
+  .ico{width:30px;height:30px;border-radius:8px;border:1px solid var(--sand);display:grid;place-items:center;color:var(--olive);cursor:pointer;background:var(--ivory)}
+  .ico svg{width:14px;height:14px}
+  .ico.primary{background:var(--forest);color:#fff;border-color:var(--forest);width:auto;padding:0 12px;gap:7px;display:flex;align-items:center;font-size:12.5px;font-weight:600}
+  .chart{padding:20px 18px 22px}
+  .bars{display:flex;align-items:flex-end;gap:18px;height:170px;padding:0 8px}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;justify-content:flex-end}
+  .bars .b .col{width:100%;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,var(--terracotta),var(--terracotta-soft));position:relative}
+  .bars .b:nth-child(2) .col{background:linear-gradient(180deg,var(--teal),#5d97a3)}
+  .bars .b:nth-child(3) .col{background:linear-gradient(180deg,var(--forest),#3f6f66)}
+  .bars .b:nth-child(4) .col{background:linear-gradient(180deg,var(--gold),#d9b25a)}
+  .bars .b:nth-child(5) .col{background:linear-gradient(180deg,var(--sage),#b0c9bb)}
+  .bars .b .v{font-family:"JetBrains Mono";font-size:12px;font-weight:600;color:var(--ink)}
+  .bars .b .lab{font-size:11.5px;color:var(--stone)}
+  .insight{display:flex;gap:11px;padding:13px 18px;background:rgba(47,90,82,.05);border-top:1px solid var(--cream);font-size:13px;color:var(--forest)}
+  .insight svg{width:16px;height:16px;flex:none;margin-top:1px}
+
+  /* ---------- Tokens ---------- */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .panel{background:var(--ivory);border:1px solid var(--cream);border-radius:var(--r-lg);padding:24px;box-shadow:var(--shadow-whisper)}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:18px;margin-bottom:4px}
+  .panel .sub{font-size:12.5px;color:var(--stone);margin-bottom:18px}
+  .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .sw{border-radius:12px;height:74px;display:flex;align-items:flex-end;padding:9px;color:#fff;font-size:10.5px;font-weight:600;box-shadow:inset 0 0 0 1px rgba(0,0,0,.05)}
+  .sw small{font-family:"JetBrains Mono";font-weight:500;opacity:.85;display:block}
+  .type-row{display:flex;align-items:baseline;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--cream)}
+  .type-row:last-child{border-bottom:none}
+  .type-row .lab{font-size:11px;color:var(--stone);font-family:"JetBrains Mono"}
+  .principles{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:4px}
+  .pr{display:flex;gap:13px;padding:16px;background:var(--ivory);border:1px solid var(--cream);border-radius:var(--r-md)}
+  .pr .num{font-family:"Fraunces",serif;font-style:italic;font-size:26px;color:var(--terracotta);line-height:1}
+  .pr b{display:block;font-size:14.5px;margin-bottom:3px}
+  .pr p{font-size:12.5px;color:var(--olive)}
+  .foot{margin-top:64px;padding-top:22px;border-top:1px solid var(--sand);font-size:12.5px;color:var(--stone);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  @media(max-width:880px){.app{grid-template-columns:1fr}.side{display:none}.grid2,.principles{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header class="doc-head">
+    <div class="eyebrow">Cognitrix · Frontend Redesign Concept</div>
+    <h1 class="serif">Editorial<br>Intelligence<em>.</em></h1>
+    <p>A confident evolution of the existing warm system — keeping the brand DNA, but trading timid neutrals and a generic <span class="mono" style="font-size:.85em">Inter</span> stack for a magazine-grade typographic voice, a focal command surface, and a results-as-reports point of view.</p>
+    <div class="rule"></div>
+  </header>
+
+  <!-- SECTION 1: SHELL + EMPTY STATE -->
+  <div class="section-label">
+    <span class="n">01</span>
+    <h2 class="serif">The shell &amp; the empty state</h2>
+    <span class="meta">segmented modes · focal composer · suggested queries</span>
+  </div>
+
+  <div class="device">
+    <div class="app">
+      <!-- Sidebar -->
+      <aside class="side">
+        <div class="brand">
+          <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div>
+          <div class="name">Cognitrix<span>Analytics</span></div>
+        </div>
+        <button class="new-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> New analysis <kbd>⌘N</kbd></button>
+        <div class="nav-seg">
+          <button class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Canvas</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>Split</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Tables</button>
+        </div>
+        <div class="side-scroll">
+          <div class="grp"><span>Conversations</span><div class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg></div></div>
+          <div class="row on"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="tt"><b>Headcount by department</b><small>2 minutes ago</small></div></div>
+          <div class="row"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="tt"><b>Q2 turnover deep-dive</b><small>Yesterday</small></div></div>
+          <div class="row"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="tt"><b>Compensation bands review</b><small>Mon</small></div></div>
+          <div class="grp" style="margin-top:6px"><span>Workspaces</span><div class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg></div></div>
+          <div class="row"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><div class="tt"><b>People Ops · Board pack</b><small>9 charts</small></div></div>
+        </div>
+        <div class="side-foot">
+          <div class="avatar">L</div>
+          <div class="tt"><b>Leo Guo</b><small>AI-native BI</small></div>
+          <svg viewBox="0 0 24 24" width="16" fill="none" stroke="var(--stone)" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
+        </div>
+      </aside>
+
+      <!-- Main: empty / hero -->
+      <section class="main">
+        <div class="top">
+          <div class="crumb">People Ops · Board pack <svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+          <h3 class="serif">New analysis</h3>
+          <div class="pill"><i></i>Data connected · 4 tables</div>
+        </div>
+
+        <div class="hero">
+          <div class="glyph">✦ ask anything about your data</div>
+          <h2 class="serif">What should we <em>understand</em><br>about your people today?</h2>
+          <p>Ask in plain language. Cognitrix analyses your tables, reasons through the query, and returns an interactive chart — ready to drop into your report.</p>
+          <div class="chips">
+            <div class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="4" height="9"/><rect x="10" y="6" width="4" height="14"/><rect x="17" y="3" width="4" height="17"/></svg>Headcount breakdown by department</div>
+            <div class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg>Monthly turnover trend</div>
+            <div class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Project milestone progress</div>
+            <div class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-.5z"/></svg>Team performance over time</div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <div class="text"><span class="ph">Ask about trends, distributions, comparisons, KPIs… type <b>#</b> for a chart type or <b>@</b> to mention a column</span></div>
+            <div class="bar">
+              <button class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Attach</button>
+              <button class="tool accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-.5z"/></svg>Deep analysis</button>
+              <button class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h11l4 4v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M9 9h6"/></svg>Prompts</button>
+              <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+            </div>
+          </div>
+          <div class="composer-hint">Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for a new line · <kbd>#</kbd> chart · <kbd>@</kbd> column</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- SECTION 2: RESULT AS REPORT -->
+  <div class="section-label">
+    <span class="n">02</span>
+    <h2 class="serif">Results that read like a report</h2>
+    <span class="meta">answer + chart + insight + one-click to canvas</span>
+  </div>
+
+  <div class="device">
+    <div class="app">
+      <aside class="side">
+        <div class="brand">
+          <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div>
+          <div class="name">Cognitrix<span>Analytics</span></div>
+        </div>
+        <button class="new-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> New analysis <kbd>⌘N</kbd></button>
+        <div class="nav-seg">
+          <button class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Canvas</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></svg>Split</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Tables</button>
+        </div>
+        <div class="side-scroll">
+          <div class="grp"><span>Conversations</span><div class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg></div></div>
+          <div class="row on"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="tt"><b>Headcount by department</b><small>Active now</small></div></div>
+          <div class="row"><svg class="dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><div class="tt"><b>Q2 turnover deep-dive</b><small>Yesterday</small></div></div>
+        </div>
+        <div class="side-foot">
+          <div class="avatar">L</div><div class="tt"><b>Leo Guo</b><small>AI-native BI</small></div>
+          <svg viewBox="0 0 24 24" width="16" fill="none" stroke="var(--stone)" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
+        </div>
+      </aside>
+
+      <section class="main">
+        <div class="top">
+          <div class="crumb">People Ops · Board pack <svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+          <h3 class="serif">Headcount by department</h3>
+          <div class="pill"><i></i>4 tables</div>
+        </div>
+
+        <div class="convo">
+          <div class="msg-user">Show me the headcount breakdown by department</div>
+
+          <div class="msg-ai">
+            <div class="ai-head">
+              <div class="m"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 19V9M10 19V5M16 19v-7"/></svg></div>
+              <b>Cognitrix</b>
+              <span class="trace"><svg viewBox="0 0 24 24" width="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> 3 steps · 1.4s · 2 tools</span>
+            </div>
+            <div class="ai-body">
+              <p>Across all departments, <strong>Engineering leads with 142 people</strong> — 31% of the organisation. Sales and Operations follow, while People &amp; Finance remain lean.</p>
+              <div class="card">
+                <div class="card-top">
+                  <div>
+                    <div class="kicker">Distribution · count of employees</div>
+                    <h4 class="serif">Headcount by department</h4>
+                  </div>
+                  <div class="card-actions">
+                    <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></div>
+                    <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+                    <div class="ico primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/></svg>Add to canvas</div>
+                  </div>
+                </div>
+                <div class="chart">
+                  <div class="bars">
+                    <div class="b"><div class="col" style="height:92%"></div><div class="v">142</div><div class="lab">Engineering</div></div>
+                    <div class="b"><div class="col" style="height:64%"></div><div class="v">98</div><div class="lab">Sales</div></div>
+                    <div class="b"><div class="col" style="height:52%"></div><div class="v">81</div><div class="lab">Operations</div></div>
+                    <div class="b"><div class="col" style="height:34%"></div><div class="v">53</div><div class="lab">People</div></div>
+                    <div class="b"><div class="col" style="height:24%"></div><div class="v">37</div><div class="lab">Finance</div></div>
+                  </div>
+                </div>
+                <div class="insight">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-.5z"/></svg>
+                  <span><strong style="color:var(--forest)">Insight</strong> — Engineering is 2.7× the size of People Ops. Want to see this as a share-of-total, or trend it over the last 4 quarters?</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap" style="padding-top:14px">
+          <div class="composer">
+            <div class="text"><span class="ph">Ask a follow-up…</span></div>
+            <div class="bar">
+              <button class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Attach</button>
+              <button class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg>#line</button>
+              <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- SECTION 3: DESIGN SYSTEM -->
+  <div class="section-label">
+    <span class="n">03</span>
+    <h2 class="serif">The system underneath</h2>
+    <span class="meta">type · colour · principles</span>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="serif">Typographic voice</h3>
+      <div class="sub">Drop Inter. A characterful display serif carries the brand; a warm grotesque does the work.</div>
+      <div class="type-row"><span class="serif" style="font-size:30px">Fraunces Display</span><span class="lab">headings · 9–144 opsz</span></div>
+      <div class="type-row"><span class="serif" style="font-size:22px;font-style:italic">Fraunces Italic</span><span class="lab">accents · numerals</span></div>
+      <div class="type-row"><span style="font-size:17px;font-weight:600;font-family:'Hanken Grotesk'">Hanken Grotesk</span><span class="lab">body · UI</span></div>
+      <div class="type-row"><span class="mono" style="font-size:15px">JetBrains Mono 142</span><span class="lab">data · SQL · keys</span></div>
+    </div>
+    <div class="panel">
+      <h3 class="serif">Colour</h3>
+      <div class="sub">Keep parchment + terracotta. Promote forest-teal from the chart palette to a real second accent, so the UI isn't carried by neutrals alone.</div>
+      <div class="swatches">
+        <div class="sw" style="background:#c96442">Terracotta<small>#c96442</small></div>
+        <div class="sw" style="background:#2f5a52">Forest<small>#2f5a52</small></div>
+        <div class="sw" style="background:#c79a3c">Gold<small>#c79a3c</small></div>
+        <div class="sw" style="background:#141413">Ink<small>#141413</small></div>
+        <div class="sw" style="background:#9bb7a5;color:#22382f">Sage<small>#9bb7a5</small></div>
+        <div class="sw" style="background:#4b7f8c">Teal<small>#4b7f8c</small></div>
+        <div class="sw" style="background:#f3f1e8;color:#5e5d59;box-shadow:inset 0 0 0 1px #e8e6dc">Parchment<small>#f3f1e8</small></div>
+        <div class="sw" style="background:#b53333">Crimson<small>#b53333</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <h3 class="serif" style="margin-bottom:14px">Interaction principles</h3>
+    <div class="principles">
+      <div class="pr"><div class="num">1</div><div><b>One focal command surface</b><p>The composer is the hero, not a thin bar. Empty state = invitation + suggested queries; every screen makes "ask" the obvious next move.</p></div></div>
+      <div class="pr"><div class="num">2</div><div><b>Answers are reports, not bubbles</b><p>Each result pairs a one-line takeaway, a titled chart card, and an "Insight + next question" footer — with a single primary action: add to canvas.</p></div></div>
+      <div class="pr"><div class="num">3</div><div><b>Modes as a segmented control</b><p>Chat / Canvas / Split / Tables collapse into one labelled segmented control instead of a 4-icon grid — clearer affordance, same shortcuts (⌘1–4).</p></div></div>
+      <div class="pr"><div class="num">4</div><div><b>Quiet until it matters</b><p>Neutral by default; terracotta and forest reserved for state, action, and insight. Motion limited to a single staggered reveal per turn.</p></div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>Cognitrix — Editorial Intelligence · redesign concept</span>
+    <span class="mono">apps/web/design/redesign-concept.html</span>
+  </div>
+</div>
+</body>
+</html>

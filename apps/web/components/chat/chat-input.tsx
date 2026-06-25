@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
+import { BookMarked, ChevronRight, FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -26,6 +26,12 @@ import {
 } from "@/lib/chat/generation-options";
 import type { IngestionCatalogSetupSeed, IngestionProposalAction, IngestionTimeGrain } from "@/types/ingestion";
 import { IngestionSetupCard } from "@/components/workspace/ingestion-setup-card";
+import { SavedPromptEditorDialog } from "@/components/chat/saved-prompts/saved-prompt-editor-dialog";
+import { SavedPromptVariableDialog } from "@/components/chat/saved-prompts/saved-prompt-variable-dialog";
+import { SavedPromptsManager } from "@/components/chat/saved-prompts/saved-prompts-manager";
+import { useMarkSavedPromptUsed, useSavedPrompts } from "@/hooks/use-saved-prompts";
+import { capabilitiesToGenerationOptions, insertAtSelection } from "@/lib/saved-prompts/template";
+import type { SavedPrompt } from "@/lib/saved-prompts/types";
 
 // Concrete Tailwind classes per generation-option tone. Kept as full literal
 // strings (not interpolated) so the JIT compiler always emits them.
@@ -68,6 +74,19 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const [activeChartIndex, setActiveChartIndex] = useState(0);
   const [columnTrigger, setColumnTrigger] = useState<ColumnTriggerState | null>(null);
   const [activeColumnIndex, setActiveColumnIndex] = useState(0);
+  // Saved prompts: submenu + dialog state. Insertion captures the live
+  // textarea selection so opening the menu never loses the user's caret.
+  const [savedPromptsSubmenuOpen, setSavedPromptsSubmenuOpen] = useState(false);
+  const [editorState, setEditorState] = useState<{ open: boolean; prompt: SavedPrompt | null }>({
+    open: false,
+    prompt: null,
+  });
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [variablePrompt, setVariablePrompt] = useState<SavedPrompt | null>(null);
+  const composerSelectionRef = useRef<{ start: number; end: number } | null>(null);
+  const markPromptUsed = useMarkSavedPromptUsed();
+  const recentPromptsQuery = useSavedPrompts({ limit: 5 }, actionMenuOpen && savedPromptsSubmenuOpen);
+  const recentPrompts = recentPromptsQuery.data ?? [];
   const chartOptions = useMemo(() => getQueryChartTypeOptions(locale), [locale]);
   const activeOptions = useMemo(() => selectedGenerationOptions(selectedOptions), [selectedOptions]);
   const columns = useWorkspaceColumns(activeWorkspaceId);
@@ -116,6 +135,12 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
     };
+  }, [actionMenuOpen]);
+
+  useEffect(() => {
+    if (!actionMenuOpen) {
+      setSavedPromptsSubmenuOpen(false);
+    }
   }, [actionMenuOpen]);
 
   useEffect(() => {
@@ -270,6 +295,62 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       });
     },
     [columnTrigger, composerText, setComposerText]
+  );
+
+  const rememberSelection = useCallback((target: HTMLTextAreaElement) => {
+    composerSelectionRef.current = {
+      start: target.selectionStart ?? target.value.length,
+      end: target.selectionEnd ?? target.value.length,
+    };
+  }, []);
+
+  // Insert rendered prompt text at the captured caret/selection without
+  // auto-sending; preserves the surrounding draft and restores focus.
+  const insertPromptText = useCallback(
+    (text: string) => {
+      const selection = composerSelectionRef.current ?? {
+        start: composerText.length,
+        end: composerText.length,
+      };
+      const { text: nextText, caret } = insertAtSelection(
+        composerText,
+        selection.start,
+        selection.end,
+        text,
+      );
+      setComposerText(nextText);
+      composerSelectionRef.current = { start: caret, end: caret };
+      requestAnimationFrame(() => {
+        if (!textareaRef.current) return;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(caret, caret);
+      });
+    },
+    [composerText, setComposerText],
+  );
+
+  const applyPrompt = useCallback(
+    (prompt: SavedPrompt) => {
+      setActionMenuOpen(false);
+      setSavedPromptsSubmenuOpen(false);
+      // Preselect any generation options the prompt hints at; hints never make
+      // a backend call beyond mark-used and never auto-send.
+      const optionIds = capabilitiesToGenerationOptions(prompt.capabilities);
+      if (optionIds.length > 0) {
+        setSelectedOptions((current) => {
+          const next = new Set(current);
+          for (const id of optionIds) next.add(id);
+          return next;
+        });
+      }
+      if (prompt.variables.length > 0) {
+        setVariablePrompt(prompt);
+        return;
+      }
+      insertPromptText(prompt.body);
+      markPromptUsed.mutate(prompt.id);
+    },
+    [insertPromptText, markPromptUsed],
   );
 
   const handleKeyDown = useCallback(
@@ -531,6 +612,83 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                     </button>
                   );
                 })}
+
+                <div className="my-1 h-px bg-border-cream" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={savedPromptsSubmenuOpen}
+                  className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                  onClick={() => setSavedPromptsSubmenuOpen((open) => !open)}
+                >
+                  <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
+                  <span className="flex-1">{t("savedPrompts.menu.label")}</span>
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 shrink-0 text-stone-gray transition-transform",
+                      savedPromptsSubmenuOpen && "rotate-90"
+                    )}
+                  />
+                </button>
+
+                {savedPromptsSubmenuOpen ? (
+                  <div role="menu" aria-label={t("savedPrompts.menu.submenuLabel")} className="pl-2">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                      onClick={() => {
+                        setActionMenuOpen(false);
+                        setEditorState({ open: true, prompt: null });
+                      }}
+                    >
+                      <Plus className="h-4 w-4 shrink-0 text-stone-gray" />
+                      <span>{t("savedPrompts.menu.create")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                      onClick={() => {
+                        setActionMenuOpen(false);
+                        setManagerOpen(true);
+                      }}
+                    >
+                      <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
+                      <span>{t("savedPrompts.menu.manage")}</span>
+                    </button>
+
+                    {recentPromptsQuery.isLoading ? (
+                      <p className="px-3 py-2 text-caption text-stone-gray">
+                        {t("savedPrompts.menu.loading")}
+                      </p>
+                    ) : recentPrompts.length === 0 ? (
+                      <p className="px-3 py-2 text-caption text-stone-gray">
+                        {t("savedPrompts.menu.empty")}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-stone-gray">
+                          {t("savedPrompts.menu.recentLabel")}
+                        </p>
+                        {recentPrompts.map((prompt) => (
+                          <button
+                            key={prompt.id}
+                            type="button"
+                            role="menuitem"
+                            aria-label={t("savedPrompts.menu.insertAria", { name: prompt.name })}
+                            className="flex w-full items-center gap-2 rounded-comfortable px-3 py-1.5 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                            onClick={() => applyPrompt(prompt)}
+                          >
+                            <span className="truncate">{prompt.name}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -560,7 +718,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               onFocus={(e) => {
                 const target = e.currentTarget;
                 updateTriggers(target.value, target.selectionStart);
+                rememberSelection(target);
               }}
+              onSelect={(e) => rememberSelection(e.currentTarget)}
               placeholder={
                 inputLockedByApproval
                   ? t("chat.ingestion.approvalInputLocked")
@@ -625,6 +785,39 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           ? t("chat.inputHintWithChartType", { chartType: selectedChartType })
           : t("chat.inputHintWithAttachment")}
       </p>
+
+      <SavedPromptEditorDialog
+        open={editorState.open}
+        prompt={editorState.prompt}
+        onOpenChange={(open) => setEditorState((current) => ({ ...current, open }))}
+      />
+      <SavedPromptsManager
+        open={managerOpen}
+        onOpenChange={setManagerOpen}
+        onCreate={() => {
+          setManagerOpen(false);
+          setEditorState({ open: true, prompt: null });
+        }}
+        onEdit={(prompt) => {
+          setManagerOpen(false);
+          setEditorState({ open: true, prompt });
+        }}
+        onInsert={(prompt) => {
+          setManagerOpen(false);
+          applyPrompt(prompt);
+        }}
+      />
+      <SavedPromptVariableDialog
+        prompt={variablePrompt}
+        open={Boolean(variablePrompt)}
+        onOpenChange={(open) => {
+          if (!open) setVariablePrompt(null);
+        }}
+        onConfirm={(renderedText) => {
+          insertPromptText(renderedText);
+          if (variablePrompt) markPromptUsed.mutate(variablePrompt.id);
+        }}
+      />
     </div>
   );
 }

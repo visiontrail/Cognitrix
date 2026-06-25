@@ -14,7 +14,6 @@ type Props = {
 
 export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
   const { t } = useI18n();
-  const [role, setRole] = useState("editor");
   const [generating, setGenerating] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [newInvite, setNewInvite] = useState<WorkspaceInvite | null>(null);
@@ -24,7 +23,8 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
   async function handleGenerate() {
     setGenerating(true);
     try {
-      const invite = await onGenerate(role);
+      // Invite links only ever create editor collaborators.
+      const invite = await onGenerate("editor");
       setNewInvite(invite);
     } catch {
       toast.error(t("collab.generateLinkFailed"));
@@ -61,14 +61,6 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
       <p className="text-sm font-medium">{t("collab.inviteLink")}</p>
 
       <div className="flex items-center gap-2">
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="text-xs border rounded px-1 py-0.5"
-        >
-          <option value="editor">{t("collab.roleEditor")}</option>
-          <option value="viewer">{t("collab.roleViewer")}</option>
-        </select>
         <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generating}>
           {generating ? t("collab.generatingLink") : t("collab.generateLink")}
         </Button>
@@ -91,7 +83,7 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
 
       {invites.filter((i) => !i.revoked_at && i.id !== newInvite?.id).slice(0, 3).map((inv) => (
         <div key={inv.id} className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="flex-1">{inv.role === "editor" ? t("collab.roleEditor") : t("collab.roleViewer")} · {new Date(inv.expires_at).toLocaleDateString()}</span>
+          <span className="flex-1">{t("collab.roleEditor")} · {new Date(inv.expires_at).toLocaleDateString()}</span>
           <Button size="sm" variant="ghost" className="h-5 px-1 text-xs text-destructive"
             disabled={revoking === inv.id}
             onClick={() => handleRevoke(inv.id)}>

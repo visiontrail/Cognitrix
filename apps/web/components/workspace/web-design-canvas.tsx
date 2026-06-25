@@ -28,12 +28,17 @@ import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
 import { extractChartRows } from "@/lib/workspace/chart-rows";
-import { publishWorkspace, fetchPublishHistory, fetchUsersByIds, type PublishHistoryItem, type VisibilityMode, type VisibilityPayload } from "@/lib/workspace/publish";
-import type { UserSearchResult } from "@/components/sharing/user-search-input";
-import { PublishPanel, type PublishDialogResult } from "@/components/workspace/publish-dialog";
-import { ShareDialog } from "@/components/sharing/share-dialog";
-import { useSession } from "@/lib/auth/use-session";
-import { Share2 } from "lucide-react";
+import {
+  publishWorkspace,
+  fetchPublishHistory,
+  fetchPublicationStatus,
+  cancelPublication,
+  type PublishHistoryItem,
+  type PublicationState,
+} from "@/lib/workspace/publish";
+import { PublishPanel } from "@/components/workspace/publish-dialog";
+import { CollaboratorsDialog } from "@/components/sharing/share-dialog";
+import { Users } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import type { ChartNodeData, WebDesignPage, WebDesignSidebarItem, WebDesignTextStyle, WebDesignTextZone, WebDesignZone, WorkspaceNode } from "@/types/workspace";
 
@@ -60,27 +65,20 @@ export function WebDesignCanvas() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<PublishHistoryItem[]>([]);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [publishPanelOpen, setPublishPanelOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [lastPublishedVisibilityMode, setLastPublishedVisibilityMode] = useState<VisibilityMode>("private");
-  const [lastPublishedUsers, setLastPublishedUsers] = useState<UserSearchResult[]>([]);
+  const [publication, setPublication] = useState<PublicationState | null>(null);
   const publishPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!activeWorkspaceId) return;
-    fetchPublishHistory(activeWorkspaceId)
-      .then(async (pages) => {
-        if (pages.length === 0) return;
-        const latest = pages[0];
-        if (latest.visibility_mode) {
-          setLastPublishedVisibilityMode(latest.visibility_mode);
-        }
-        if (latest.visibility_mode === "allowlist" && latest.visibility_user_ids?.length) {
-          const users = await fetchUsersByIds(latest.visibility_user_ids);
-          setLastPublishedUsers(users);
-        }
-      })
-      .catch(() => {});
+    if (!activeWorkspaceId) {
+      setPublication(null);
+      return;
+    }
+    fetchPublicationStatus(activeWorkspaceId)
+      .then(setPublication)
+      .catch(() => setPublication(null));
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -98,7 +96,6 @@ export function WebDesignCanvas() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [publishPanelOpen]);
-  const { user } = useSession();
   const activeWorkspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === activeWorkspaceId));
   const userWorkspaceRole = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === activeWorkspaceId)?.role ?? "viewer"
@@ -123,24 +120,18 @@ export function WebDesignCanvas() {
     setPublishPanelOpen((prev) => !prev);
   };
 
-  const handlePublishConfirm = async (dialogResult: PublishDialogResult) => {
+  const handlePublishConfirm = async () => {
     if (!activeWorkspaceId) return;
     setIsPublishing(true);
     try {
-      const visibility: VisibilityPayload = {
-        visibility_mode: dialogResult.visibility_mode,
-        visibility_user_ids: dialogResult.visibility_user_ids,
-      };
-      const result = await publishWorkspace(activeWorkspaceId, layout, nodes, visibility);
-      setLastPublishedVisibilityMode(dialogResult.visibility_mode);
-      setLastPublishedUsers(dialogResult.visibility_mode === "allowlist" ? dialogResult.selected_users : []);
-      setPublishPanelOpen(false);
+      const result = await publishWorkspace(activeWorkspaceId, layout, nodes);
+      setPublication({ ...result, is_active: true });
       toast.success(t("workspace.webDesign.toast.published"), {
         description: t("workspace.webDesign.toast.versionReady", { version: result.version }),
         action: {
           label: t("workspace.webDesign.viewPublishedPage"),
           onClick: () => {
-            window.location.href = `/portal?page=${encodeURIComponent(result.published_page_id)}`;
+            window.open(result.public_url, "_blank", "noreferrer");
           },
         },
       });
@@ -151,6 +142,20 @@ export function WebDesignCanvas() {
       toast.error(message);
     } finally {
       setIsPublishing(false);
+    }
+  };
+
+  const handleCancelPublication = async () => {
+    if (!activeWorkspaceId) return;
+    setIsCancelling(true);
+    try {
+      await cancelPublication(activeWorkspaceId);
+      setPublication({ is_active: false });
+      toast.success(t("publish.cancelled"));
+    } catch {
+      toast.error(t("publish.cancelFailed"));
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -256,17 +261,18 @@ export function WebDesignCanvas() {
               </Tooltip>
               {publishPanelOpen && (
                 <PublishPanel
+                  publication={publication}
                   onPublish={handlePublishConfirm}
+                  onCancel={handleCancelPublication}
                   isPublishing={isPublishing}
-                  initialVisibilityMode={lastPublishedVisibilityMode}
-                  initialSelectedUsers={lastPublishedUsers}
+                  isCancelling={isCancelling}
                 />
               )}
             </div>
             {canEdit && (
               <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
-                <Share2 className="h-4 w-4" />
-                {t("workspace.webDesign.share")}
+                <Users className="h-4 w-4" />
+                {t("workspace.webDesign.collaborators")}
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={loadHistory}>
@@ -367,11 +373,10 @@ export function WebDesignCanvas() {
 
 
       {canEdit && (
-        <ShareDialog
+        <CollaboratorsDialog
           open={shareDialogOpen}
           workspaceId={activeWorkspaceId ?? ""}
           workspaceName={activeWorkspace?.title ?? ""}
-          currentUserId={user?.id}
           onClose={() => setShareDialogOpen(false)}
         />
       )}

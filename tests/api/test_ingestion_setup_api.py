@@ -278,7 +278,8 @@ def test_setup_confirm_workspace_role_guard(monkeypatch, tmp_path: Path) -> None
             headers=owner_headers,
             json={"user_id": "bob", "role": "viewer", "display_name": "Bob Viewer"},
         )
-        assert add_member_response.status_code == 200
+        # Viewer membership is no longer a valid role; bob stays a non-member.
+        assert add_member_response.status_code == 422
 
         upload_payload = _create_upload(client, owner_headers, workspace_id=workspace_id)
         setup_required_payload = _create_setup_required_plan(

@@ -89,6 +89,7 @@ FastAPI app defined in `main.py`. All routes (except `/healthz` and `/auth/login
 - `datasets.py` — DuckDB session manager, per-user/project connection isolation
 - `table_catalog.py` — `TableCatalogRouter`; SQLite-backed catalog of uploaded tables with business type, write mode, and time-grain metadata; router at `/table-catalog`
 - `views.py` — SQLite-backed view persistence with versioning and rollback
+- `saved_prompts.py` — user-owned saved prompt library; `SavedPromptStore` (SQLite at `${UPLOAD_DIR}/state/saved_prompts.sqlite3`), `{variable}` template parser, capability-hint allowlist, and router at `/saved-prompts` gated by `prompts:read` / `prompts:write`. Every query is owner-filtered by `identity.user_id`; lifecycle/use audit events are metadata-only (never the prompt name or body)
 - `workspaces.py` — workspace RBAC enforcement; router mounted at `/workspaces`
 - `agentic_ingestion/` — isolated write-ingestion lifecycle; uses a separate agent loop from query runtime
 - `agent_skills/` — super-admin–managed Claude Agent SDK skill bundles (registry, validator, installer, loader, bootstrap). Bundles live under `${UPLOAD_DIR}/agent_skills/<id>/`; metadata + per-agent assignments live in `state/agent_skills.sqlite3`. Each runtime calls `load_skill_plugins_for_agent()` and passes the result through `ClaudeAgentOptions.plugins`. Bootstrap on startup vendors the Anthropic xlsx skill (when present + sha256 verified) and assigns it to `WriteIngestionAgent`.
@@ -157,6 +158,7 @@ All runtime data lives under `UPLOAD_DIR` (`apps/api/data/uploads/` locally):
 - `*.duckdb` — per-user/project DuckDB session files
 - `state/ai_views.sqlite3` — saved views and versions
 - `state/agent_sessions.sqlite3` — resumable agent session state
+- `state/saved_prompts.sqlite3` — user-owned saved prompts (name, body, extracted variables, capability hints, usage metadata, archive state)
 
 ### Models / Semantic Layer (`models/`)
 

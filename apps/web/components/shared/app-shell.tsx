@@ -28,8 +28,6 @@ export function AppShell() {
   const initAssetsForUser = useAssetStore((s) => s.initForUser);
   const activePanel = useUIStore((s) => s.activePanel);
   const chatSidebarOpen = useUIStore((s) => s.chatSidebarOpen);
-  const appMode = useUIStore((s) => s.appMode);
-  const setAppMode = useUIStore((s) => s.setAppMode);
   const chatCanvasSplitRatio = useUIStore((s) => s.chatCanvasSplitRatio);
   const setChatCanvasSplitRatio = useUIStore((s) => s.setChatCanvasSplitRatio);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -55,12 +53,6 @@ export function AppShell() {
       }
     }
   }, [activeWorkspaceId, user?.id, initChatForWorkspace, initAssetsForUser]);
-
-  useEffect(() => {
-    if (appMode !== "designer") {
-      setAppMode("designer");
-    }
-  }, [appMode, setAppMode]);
 
   useEffect(() => {
     if (activeWorkspaceId || workspaces.length === 0) {

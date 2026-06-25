@@ -587,7 +587,7 @@ async def list_table_catalog_entries(
     workspace_id: str,
     identity: AuthIdentity = Depends(require_permission("workspaces:read")),
 ) -> dict[str, Any]:
-    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="viewer")
+    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="editor")
     service = get_table_catalog_service()
     try:
         entries = service.list_entries(workspace_id=workspace_id)
@@ -606,7 +606,7 @@ async def get_active_catalog_target(
     business_type: str,
     identity: AuthIdentity = Depends(require_permission("workspaces:read")),
 ) -> dict[str, Any]:
-    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="viewer")
+    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="editor")
     service = get_table_catalog_service()
     try:
         entry = service.get_active_target(workspace_id=workspace_id, business_type=business_type)
@@ -631,7 +631,7 @@ async def get_table_catalog_entry(
     catalog_id: str,
     identity: AuthIdentity = Depends(require_permission("workspaces:read")),
 ) -> dict[str, Any]:
-    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="viewer")
+    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="editor")
     service = get_table_catalog_service()
     try:
         entry = service.get_entry(workspace_id=workspace_id, catalog_id=catalog_id)
@@ -649,7 +649,7 @@ async def preview_table_catalog_data(
     offset: int = 0,
     identity: AuthIdentity = Depends(require_permission("workspaces:read")),
 ) -> dict[str, Any]:
-    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="viewer")
+    _assert_workspace_role(workspace_id=workspace_id, identity=identity, minimum_role="editor")
     bounded_limit = max(1, min(int(limit), 200))
     bounded_offset = max(0, int(offset))
     service = get_table_catalog_service()

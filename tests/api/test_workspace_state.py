@@ -148,17 +148,30 @@ def test_canvas_snapshot_round_trip_and_editor_required(monkeypatch, tmp_path: P
         got = client.get(f"/workspaces/{workspace_id}/canvas-snapshot", headers=owner)
         assert got.json()["snapshot"]["nodes"][0]["id"] == "n1"
 
-        # A viewer member can read the snapshot but not write it
-        client.post(
+        # Viewer is no longer a valid membership role.
+        rejected = client.post(
             f"/workspaces/{workspace_id}/members",
             headers=owner,
             json={"user_id": "carol", "role": "viewer"},
         )
-        viewer = auth_headers(client, user_id="carol", project_id="north", role="viewer", clearance=1)
-        assert client.get(f"/workspaces/{workspace_id}/canvas-snapshot", headers=viewer).status_code == 200
-        forbidden = client.put(
-            f"/workspaces/{workspace_id}/canvas-snapshot", headers=viewer, json={"snapshot": snapshot}
+        assert rejected.status_code == 422
+
+        # An editor member can both read and write the snapshot.
+        client.post(
+            f"/workspaces/{workspace_id}/members",
+            headers=owner,
+            json={"user_id": "carol", "role": "editor"},
         )
+        editor = auth_headers(client, user_id="carol", project_id="north", role="pm", clearance=1)
+        assert client.get(f"/workspaces/{workspace_id}/canvas-snapshot", headers=editor).status_code == 200
+        editor_write = client.put(
+            f"/workspaces/{workspace_id}/canvas-snapshot", headers=editor, json={"snapshot": snapshot}
+        )
+        assert editor_write.status_code == 200, editor_write.text
+
+        # A non-member cannot read the snapshot.
+        outsider = auth_headers(client, user_id="mallory", project_id="north", role="pm", clearance=1)
+        forbidden = client.get(f"/workspaces/{workspace_id}/canvas-snapshot", headers=outsider)
         expect_error_code(forbidden, "WORKSPACE_FORBIDDEN", status_code=403)
 
 

@@ -2,22 +2,24 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChartPreview } from "@/components/charts/chart-preview";
-import { fetchPublishedChartData, type PublishedManifest, type PublishedTextZone, type PublishedZone } from "@/lib/portal/api";
+import {
+  fetchPublicChartData,
+  type PublicChartData,
+  type PublishedManifest,
+  type PublishedTextZone,
+  type PublishedZone,
+} from "@/lib/public/api";
 import type { ChartSpec } from "@/types/chart";
 import { useI18n } from "@/lib/i18n/context";
 
-export function PublishedPageGrid({
-  pageId,
+export function PublicPageGrid({
+  token,
   manifest,
   activePageId,
-  activeChartId,
-  onSelectChart,
 }: {
-  pageId: string;
+  token: string;
   manifest: PublishedManifest;
   activePageId?: string;
-  activeChartId: string | null;
-  onSelectChart: (chartId: string | null, title?: string) => void;
 }) {
   const pageLayout =
     manifest.layout.pages?.find((page) => page.id === activePageId) ??
@@ -41,35 +43,29 @@ export function PublishedPageGrid({
           <div key={row.id} id={row.id} style={{ gridColumn: "1 / -1", gridRow: rowIndex + 1 }} />
         ))}
         {pageLayout.zones.map((zone) => (
-          <PublishedChartZone
+          <PublicChartZone
             key={zone.id}
-            pageId={pageId}
+            token={token}
             zone={zone}
             title={manifest.charts.find((chart) => chart.chart_id === chartIdFromZone(zone))?.title}
-            selected={activeChartId === chartIdFromZone(zone)}
-            onSelect={onSelectChart}
           />
         ))}
         {(pageLayout.textZones ?? []).map((zone) => (
-          <PublishedTextZoneBlock key={zone.id} zone={zone} />
+          <PublicTextZoneBlock key={zone.id} zone={zone} />
         ))}
       </div>
     </div>
   );
 }
 
-export function PublishedChartZone({
-  pageId,
+function PublicChartZone({
+  token,
   zone,
   title,
-  selected,
-  onSelect,
 }: {
-  pageId: string;
+  token: string;
   zone: PublishedZone;
   title?: string;
-  selected: boolean;
-  onSelect: (chartId: string | null, title?: string) => void;
 }) {
   const { t } = useI18n();
   const chartId = chartIdFromZone(zone);
@@ -78,24 +74,24 @@ export function PublishedChartZone({
   useEffect(() => {
     let cancelled = false;
     if (!chartId) return;
-    fetchPublishedChartData(pageId, chartId).then((payload) => {
-      if (cancelled) return;
-      setSpec(normalizeSpec(payload));
-    });
+    fetchPublicChartData(token, chartId)
+      .then((payload) => {
+        if (cancelled) return;
+        setSpec(normalizeSpec(payload));
+      })
+      .catch(() => {
+        // Snapshot-only read; failures render the loading placeholder.
+      });
     return () => {
       cancelled = true;
     };
-  }, [chartId, pageId]);
+  }, [chartId, token]);
 
   const height = useMemo(() => Math.max(180, zone.rowSpan * 260), [zone.rowSpan]);
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(chartId, title)}
-      className={`relative overflow-hidden rounded-md border bg-white text-left ${
-        selected ? "border-[#ad7d3d] ring-2 ring-[#e8d5b3]" : "border-[#d8d1c1]"
-      }`}
+    <div
+      className="relative overflow-hidden rounded-md border border-[#d8d1c1] bg-white text-left"
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
         gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,
@@ -107,22 +103,21 @@ export function PublishedChartZone({
       {spec ? (
         <ChartPreview spec={spec} height={height} />
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-[#777166]">{t("portal.loadingChart")}</div>
+        <div className="flex h-full items-center justify-center text-sm text-[#777166]">
+          {t("public.loadingChart")}
+        </div>
       )}
-    </button>
+    </div>
   );
 }
 
-const PUBLISHED_TEXT_STYLE_MAP: Record<
-  "title" | "subtitle" | "body",
-  string
-> = {
+const PUBLISHED_TEXT_STYLE_MAP: Record<"title" | "subtitle" | "body", string> = {
   title: "text-2xl font-bold leading-tight text-[#2f332f]",
   subtitle: "text-lg font-semibold leading-snug text-[#4a4842]",
   body: "text-sm leading-relaxed text-[#555250]",
 };
 
-function PublishedTextZoneBlock({ zone }: { zone: PublishedTextZone }) {
+function PublicTextZoneBlock({ zone }: { zone: PublishedTextZone }) {
   const className = PUBLISHED_TEXT_STYLE_MAP[zone.style] ?? PUBLISHED_TEXT_STYLE_MAP.body;
   return (
     <div
@@ -141,7 +136,7 @@ function chartIdFromZone(zone: PublishedZone): string {
   return zone.chartId || zone.chart_id || "";
 }
 
-function normalizeSpec(payload: Awaited<ReturnType<typeof fetchPublishedChartData>>): ChartSpec {
+function normalizeSpec(payload: PublicChartData): ChartSpec {
   return {
     chartType: (payload.spec.chartType || payload.spec.chart_type || "bar") as ChartSpec["chartType"],
     title: payload.spec.title || payload.chart_id,

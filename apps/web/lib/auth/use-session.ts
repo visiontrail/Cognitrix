@@ -28,13 +28,5 @@ export function useSession() {
   const isLoggedIn = Boolean(user);
   const isLoading = query.isLoading;
 
-  // Infer default app mode: designer if user has any owner/editor workspace
-  const defaultAppMode: "designer" | "viewer" =
-    user?.default_app_mode ?? (
-      user?.available_workspaces?.some((w) => w.role === "owner" || w.role === "editor")
-        ? "designer"
-        : "viewer"
-    );
-
-  return { user, isLoggedIn, isLoading, defaultAppMode, query };
+  return { user, isLoggedIn, isLoading, query };
 }

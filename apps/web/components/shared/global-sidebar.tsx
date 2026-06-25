@@ -14,8 +14,6 @@ import {
   Table2,
   LogOut,
   Globe,
-  MonitorPlay,
-  PenLine,
   ChevronUp,
   Check,
   X,
@@ -44,7 +42,7 @@ import {
 import { useChatStore } from "@/stores/chat-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { useUIStore, type AppMode } from "@/stores/ui-store";
+import { useUIStore } from "@/stores/ui-store";
 import { chatSessionsQueryKey, useCreateSession, useDeleteSession } from "@/hooks/use-chat";
 import { syncSessionToServer } from "@/lib/chat/server-sync";
 import { useCreateWorkspace, useDeleteWorkspace } from "@/hooks/use-workspace";
@@ -59,8 +57,6 @@ export function GlobalSidebar() {
   const { t, locale, setLocale } = useI18n();
   const queryClient = useQueryClient();
   const { user } = useSession();
-  const appMode = useUIStore((s) => s.appMode);
-  const setAppMode = useUIStore((s) => s.setAppMode);
 
   async function handleLogout() {
     await apiLogout().catch(() => {});
@@ -70,12 +66,6 @@ export function GlobalSidebar() {
     window.location.href = "/login";
   }
 
-  const handleAppModeChange = (mode: AppMode) => {
-    setAppMode(mode);
-    if (mode === "viewer") {
-      window.location.href = "/portal";
-    }
-  };
   const sessions = useChatStore((s) => s.sessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
@@ -339,20 +329,6 @@ export function GlobalSidebar() {
                 </DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-
-            {/* Viewer / Designer toggle */}
-            <DropdownMenuItem
-              onSelect={() => handleAppModeChange(appMode === "viewer" ? "designer" : "viewer")}
-            >
-              {appMode === "viewer" ? (
-                <PenLine className="w-4 h-4" />
-              ) : (
-                <MonitorPlay className="w-4 h-4" />
-              )}
-              {appMode === "viewer"
-                ? t("appMode.designer")
-                : t("appMode.viewer")}
-            </DropdownMenuItem>
 
             <DropdownMenuSeparator />
 

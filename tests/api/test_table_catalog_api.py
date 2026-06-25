@@ -483,13 +483,13 @@ def test_table_catalog_workspace_role_checks(monkeypatch, tmp_path: Path) -> Non
         add_member_response = client.post(
             f"/workspaces/{workspace_id}/members",
             headers=owner_headers,
-            json={"user_id": "bob", "role": "viewer", "display_name": "Bob Viewer"},
+            json={"user_id": "bob", "role": "editor", "display_name": "Bob Editor"},
         )
         assert add_member_response.status_code == 200
 
-        viewer_list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=viewer_headers)
-        assert viewer_list_response.status_code == 200
-        assert viewer_list_response.json()["count"] == 0
+        member_list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=viewer_headers)
+        assert member_list_response.status_code == 200
+        assert member_list_response.json()["count"] == 0
 
         outsider_list_response = client.get(f"/workspaces/{workspace_id}/catalog", headers=outsider_headers)
         expect_error_code(outsider_list_response, "WORKSPACE_FORBIDDEN", status_code=403)

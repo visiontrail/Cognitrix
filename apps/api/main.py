@@ -35,7 +35,7 @@ from .chat import ChatStreamRequest, get_chat_stream_service
 from .config import get_settings
 from .data_policy import forbidden_sensitive_columns, redact_rows, redact_structure
 from .datasets import get_dataset_service
-from .portal import router as portal_router
+from .public_pages import router as public_pages_router
 from .session_titles import get_session_title_service
 from .security import (
     AccessContext,
@@ -54,6 +54,7 @@ from .semantic import (
     get_metric_compiler,
     get_semantic_registry,
 )
+from .saved_prompts import router as saved_prompts_router
 from .table_catalog import router as table_catalog_router
 from .tool_calling import ToolCallRequest, get_tool_calling_service
 from .views import (
@@ -71,7 +72,8 @@ app.include_router(ingestion_router)
 app.include_router(workspaces_router)
 app.include_router(workspace_state_router)
 app.include_router(table_catalog_router)
-app.include_router(portal_router)
+app.include_router(saved_prompts_router)
+app.include_router(public_pages_router)
 app.include_router(jobs_router)
 app.include_router(user_search_router)
 
@@ -367,7 +369,7 @@ async def semantic_query(
             get_workspace_service().assert_workspace_access(
                 workspace_id=workspace_id,
                 user_id=identity.user_id,
-                minimum_role="viewer",
+                minimum_role="editor",
             )
         except WorkspaceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
@@ -477,7 +479,7 @@ async def chat_tool_call(
             get_workspace_service().assert_workspace_access(
                 workspace_id=workspace_id,
                 user_id=identity.user_id,
-                minimum_role="viewer",
+                minimum_role="editor",
             )
         except WorkspaceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
@@ -527,7 +529,7 @@ async def chat_stream(
             get_workspace_service().assert_workspace_access(
                 workspace_id=workspace_id,
                 user_id=identity.user_id,
-                minimum_role="viewer",
+                minimum_role="editor",
             )
         except WorkspaceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
@@ -580,7 +582,7 @@ async def reset_chat_session(
             get_workspace_service().assert_workspace_access(
                 workspace_id=workspace_id,
                 user_id=identity.user_id,
-                minimum_role="viewer",
+                minimum_role="editor",
             )
         except WorkspaceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc

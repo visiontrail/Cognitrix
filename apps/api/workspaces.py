@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from .agentic_ingestion.schema import initialize_sqlite_schema
@@ -35,6 +35,11 @@ ROLE_RANK: dict[str, int] = {
     "admin": 2,
     "owner": 3,
 }
+
+# After the public-link migration, user-facing workspace membership is
+# owner/editor only. ``viewer`` is no longer a valid collaboration role; legacy
+# viewer rows are neutralized on startup and never grant workspace access.
+VALID_MEMBERSHIP_ROLES: frozenset[str] = frozenset({"owner", "editor"})
 
 
 class WorkspaceError(Exception):
@@ -93,8 +98,8 @@ class AddWorkspaceMemberRequest(BaseModel):
     @classmethod
     def validate_role(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ROLE_RANK:
-            raise ValueError("Unsupported workspace role")
+        if normalized not in VALID_MEMBERSHIP_ROLES:
+            raise ValueError("Workspace membership role must be owner or editor")
         return normalized
 
 
@@ -105,8 +110,8 @@ class UpdateMemberRoleRequest(BaseModel):
     @classmethod
     def validate_role(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ROLE_RANK:
-            raise ValueError("Unsupported workspace role")
+        if normalized != "editor":
+            raise ValueError("Workspace member role can only be set to editor")
         return normalized
 
 
@@ -119,8 +124,8 @@ class CreateInviteRequest(BaseModel):
     @classmethod
     def validate_role(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ("editor", "viewer"):
-            raise ValueError("role must be editor or viewer")
+        if normalized != "editor":
+            raise ValueError("Invite role must be editor")
         return normalized
 
 
@@ -206,6 +211,7 @@ class WorkspaceService:
                 JOIN workspace_members AS wm
                   ON wm.workspace_id = w.id
                 WHERE wm.user_id = ? AND w.status = 'active'
+                  AND wm.role IN ('owner', 'editor')
                 ORDER BY w.updated_at DESC
                 """,
                 (normalized_user,),
@@ -300,7 +306,7 @@ class WorkspaceService:
         *,
         workspace_id: str,
         user_id: str,
-        minimum_role: str = "viewer",
+        minimum_role: str = "editor",
     ) -> str:
         normalized_workspace_id = workspace_id.strip()
         normalized_user = user_id.strip()
@@ -697,10 +703,10 @@ class WorkspaceService:
         normalized_member = member_user_id.strip()
         normalized_role = role.strip().lower()
 
-        if normalized_role not in ROLE_RANK:
+        if normalized_role not in VALID_MEMBERSHIP_ROLES:
             raise WorkspaceError(
                 code="WORKSPACE_ROLE_INVALID",
-                message="Unsupported workspace role",
+                message="Workspace membership role must be owner or editor",
                 status_code=422,
             )
 
@@ -786,10 +792,10 @@ class WorkspaceService:
         normalized_target = target_user_id.strip()
         normalized_role = new_role.strip().lower()
 
-        if normalized_role not in ROLE_RANK or normalized_role == "owner":
+        if normalized_role != "editor":
             raise WorkspaceError(
                 code="WORKSPACE_ROLE_INVALID",
-                message="Unsupported workspace role",
+                message="Workspace member role can only be set to editor",
                 status_code=422,
             )
 
@@ -914,6 +920,28 @@ class WorkspaceService:
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
             initialize_sqlite_schema(conn)
+            self._migrate_legacy_viewer_members(conn)
+
+    def _migrate_legacy_viewer_members(self, conn: sqlite3.Connection) -> None:
+        """Neutralize legacy ``viewer`` workspace memberships.
+
+        Public published-page viewing no longer depends on workspace membership,
+        so legacy viewer rows are removed rather than upgraded to editor (which
+        would silently grant write access). Idempotent.
+        """
+
+        try:
+            removed = conn.execute(
+                "DELETE FROM workspace_members WHERE role = 'viewer'"
+            ).rowcount
+            conn.commit()
+        except sqlite3.OperationalError:
+            return  # Table not present yet
+        if removed:
+            logger.info(
+                "Removed %d legacy viewer workspace membership row(s) during migration",
+                removed,
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -1257,15 +1285,24 @@ async def revoke_workspace_invite(
     return {"status": "revoked", "invite_id": invite_id}
 
 
+def _build_public_url_for_request(token: str, request: Request) -> str:
+    from .published_pages import build_public_url
+
+    request_base = ""
+    try:
+        request_base = str(request.base_url).rstrip("/")
+    except Exception:  # pragma: no cover - defensive
+        request_base = ""
+    return build_public_url(token, request_base_url=request_base)
+
+
 @router.post("/{workspace_id}/publish")
 async def publish_workspace(
     workspace_id: str,
     request: PublishWorkspaceRequest,
+    http_request: Request,
     identity: AuthIdentity = Depends(get_current_identity),
 ) -> dict[str, object]:
-    # Viewer mode quick-fail
-    app_mode = None  # resolved below in actual workspace check
-
     service = get_workspace_service()
     try:
         service.assert_workspace_access(
@@ -1275,44 +1312,6 @@ async def publish_workspace(
         )
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-    # Validate visibility params
-    from .published_pages import VISIBILITY_MODES
-    if request.visibility_mode not in VISIBILITY_MODES:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_visibility_mode", "message": "Invalid visibility_mode"},
-        )
-    if request.visibility_mode != "allowlist" and request.visibility_user_ids:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "visibility_user_ids_only_allowed_in_allowlist",
-                    "message": "visibility_user_ids is only allowed with allowlist mode"},
-        )
-    if request.visibility_mode == "allowlist":
-        if not request.visibility_user_ids:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "allowlist_requires_users", "message": "allowlist requires at least one user_id"},
-            )
-        # Validate each user_id exists
-        conn = service._connect()
-        try:
-            invalid_ids = []
-            for uid in request.visibility_user_ids:
-                row = conn.execute("SELECT 1 FROM users WHERE id = ?", (str(uid),)).fetchone()
-                if row is None:
-                    row2 = conn.execute("SELECT 1 FROM users WHERE CAST(id AS TEXT) = ?", (str(uid),)).fetchone()
-                    if row2 is None:
-                        invalid_ids.append(uid)
-        finally:
-            conn.close()
-        if invalid_ids:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "invalid_user_ids", "message": "Some user_ids do not exist",
-                        "invalid": invalid_ids},
-            )
 
     empty_charts = [chart.chart_id for chart in request.charts if not chart.rows]
     if empty_charts:
@@ -1344,14 +1343,57 @@ async def publish_workspace(
         published_by=identity.user_id,
         manifest_path=snapshot.manifest_path,
         published_at=published_at,
-        visibility_mode=request.visibility_mode,
-        visibility_user_ids=request.visibility_user_ids,
     )
-    return {
-        "published_page_id": page.id,
-        "version": page.version,
-        "visibility_mode": page.visibility_mode,
-    }
+    publication = store.upsert_publication(
+        workspace_id=workspace_id,
+        active_page_id=page.id,
+        version=version,
+        published_at=published_at,
+    )
+    public_url = _build_public_url_for_request(publication.token, http_request)
+    return publication.to_status(public_url=public_url)
+
+
+@router.get("/{workspace_id}/publish")
+async def get_workspace_publication(
+    workspace_id: str,
+    http_request: Request,
+    identity: AuthIdentity = Depends(get_current_identity),
+) -> dict[str, object]:
+    service = get_workspace_service()
+    try:
+        service.assert_workspace_access(
+            workspace_id=workspace_id,
+            user_id=identity.user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    publication = get_published_page_store().get_publication(workspace_id=workspace_id)
+    if publication is None or not publication.is_active:
+        return {"is_active": False}
+    public_url = _build_public_url_for_request(publication.token, http_request)
+    return publication.to_status(public_url=public_url)
+
+
+@router.delete("/{workspace_id}/publish")
+async def revoke_workspace_publication(
+    workspace_id: str,
+    identity: AuthIdentity = Depends(get_current_identity),
+) -> dict[str, object]:
+    service = get_workspace_service()
+    try:
+        service.assert_workspace_access(
+            workspace_id=workspace_id,
+            user_id=identity.user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    get_published_page_store().revoke_publication(workspace_id=workspace_id)
+    return {"is_active": False}
 
 
 @router.get("/{workspace_id}/published")
@@ -1364,70 +1406,25 @@ async def list_workspace_published_pages(
         service.assert_workspace_access(
             workspace_id=workspace_id,
             user_id=identity.user_id,
-            minimum_role="viewer",
-        )
-    except WorkspaceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
-
-    pages = get_published_page_store().list_by_workspace(workspace_id=workspace_id)
-    history = [page.to_history_item() for page in pages]
-    return {
-        "count": len(history),
-        "published_pages": history,
-    }
-
-
-class UpdateVisibilityRequest(BaseModel):
-    visibility_mode: str = Field(default="private")
-    visibility_user_ids: list[str] = Field(default_factory=list)
-
-    @field_validator("visibility_mode")
-    @classmethod
-    def validate_visibility_mode(cls, value: str) -> str:
-        from .published_pages import VISIBILITY_MODES
-        if value not in VISIBILITY_MODES:
-            raise ValueError(f"visibility_mode must be one of {VISIBILITY_MODES}")
-        return value
-
-
-@router.patch("/{workspace_id}/published/{version}/visibility")
-async def update_published_visibility(
-    workspace_id: str,
-    version: int,
-    request: UpdateVisibilityRequest,
-    identity: AuthIdentity = Depends(get_current_identity),
-) -> dict[str, object]:
-    from .published_pages import VISIBILITY_MODES
-
-    service = get_workspace_service()
-    try:
-        role = service.assert_workspace_access(
-            workspace_id=workspace_id,
-            user_id=identity.user_id,
             minimum_role="editor",
         )
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
-    if request.visibility_mode != "allowlist" and request.visibility_user_ids:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "visibility_user_ids_only_allowed_in_allowlist",
-                    "message": "visibility_user_ids only allowed with allowlist mode"},
-        )
-
-    store = get_published_page_store()
-    pages = store.list_by_workspace(workspace_id=workspace_id)
-    target_page = next((p for p in pages if p.version == version), None)
-    if target_page is None:
-        raise HTTPException(status_code=404, detail={"code": "PUBLISHED_PAGE_NOT_FOUND", "message": "Version not found"})
-
-    updated = store.update_visibility(
-        page_id=target_page.id,
-        visibility_mode=request.visibility_mode,
-        visibility_user_ids=request.visibility_user_ids,
-    )
-    return updated.to_history_item()
+    pages = get_published_page_store().list_by_workspace(workspace_id=workspace_id)
+    history = [
+        {
+            "page_id": page.id,
+            "version": page.version,
+            "published_at": page.published_at,
+            "published_by": page.published_by,
+        }
+        for page in pages
+    ]
+    return {
+        "count": len(history),
+        "published_pages": history,
+    }
 
 
 @lru_cache(maxsize=2)

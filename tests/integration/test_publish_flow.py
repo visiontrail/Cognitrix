@@ -67,14 +67,20 @@ def test_publish_flow_writes_snapshot_files_and_redacts_sensitive_columns(monkey
             },
         )
         publish_response.raise_for_status()
-        page_id = publish_response.json()["published_page_id"]
+        body = publish_response.json()
+        assert body["is_active"] is True
+        assert body["published_page_id"]
+        token = body["token"]
+        assert token
+        assert body["public_url"].endswith(f"/p/{token}")
 
-        manifest_response = client.get(f"/portal/pages/{page_id}/manifest", headers=headers)
+        # Public reads use the token only, with no auth headers.
+        manifest_response = client.get(f"/public/pages/{token}/manifest")
         manifest_response.raise_for_status()
         manifest = manifest_response.json()["manifest"]
         assert manifest["charts"][0]["chart_id"] == "chart-1"
 
-        data_response = client.get(f"/portal/pages/{page_id}/charts/chart-1/data", headers=headers)
+        data_response = client.get(f"/public/pages/{token}/charts/chart-1/data")
         data_response.raise_for_status()
         rows = data_response.json()["rows"]
         assert rows == [{"department": "HR", "headcount": 4}]

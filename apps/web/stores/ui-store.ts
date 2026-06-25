@@ -1,12 +1,6 @@
 import { create } from "zustand";
-import { getAppMode, setStoredAppMode } from "@/lib/auth/session";
 
 export type ActivePanel = "chat" | "workspace" | "both" | "catalog";
-export type AppMode = "designer" | "viewer";
-
-function loadAppMode(): AppMode {
-  return getAppMode();
-}
 
 type UIState = {
   activePanel: ActivePanel;
@@ -16,7 +10,6 @@ type UIState = {
   isSending: boolean;
   sendingBySession: Record<string, boolean>;
   isSaving: boolean;
-  appMode: AppMode;
 
   setActivePanel: (panel: ActivePanel) => void;
   setChatSidebarOpen: (open: boolean) => void;
@@ -27,7 +20,6 @@ type UIState = {
   setIsSending: (value: boolean) => void;
   setSessionSending: (sessionId: string, value: boolean) => void;
   setIsSaving: (value: boolean) => void;
-  setAppMode: (mode: AppMode) => void;
 };
 
 export const useUIStore = create<UIState>((set) => ({
@@ -38,7 +30,6 @@ export const useUIStore = create<UIState>((set) => ({
   isSending: false,
   sendingBySession: {},
   isSaving: false,
-  appMode: loadAppMode(),
 
   setActivePanel: (panel) => set({ activePanel: panel }),
   setChatSidebarOpen: (open) => set({ chatSidebarOpen: open }),
@@ -61,8 +52,4 @@ export const useUIStore = create<UIState>((set) => ({
       };
     }),
   setIsSaving: (value) => set({ isSaving: value }),
-  setAppMode: (mode) => {
-    setStoredAppMode(mode);
-    set({ appMode: mode });
-  },
 }));

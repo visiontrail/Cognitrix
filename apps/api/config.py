@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     agent_skills_max_upload_mb: int = Field(default=25, alias="AGENT_SKILLS_MAX_UPLOAD_MB")
     legacy_xlsx_parser_enabled: bool = Field(default=True, alias="LEGACY_XLSX_PARSER_ENABLED")
     app_url: str = Field(default="http://localhost:3000", alias="APP_URL")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
     log_level: str = Field(alias="LOG_LEVEL")
     upload_dir: Path = Field(alias="UPLOAD_DIR")
     cors_allow_origins: str = Field(

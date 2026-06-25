@@ -10,7 +10,6 @@ import { toast } from "sonner";
 import {
   listMembers,
   addMember,
-  updateMemberRole,
   removeMember,
   listInvites,
   createInvite,
@@ -23,11 +22,10 @@ type Props = {
   open: boolean;
   workspaceId: string;
   workspaceName: string;
-  currentUserId?: string;
   onClose: () => void;
 };
 
-export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, onClose }: Props) {
+export function CollaboratorsDialog({ open, workspaceId, workspaceName, onClose }: Props) {
   const { t } = useI18n();
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [invites, setInvites] = useState<WorkspaceInvite[]>([]);
@@ -56,11 +54,6 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
     }
   }
 
-  async function handleRoleChange(userId: string, role: string) {
-    await updateMemberRole(workspaceId, userId, role);
-    setMembers((prev) => prev.map((m) => m.user_id === userId ? { ...m, role } : m));
-  }
-
   async function handleRemoveMember(userId: string) {
     await removeMember(workspaceId, userId);
     setMembers((prev) => prev.filter((m) => m.user_id !== userId));
@@ -85,7 +78,7 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg space-y-4 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{t("collab.shareTitle", { workspaceName })}</h2>
+          <h2 className="text-lg font-semibold">{t("collab.collaboratorsTitle", { workspaceName })}</h2>
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
         </div>
 
@@ -107,8 +100,6 @@ export function ShareDialog({ open, workspaceId, workspaceName, currentUserId, o
           ) : (
             <MembersList
               members={members}
-              currentUserId={currentUserId}
-              onRoleChange={handleRoleChange}
               onRemove={handleRemoveMember}
             />
           )}

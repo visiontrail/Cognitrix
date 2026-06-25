@@ -1,154 +1,127 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Globe, Lock, Users } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { UserSearchInput, type UserSearchResult } from "@/components/sharing/user-search-input";
+import type { PublicationState } from "@/lib/workspace/publish";
 import { useI18n } from "@/lib/i18n/context";
-import { cn } from "@/lib/utils";
-
-export type VisibilityMode = "private" | "registered" | "allowlist";
-
-export type PublishDialogResult = {
-  visibility_mode: VisibilityMode;
-  visibility_user_ids: string[];
-  selected_users: UserSearchResult[];
-};
 
 type Props = {
-  onPublish: (result: PublishDialogResult) => void;
+  publication: PublicationState | null;
+  onPublish: () => void;
+  onCancel: () => void;
   isPublishing?: boolean;
-  initialVisibilityMode?: VisibilityMode;
-  initialSelectedUsers?: UserSearchResult[];
+  isCancelling?: boolean;
 };
 
-const VISIBILITY_OPTIONS: {
-  mode: VisibilityMode;
-  icon: React.ElementType;
-  labelKey: string;
-  descKey: string;
-}[] = [
-  { mode: "private", icon: Lock, labelKey: "visibility.private", descKey: "visibility.private.desc" },
-  { mode: "registered", icon: Globe, labelKey: "visibility.registered", descKey: "visibility.registered.desc" },
-  { mode: "allowlist", icon: Users, labelKey: "visibility.allowlist", descKey: "visibility.allowlist.desc" },
-];
-
-export function PublishPanel({ onPublish, isPublishing, initialVisibilityMode, initialSelectedUsers }: Props) {
+export function PublishPanel({
+  publication,
+  onPublish,
+  onCancel,
+  isPublishing,
+  isCancelling,
+}: Props) {
   const { t } = useI18n();
-  const [visibilityMode, setVisibilityMode] = useState<VisibilityMode>(initialVisibilityMode ?? "private");
-  const [selectedUsers, setSelectedUsers] = useState<UserSearchResult[]>(initialSelectedUsers ?? []);
+  const [copied, setCopied] = useState(false);
+  const isActive = Boolean(publication && publication.is_active);
+  const active = isActive ? (publication as Extract<PublicationState, { is_active: true }>) : null;
 
-  function handlePublish() {
-    const users = visibilityMode === "allowlist" ? selectedUsers : [];
-    onPublish({
-      visibility_mode: visibilityMode,
-      visibility_user_ids: users.map((u) => u.id),
-      selected_users: users,
-    });
+  async function handleCopy() {
+    if (!active) return;
+    try {
+      await navigator.clipboard.writeText(active.public_url);
+      setCopied(true);
+      toast.success(t("publish.linkCopied"));
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error(t("publish.copyFailed"));
+    }
   }
-
-  function addUser(user: UserSearchResult) {
-    setSelectedUsers((prev) => {
-      if (prev.some((u) => u.id === user.id)) return prev;
-      return [...prev, user];
-    });
-  }
-
-  function removeUser(userId: string) {
-    setSelectedUsers((prev) => prev.filter((u) => u.id !== userId));
-  }
-
-  const canPublish = visibilityMode !== "allowlist" || selectedUsers.length > 0;
 
   return (
-    <div className="absolute right-0 top-full z-50 mt-1.5 w-80 rounded-lg border border-[#d8d1c1] bg-white shadow-lg">
+    <div
+      data-testid="publish-panel"
+      className="absolute right-0 top-full z-50 mt-1.5 w-80 rounded-lg border border-[#d8d1c1] bg-white shadow-lg"
+    >
       <div className="border-b border-[#d8d1c1] px-4 py-3">
-        <p className="text-sm font-semibold text-[#2f332f]">{t("workspace.webDesign.publishSettings")}</p>
-        <p className="mt-0.5 text-xs text-[#777166]">{t("workspace.webDesign.publishSettingsDescription")}</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-[#2f332f]">
+          <Globe className="h-4 w-4 text-[#996b35]" />
+          {t("publish.title")}
+        </p>
+        <p className="mt-0.5 text-xs text-[#777166]">{t("publish.anyoneWithLink")}</p>
       </div>
 
-      <div className="p-3 space-y-1">
-        {VISIBILITY_OPTIONS.map(({ mode, icon: Icon, labelKey, descKey }) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => {
-              setVisibilityMode(mode);
-              if (mode !== "allowlist") setSelectedUsers([]);
-            }}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors",
-              visibilityMode === mode
-                ? "bg-[#fff7ed] text-[#996b35]"
-                : "text-[#2f332f] hover:bg-[#f7f4eb]"
-            )}
+      {!isActive ? (
+        <div className="space-y-3 p-4">
+          <p className="text-xs text-[#777166]">{t("publish.snapshotNote")}</p>
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={onPublish}
+            disabled={isPublishing}
+            data-testid="publish-confirm"
           >
-            <Icon className="h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium leading-tight">{t(labelKey)}</p>
-              <p className="text-xs text-[#777166] leading-tight mt-0.5">{t(descKey)}</p>
-            </div>
-            {visibilityMode === mode && (
-              <Check className="h-4 w-4 shrink-0 text-[#996b35]" />
-            )}
-          </button>
-        ))}
-      </div>
+            {isPublishing ? t("publish.publishing") : t("publish.createLink")}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3 p-4">
+          <div className="flex items-center gap-2 rounded-md border border-[#e2dccf] bg-[#fbf8f1] px-2 py-1.5">
+            <span className="flex-1 truncate text-xs text-[#2f332f]" data-testid="publish-link">
+              {active!.public_url}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="shrink-0 text-[#777166] hover:text-[#996b35]"
+              aria-label={t("publish.copyLink")}
+              data-testid="publish-copy"
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
 
-      {visibilityMode === "allowlist" && (
-        <div className="border-t border-[#d8d1c1] px-4 py-3 space-y-2">
-          <p className="text-xs font-medium text-[#2f332f]">{t("workspace.webDesign.publishUserSearch")}</p>
-          <UserSearchInput
-            onSelect={addUser}
-            excludeIds={selectedUsers.map((u) => u.id)}
-            placeholder={t("workspace.webDesign.publishUserSearchPlaceholder")}
-          />
-          {selectedUsers.length === 0 && (
-            <p className="text-xs text-red-500">{t("workspace.webDesign.publishAllowlistRequired")}</p>
-          )}
-          {selectedUsers.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {selectedUsers.map((u) => (
-                <span
-                  key={u.id}
-                  className="inline-flex items-center gap-1 rounded-full bg-[#f7f4eb] px-2 py-0.5 text-xs text-[#2f332f]"
-                >
-                  {u.display_name}
-                  <button
-                    type="button"
-                    onClick={() => removeUser(u.id)}
-                    className="text-[#777166] hover:text-red-500"
-                    aria-label={t("workspace.webDesign.removePublishUser", { name: u.display_name })}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+          <p className="text-xs text-[#777166]">
+            {t("publish.snapshotTakenAt", {
+              time: new Date(active!.published_at).toLocaleString(),
+            })}
+          </p>
+          <p className="text-xs text-[#b3792e]">{t("publish.sensitiveWarning")}</p>
+
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={active!.public_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-[#d8d1c1] px-2.5 py-1 text-xs font-medium text-[#2f332f] hover:bg-[#f7f4eb]"
+              data-testid="publish-preview"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t("publish.openPreview")}
+            </a>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onPublish}
+              disabled={isPublishing}
+              data-testid="publish-update"
+            >
+              {isPublishing ? t("publish.publishing") : t("publish.updatePublish")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-error-crimson hover:bg-error-crimson/10"
+              onClick={onCancel}
+              disabled={isCancelling}
+              data-testid="publish-cancel"
+            >
+              {isCancelling ? t("publish.cancelling") : t("publish.cancelPublish")}
+            </Button>
+          </div>
         </div>
       )}
-
-      <div className="border-t border-[#d8d1c1] px-4 py-3">
-        <Button
-          size="sm"
-          className="w-full"
-          onClick={handlePublish}
-          disabled={!canPublish || isPublishing}
-        >
-          {isPublishing ? t("workspace.webDesign.publishing") : t("workspace.webDesign.confirmPublish")}
-        </Button>
-      </div>
     </div>
   );
-}
-
-/** @deprecated Use PublishPanel instead */
-export function PublishDialog(_props: {
-  open: boolean;
-  onClose: () => void;
-  onPublish: (result: PublishDialogResult) => void;
-  isPublishing?: boolean;
-}) {
-  return null;
 }

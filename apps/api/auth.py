@@ -39,6 +39,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspaces:write",
         "workspaces:manage",
         "skills:admin",
+        "prompts:read",
+        "prompts:write",
     },
     "admin": {
         "datasets:upload",
@@ -56,6 +58,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspaces:read",
         "workspaces:write",
         "workspaces:manage",
+        "prompts:read",
+        "prompts:write",
     },
     "hr": {
         "datasets:upload",
@@ -71,6 +75,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspaces:read",
         "workspaces:write",
         "workspaces:manage",
+        "prompts:read",
+        "prompts:write",
     },
     "pm": {
         "datasets:upload",
@@ -85,6 +91,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspaces:read",
         "workspaces:write",
         "workspaces:manage",
+        "prompts:read",
+        "prompts:write",
     },
     "viewer": {
         "datasets:read",
@@ -96,6 +104,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "views:share",
         "workspaces:read",
         "workspaces:write",
+        "prompts:read",
+        "prompts:write",
     },
 }
 
@@ -643,11 +653,9 @@ def handle_me(identity: AuthIdentity) -> dict[str, Any]:
             detail={"code": "authentication_required", "message": "User not found"},
         )
 
+    # available_workspaces only lists owner/editor memberships; viewer is no
+    # longer a workspace role and the response no longer carries an app-mode hint.
     available_workspaces = get_workspace_service().list_workspaces_for_user(user_id=identity.user_id)
-    has_designer_workspace = any(
-        w.get("role") in ("owner", "editor") for w in available_workspaces
-    )
-    default_app_mode = "designer" if has_designer_workspace else "viewer"
 
     return {
         "id": user.id,
@@ -656,7 +664,6 @@ def handle_me(identity: AuthIdentity) -> dict[str, Any]:
         "job_id": user.job_id,
         "last_login_at": user.last_login_at,
         "available_workspaces": available_workspaces,
-        "default_app_mode": default_app_mode,
     }
 
 

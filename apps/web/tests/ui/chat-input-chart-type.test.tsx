@@ -33,6 +33,14 @@ vi.mock("../../hooks/use-workspace-columns", () => ({
   useWorkspaceColumns: () => workspaceColumns,
 }));
 
+vi.mock("../../hooks/use-saved-prompts", () => ({
+  useSavedPrompts: () => ({ data: [], isLoading: false, isError: false }),
+  useMarkSavedPromptUsed: () => ({ mutate: vi.fn() }),
+  useCreateSavedPrompt: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateSavedPrompt: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useArchiveSavedPrompt: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 describe("ChatInput chart type picker", () => {
   beforeEach(() => {
     mutate.mockReset();

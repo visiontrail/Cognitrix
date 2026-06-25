@@ -303,13 +303,15 @@ def test_ingestion_upload_workspace_role_guards(monkeypatch, tmp_path: Path) -> 
         assert workspace_response.status_code == 200
         workspace_id = workspace_response.json()["workspace_id"]
 
+        # Viewer membership is no longer a valid role.
         add_member_response = client.post(
             f"/workspaces/{workspace_id}/members",
             headers=owner_headers,
             json={"user_id": "bob", "role": "viewer", "display_name": "Bob Viewer"},
         )
-        assert add_member_response.status_code == 200
+        assert add_member_response.status_code == 422
 
+        # bob is not a member, so uploads are forbidden.
         viewer_upload_response = client.post(
             "/ingestion/uploads",
             data={"workspace_id": workspace_id},

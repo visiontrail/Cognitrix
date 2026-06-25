@@ -6,7 +6,7 @@ import { Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiEmailLogin, AuthError } from "@/lib/auth/auth-client";
-import { setInMemoryToken, setStoredAppMode } from "@/lib/auth/session";
+import { setInMemoryToken } from "@/lib/auth/session";
 import { useI18n } from "@/lib/i18n/context";
 import { SUPPORTED_LOCALES, type Locale } from "@/lib/i18n/dictionary";
 
@@ -59,7 +59,6 @@ function LoginForm() {
     try {
       const result = await apiEmailLogin({ email, password });
       setInMemoryToken(result.access_token, result.expires_at);
-      setStoredAppMode("designer");
       window.location.href = invite ? `/invites/${invite}` : next;
     } catch (err) {
       setLoading(false);

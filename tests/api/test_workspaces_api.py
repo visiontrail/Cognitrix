@@ -104,7 +104,7 @@ def test_owner_can_add_member_and_member_can_bind_chat_workspace(monkeypatch, tm
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
-        member_headers = auth_headers(client, user_id="bob", project_id="north", role="viewer", clearance=1)
+        member_headers = auth_headers(client, user_id="bob", project_id="north", role="hr", clearance=1)
 
         create_response = client.post(
             "/workspaces",
@@ -117,10 +117,10 @@ def test_owner_can_add_member_and_member_can_bind_chat_workspace(monkeypatch, tm
         add_member_response = client.post(
             f"/workspaces/{workspace_id}/members",
             headers=owner_headers,
-            json={"user_id": "bob", "role": "viewer", "display_name": "Bob Viewer"},
+            json={"user_id": "bob", "role": "editor", "display_name": "Bob Editor"},
         )
         assert add_member_response.status_code == 200
-        assert add_member_response.json()["role"] == "viewer"
+        assert add_member_response.json()["role"] == "editor"
 
         member_workspace_response = client.get(f"/workspaces/{workspace_id}", headers=member_headers)
         assert member_workspace_response.status_code == 200
@@ -141,12 +141,12 @@ def test_owner_can_add_member_and_member_can_bind_chat_workspace(monkeypatch, tm
         assert "text/event-stream" in chat_response.headers.get("content-type", "")
 
 
-def test_viewer_cannot_manage_workspace_members(monkeypatch, tmp_path: Path) -> None:
+def test_viewer_role_is_rejected_and_non_member_cannot_manage(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
-        viewer_headers = auth_headers(client, user_id="bob", project_id="north", role="viewer", clearance=1)
+        outsider_headers = auth_headers(client, user_id="dave", project_id="north", role="hr", clearance=1)
 
         create_response = client.post(
             "/workspaces",
@@ -156,19 +156,21 @@ def test_viewer_cannot_manage_workspace_members(monkeypatch, tmp_path: Path) -> 
         assert create_response.status_code == 200
         workspace_id = create_response.json()["workspace_id"]
 
+        # Viewer membership is no longer a valid role.
         owner_add_viewer = client.post(
             f"/workspaces/{workspace_id}/members",
             headers=owner_headers,
             json={"user_id": "bob", "role": "viewer"},
         )
-        assert owner_add_viewer.status_code == 200
+        assert owner_add_viewer.status_code == 422
 
-        viewer_add_member = client.post(
+        # A non-member cannot manage workspace members.
+        outsider_add_member = client.post(
             f"/workspaces/{workspace_id}/members",
-            headers=viewer_headers,
-            json={"user_id": "carol", "role": "viewer"},
+            headers=outsider_headers,
+            json={"user_id": "carol", "role": "editor"},
         )
-        expect_error_code(viewer_add_member, "WORKSPACE_FORBIDDEN", status_code=403)
+        expect_error_code(outsider_add_member, "WORKSPACE_FORBIDDEN", status_code=403)
 
 
 def test_delete_workspace_cascade(monkeypatch, tmp_path: Path) -> None:

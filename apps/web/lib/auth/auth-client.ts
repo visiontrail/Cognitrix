@@ -7,7 +7,6 @@ export type UserInfo = {
   job_id: number | null;
   last_login_at: string | null;
   available_workspaces: Array<{ workspace_id: string; name: string; role: string }>;
-  default_app_mode: "designer" | "viewer";
 };
 
 export type AuthResult = {

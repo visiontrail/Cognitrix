@@ -15,35 +15,31 @@ const DEFAULT_AUTH_CONTEXT = {
   clearance: DEFAULT_CLEARANCE,
 };
 
-export type PublishWorkspaceResponse = {
+export type PublicationStatus = {
+  token: string;
+  public_url: string;
   published_page_id: string;
   version: number;
-  visibility_mode?: string;
+  published_at: string;
+  is_active: boolean;
 };
 
-export type VisibilityMode = "private" | "registered" | "allowlist";
+export type PublicationState =
+  | (PublicationStatus & { is_active: true })
+  | { is_active: false };
 
 export type PublishHistoryItem = {
   page_id: string;
   version: number;
   published_at: string;
   published_by: string;
-  visibility_mode?: VisibilityMode;
-  visibility_user_count?: number | null;
-  visibility_user_ids?: string[];
-};
-
-export type VisibilityPayload = {
-  visibility_mode: VisibilityMode;
-  visibility_user_ids?: string[];
 };
 
 export async function publishWorkspace(
   workspaceId: string,
   layout: WebDesignLayout,
-  nodes: WorkspaceNode[],
-  visibility?: VisibilityPayload
-): Promise<PublishWorkspaceResponse> {
+  nodes: WorkspaceNode[]
+): Promise<PublicationStatus> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
   const chartNodes = nodes.filter((node): node is WorkspaceNode & { data: ChartNodeData } =>
     node.data.type === "chart"
@@ -91,8 +87,6 @@ export async function publishWorkspace(
       },
       sidebar: layout.sidebar,
       charts,
-      visibility_mode: visibility?.visibility_mode ?? "private",
-      visibility_user_ids: visibility?.visibility_user_ids ?? [],
     }),
   });
   const payload = await response.json().catch(() => null);
@@ -102,24 +96,29 @@ export async function publishWorkspace(
       : null;
     throw new Error(detail?.message || "Publish failed");
   }
-  return payload as PublishWorkspaceResponse;
+  return payload as PublicationStatus;
 }
 
-export async function updateVersionVisibility(
-  workspaceId: string,
-  version: number,
-  payload: VisibilityPayload
-): Promise<void> {
+export async function fetchPublicationStatus(
+  workspaceId: string
+): Promise<PublicationState> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
-  const resp = await fetch(
-    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/published/${version}/visibility`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify(payload),
-    }
+  const response = await fetch(
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish`,
+    { method: "GET", headers }
   );
-  if (!resp.ok) throw new Error("Update visibility failed");
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error("Publication status failed");
+  return payload as PublicationState;
+}
+
+export async function cancelPublication(workspaceId: string): Promise<void> {
+  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const response = await fetch(
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish`,
+    { method: "DELETE", headers }
+  );
+  if (!response.ok) throw new Error("Cancel publication failed");
 }
 
 export async function fetchPublishHistory(workspaceId: string): Promise<PublishHistoryItem[]> {
@@ -134,25 +133,4 @@ export async function fetchPublishHistory(workspaceId: string): Promise<PublishH
   }
   const data = payload as { published_pages?: PublishHistoryItem[] };
   return Array.isArray(data.published_pages) ? data.published_pages : [];
-}
-
-export type UserSummary = {
-  id: string;
-  email_masked: string;
-  display_name: string;
-  job_label: string;
-};
-
-export async function fetchUsersByIds(userIds: string[]): Promise<UserSummary[]> {
-  if (userIds.length === 0) return [];
-  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
-  const response = await fetch(`${API_BASE_URL}/users/batch`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({ user_ids: userIds }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) return [];
-  const data = payload as { users?: UserSummary[] };
-  return Array.isArray(data.users) ? data.users : [];
 }

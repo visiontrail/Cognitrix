@@ -1,9 +1,9 @@
 "use client";
 
-import type { PublishedSidebarItem } from "@/lib/portal/api";
+import type { PublishedSidebarItem } from "@/lib/public/api";
 import { cn } from "@/lib/utils";
 
-export function PublishedPageSidebar({
+export function PublicPageSidebar({
   items,
   activePageId,
   onSelectPage,
@@ -47,7 +47,14 @@ function SidebarButton({
   return (
     <button
       type="button"
-      onClick={() => onSelectPage?.(pageId)}
+      onClick={() => {
+        onSelectPage?.(pageId);
+        if (item.anchorRowId) {
+          document
+            .getElementById(item.anchorRowId)
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }}
       className={cn(
         "block w-full rounded-md px-2 py-1 text-left",
         child ? "ml-4 w-[calc(100%-1rem)] text-xs font-normal text-[#777166]" : "text-sm font-semibold",

@@ -7,24 +7,13 @@ import type { WorkspaceMember } from "@/lib/workspace/collaboration";
 
 type Props = {
   members: WorkspaceMember[];
-  currentUserId?: string;
-  onRoleChange: (userId: string, role: string) => Promise<void>;
   onRemove: (userId: string) => Promise<void>;
 };
 
-export function MembersList({ members, currentUserId, onRoleChange, onRemove }: Props) {
+export function MembersList({ members, onRemove }: Props) {
   const { t } = useI18n();
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
-
-  async function handleRoleChange(userId: string, newRole: string) {
-    setLoading(userId);
-    try {
-      await onRoleChange(userId, newRole);
-    } finally {
-      setLoading(null);
-    }
-  }
 
   async function handleRemove(userId: string) {
     if (confirmRemoveId !== userId) {
@@ -44,7 +33,6 @@ export function MembersList({ members, currentUserId, onRoleChange, onRemove }: 
     <div className="space-y-1">
       {members.map((member) => {
         const isOwner = member.role === "owner";
-        const isSelf = member.user_id === currentUserId;
         return (
           <div key={member.user_id} className="flex items-center justify-between gap-2 py-1.5">
             <div className="min-w-0 flex-1">
@@ -55,15 +43,7 @@ export function MembersList({ members, currentUserId, onRoleChange, onRemove }: 
               {isOwner ? (
                 <span className="text-xs text-muted-foreground px-2">{t("collab.roleOwner")}</span>
               ) : (
-                <select
-                  value={member.role}
-                  disabled={loading === member.user_id || isSelf}
-                  onChange={(e) => handleRoleChange(member.user_id, e.target.value)}
-                  className="text-xs border rounded px-1 py-0.5"
-                >
-                  <option value="editor">{t("collab.roleEditor")}</option>
-                  <option value="viewer">{t("collab.roleViewer")}</option>
-                </select>
+                <span className="text-xs text-muted-foreground px-2">{t("collab.roleEditor")}</span>
               )}
               {!isOwner && (
                 <Button

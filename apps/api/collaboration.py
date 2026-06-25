@@ -52,6 +52,10 @@ def create_invite(
     expires_in_days: int | None = None,
     max_uses: int | None = None,
 ) -> dict[str, Any]:
+    # Invite links only create editor collaborators; viewer is not a role.
+    if role.strip().lower() != "editor":
+        raise ValueError("invite role must be editor")
+    role = "editor"
     settings = get_settings()
     effective_days = expires_in_days if expires_in_days is not None else settings.invite_link_ttl_days
     invite_id = uuid.uuid4().hex
@@ -147,7 +151,9 @@ def accept_invite(
 
     invite_id = str(data.get("invite_id", ""))
     workspace_id = str(data.get("workspace_id", ""))
-    role = str(data.get("role", "editor"))
+    # Accepted invites always create editor collaborators. Any legacy viewer
+    # invite token is coerced to editor; viewer is no longer a membership role.
+    role = "editor"
 
     token_hash = _hash_token(raw_token)
     row = conn.execute(

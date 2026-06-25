@@ -102,41 +102,18 @@ export function getActiveAuthContext(fallback: AuthContext): AuthContext {
   };
 }
 
-const APP_MODE_STORAGE_KEY = "cognitrix_app_mode";
-
-export function getAppMode(): "designer" | "viewer" {
-  if (typeof window === "undefined") return "designer";
-  try {
-    const stored = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
-    if (stored === "designer" || stored === "viewer") return stored;
-  } catch {
-    // ignore
-  }
-  return "designer";
-}
-
-export function setStoredAppMode(mode: "designer" | "viewer"): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
-  } catch {
-    // ignore
-  }
-}
-
 export async function getAuthorizationHeader(
   apiBaseUrl: string,
   context: AuthContext
 ): Promise<Record<string, string>> {
-  const appMode = getAppMode();
   // Check new auth first
   const userToken = getInMemoryToken();
   if (userToken) {
-    return { Authorization: `Bearer ${userToken}`, "X-App-Mode": appMode };
+    return { Authorization: `Bearer ${userToken}` };
   }
   // Fall back to legacy service-token auth
   const token = await getLegacyAccessToken(apiBaseUrl, context);
-  return { Authorization: `Bearer ${token}`, "X-App-Mode": appMode };
+  return { Authorization: `Bearer ${token}` };
 }
 
 export function handleUnauthorized(currentPath?: string): void {

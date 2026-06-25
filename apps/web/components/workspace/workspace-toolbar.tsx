@@ -46,6 +46,7 @@ import {
   fetchPublicationStatus,
   fetchPublishHistory,
   publishWorkspace,
+  resolvePublicUrl,
   type CanvasPublishSnapshot,
   type PublicationState,
   type PublishHistoryItem,
@@ -199,7 +200,7 @@ export function WorkspaceToolbar() {
         description: t("workspace.publish.toast.versionReady", { version: result.version }),
         action: {
           label: t("workspace.publish.viewPublishedPage"),
-          onClick: () => window.open(result.public_url, "_blank", "noreferrer"),
+          onClick: () => window.open(resolvePublicUrl(result), "_blank", "noreferrer"),
         },
       });
     } catch (error) {

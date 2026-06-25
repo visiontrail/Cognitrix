@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n/context";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
 import type { WorkspaceInvite } from "@/lib/workspace/collaboration";
 
@@ -46,10 +47,10 @@ export function InviteLinkSection({ invites, onGenerate, onRevoke }: Props) {
   }
 
   async function handleCopy(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
+    const succeeded = await copyTextToClipboard(url);
+    if (succeeded) {
       toast.success(t("collab.linkCopied"));
-    } catch {
+    } else {
       toast.error(t("collab.copyLinkFailed"));
     }
   }

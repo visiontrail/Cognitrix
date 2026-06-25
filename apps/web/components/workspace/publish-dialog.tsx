@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Check, Copy, ExternalLink, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { PublicationState } from "@/lib/workspace/publish";
+import { resolvePublicUrl, type PublicationState } from "@/lib/workspace/publish";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useI18n } from "@/lib/i18n/context";
 
 type Props = {
@@ -28,15 +29,16 @@ export function PublishPanel({
   const [copied, setCopied] = useState(false);
   const isActive = Boolean(publication && publication.is_active);
   const active = isActive ? (publication as Extract<PublicationState, { is_active: true }>) : null;
+  const publicUrl = active ? resolvePublicUrl(active) : "";
 
   async function handleCopy() {
     if (!active) return;
-    try {
-      await navigator.clipboard.writeText(active.public_url);
+    const succeeded = await copyTextToClipboard(publicUrl);
+    if (succeeded) {
       setCopied(true);
       toast.success(t("publish.linkCopied"));
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error(t("publish.copyFailed"));
     }
   }
@@ -72,7 +74,7 @@ export function PublishPanel({
         <div className="space-y-3 p-4">
           <div className="flex items-center gap-2 rounded-md border border-[#e2dccf] bg-[#fbf8f1] px-2 py-1.5">
             <span className="flex-1 truncate text-xs text-[#2f332f]" data-testid="publish-link">
-              {active!.public_url}
+              {publicUrl}
             </span>
             <button
               type="button"
@@ -94,7 +96,7 @@ export function PublishPanel({
 
           <div className="flex flex-wrap gap-2">
             <a
-              href={active!.public_url}
+              href={publicUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-md border border-[#d8d1c1] px-2.5 py-1 text-xs font-medium text-[#2f332f] hover:bg-[#f7f4eb]"

@@ -36,6 +36,23 @@ export type PublicationState =
   | (PublicationStatus & { is_active: true })
   | { is_active: false };
 
+/**
+ * Resolve a browser-openable public URL for a published page.
+ *
+ * The backend-computed `public_url` is derived from the API request's base URL,
+ * which resolves to the internal proxy target (e.g. `http://api:8000`) when the
+ * browser talks to the API through the Next.js `/api/backend` proxy. The public
+ * page (`/p/{token}`) is served by this Next.js app, so the only reliably
+ * correct host is the browser's own origin. Fall back to the server value when
+ * running outside the browser (SSR).
+ */
+export function resolvePublicUrl(status: { token: string; public_url?: string }): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}/p/${status.token}`;
+  }
+  return status.public_url ?? "";
+}
+
 export type PublishHistoryItem = {
   page_id: string;
   version: number;

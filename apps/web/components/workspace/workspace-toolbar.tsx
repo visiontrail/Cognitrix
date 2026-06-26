@@ -46,6 +46,7 @@ import {
   MAX_CANVAS_PAGES,
   getCanvasFormatPreset,
   getCanvasPageCount,
+  getCanvasPageStride,
   getMaxOccupiedCanvasPage,
   isBoundedCanvasFormat,
 } from "@/lib/workspace/canvas-formats";
@@ -907,16 +908,21 @@ function validatePublishSnapshot(snapshot: CanvasPublishSnapshot): { reason?: st
 
   const preset = getCanvasFormatPreset(snapshot.canvas_format.id);
   if (preset.width && preset.height) {
+    // Fixed canvases paginate: pages stack vertically with `CANVAS_PAGE_GAP`
+    // between them, so a node on page 2+ legitimately sits at `y > preset.height`.
+    // Resolve each node to the page it starts on and bound-check it against that
+    // page's rect instead of the first page, otherwise any multi-page report is
+    // wrongly flagged as out-of-bounds.
+    const stride = getCanvasPageStride(preset);
     const outOfBounds = publishableNodes.some((node) => {
       const width = Number(node.width ?? node.data.width ?? 0);
       const dataHeight = "height" in node.data ? node.data.height : 24;
       const height = Number(node.height ?? dataHeight ?? 0);
-      return (
-        node.position.x < 0 ||
-        node.position.y < 0 ||
-        node.position.x + width > preset.width! ||
-        node.position.y + height > preset.height!
-      );
+      if (node.position.x < 0 || node.position.x + width > preset.width!) return true;
+      if (node.position.y < 0) return true;
+      const page = Math.floor(node.position.y / stride);
+      const pageBottom = page * stride + preset.height!;
+      return node.position.y + height > pageBottom;
     });
     if (outOfBounds) {
       return { reason: "workspace.publish.outOfBounds" };

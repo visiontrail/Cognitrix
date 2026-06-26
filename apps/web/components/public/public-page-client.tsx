@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PublicCanvasActions } from "@/components/public/public-canvas-actions";
 import { PublicPageGrid } from "@/components/public/public-page-grid";
 import { PublicPageSidebar } from "@/components/public/public-page-sidebar";
 import { PublishedFixedCanvas, PublishedFreeCanvas } from "@/components/public/published-canvas-renderers";
@@ -14,6 +15,7 @@ type LoadState = "loading" | "ready" | "invalid";
 
 export function PublicPageClient({ token }: { token: string }) {
   const { t } = useI18n();
+  const webPageCanvasRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [page, setPage] = useState<PublicManifestResponse | null>(null);
   const [activePageId, setActivePageId] = useState<string | undefined>();
@@ -68,11 +70,12 @@ export function PublicPageClient({ token }: { token: string }) {
   }
 
   const canvasKind = page.manifest.canvas?.kind ?? "web_page";
+  const filenameBase = `published-canvas-v${page.version}`;
   if (canvasKind === "free_layout") {
-    return <PublishedFreeCanvas token={token} manifest={page.manifest} />;
+    return <PublishedFreeCanvas token={token} manifest={page.manifest} filenameBase={filenameBase} />;
   }
   if (canvasKind === "fixed_size") {
-    return <PublishedFixedCanvas token={token} manifest={page.manifest} />;
+    return <PublishedFixedCanvas token={token} manifest={page.manifest} filenameBase={filenameBase} />;
   }
 
   return (
@@ -83,7 +86,18 @@ export function PublicPageClient({ token }: { token: string }) {
         onSelectPage={setActivePageId}
       />
       <main className="relative flex min-h-0 min-w-0 flex-1">
-        <PublicPageGrid token={token} manifest={page.manifest} activePageId={activePageId} />
+        <PublicCanvasActions
+          getCanvasElement={() => webPageCanvasRef.current}
+          filenameBase={filenameBase}
+          className="absolute right-5 top-5"
+          captureOptions={{ backgroundColor: "#ffffff" }}
+        />
+        <PublicPageGrid
+          token={token}
+          manifest={page.manifest}
+          activePageId={activePageId}
+          captureRef={webPageCanvasRef}
+        />
       </main>
     </div>
   );

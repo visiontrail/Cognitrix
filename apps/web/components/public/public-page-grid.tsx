@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import {
   fetchPublicChartData,
@@ -16,10 +16,12 @@ export function PublicPageGrid({
   token,
   manifest,
   activePageId,
+  captureRef,
 }: {
   token: string;
   manifest: PublishedManifest;
   activePageId?: string;
+  captureRef?: RefObject<HTMLDivElement>;
 }) {
   const pageLayout =
     manifest.layout.pages?.find((page) => page.id === activePageId) ??
@@ -33,7 +35,9 @@ export function PublicPageGrid({
   return (
     <div className="min-w-0 flex-1 overflow-auto p-5">
       <div
+        ref={captureRef}
         className="grid bg-white"
+        data-testid="public-page-grid-canvas"
         style={{
           gridTemplateColumns: `repeat(${grid.columns}, minmax(180px, 1fr))`,
           gridTemplateRows: grid.rows.map((row) => `${row.height}px`).join(" "),

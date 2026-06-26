@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import { ChartPreview } from "@/components/charts/chart-preview";
+import { PublicCanvasActions } from "@/components/public/public-canvas-actions";
 import {
   fetchPublicChartData,
   type PublicChartData,
@@ -42,12 +43,15 @@ type SectionCanvasNode = PublishedCanvasNode & {
 export function PublishedFreeCanvas({
   token,
   manifest,
+  filenameBase = "published-canvas",
 }: {
   token: string;
   manifest: PublishedManifest;
+  filenameBase?: string;
 }) {
   const { t } = useI18n();
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -167,6 +171,7 @@ export function PublishedFreeCanvas({
       style={{ touchAction: "none" }}
     >
       <div
+        ref={stageRef}
         className="relative will-change-transform"
         data-testid="published-free-canvas-stage"
         style={{
@@ -186,6 +191,12 @@ export function PublishedFreeCanvas({
           />
         ))}
       </div>
+      <PublicCanvasActions
+        getCanvasElement={() => stageRef.current}
+        filenameBase={filenameBase}
+        className="absolute right-4 top-4"
+        captureOptions={{ backgroundColor: "#f7f4eb", width, height }}
+      />
       <div
         className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur"
         data-public-canvas-control
@@ -231,11 +242,14 @@ export function PublishedFreeCanvas({
 export function PublishedFixedCanvas({
   token,
   manifest,
+  filenameBase = "published-canvas",
 }: {
   token: string;
   manifest: PublishedManifest;
+  filenameBase?: string;
 }) {
   const page = manifest.canvas?.page;
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
   useEffect(() => {
     if (!page?.width) return;
@@ -251,9 +265,17 @@ export function PublishedFixedCanvas({
   }
   const nodes = (manifest.content?.nodes ?? []).filter((node) => !node.hidden);
   return (
-    <div className="h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f]">
+    <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f]">
+      <PublicCanvasActions
+        getCanvasElement={() => pageRef.current}
+        filenameBase={filenameBase}
+        allowPdf
+        className="fixed right-4 top-4"
+        captureOptions={{ backgroundColor: "#ffffff", width: page.width, height: page.height }}
+      />
       <div className="mx-auto" style={{ width: page.width * scale, height: page.height * scale }}>
         <div
+          ref={pageRef}
           className="relative origin-top overflow-hidden bg-white shadow-sm ring-1 ring-[#d8d1c1]"
           style={{
             width: page.width,

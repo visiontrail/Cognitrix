@@ -52,11 +52,9 @@ vi.mock("../../lib/auth/use-session", () => ({
       email: "user@example.com",
       display_name: "User",
       available_workspaces: [],
-      default_app_mode: "designer",
     },
     isLoggedIn: true,
     isLoading: false,
-    defaultAppMode: "designer",
     query: {},
   }),
 }));

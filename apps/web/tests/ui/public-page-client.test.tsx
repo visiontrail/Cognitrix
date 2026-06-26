@@ -97,4 +97,16 @@ describe("PublicPageClient", () => {
 
     expect(await screen.findByText("Link unavailable")).toBeInTheDocument();
   });
+
+  it("renders the neutral unavailable state when the token is unknown or revoked (404)", async () => {
+    // A revoked/unknown public token makes the API reject; the page must show
+    // the neutral invalid state without revealing whether the link ever existed.
+    fetchPublicManifestMock.mockRejectedValue(new Error("Not found"));
+
+    render(<PublicPageClient token="revoked-token" />);
+
+    expect(await screen.findByText("Link unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("published-free-canvas")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("published-fixed-canvas")).not.toBeInTheDocument();
+  });
 });

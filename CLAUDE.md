@@ -199,6 +199,7 @@ On startup the API will create the admin user if no password-auth users exist ye
 - `INVITE_LINK_TTL_DAYS=14` — default invite link TTL
 - `LEGACY_SERVICE_LOGIN_ENABLED=true` — keep `POST /auth/login` service-token path (dev only)
 - `APP_URL=http://localhost:3000` — used in invite link generation
+- `PUBLIC_BASE_URL` — base origin for public publish links (`/p/{token}`); empty by default, falling back to the request origin then `APP_URL`
 
 ### Local Dev Registration
 ```bash
@@ -219,11 +220,22 @@ curl -X POST http://localhost:8000/auth/email-login \
 - Revoke: `DELETE /workspaces/{id}/invites/{invite_id}`
 - Default TTL: `INVITE_LINK_TTL_DAYS` (14 days)
 
-### Publish Visibility
-Published pages support three visibility modes:
-- `private` — only workspace owner/editor can view
-- `registered` — all logged-in users can view
-- `allowlist` — specific users + workspace owner/editor
+### Public Publish Links
+Publishing is the single sharing action (Notion/RavenAI-style public share). There
+is no viewer app mode and no `private`/`registered`/`allowlist` visibility matrix.
+- `POST /workspaces/{id}/publish` — owner/editor writes an immutable snapshot and
+  creates or refreshes the active public link, returning `{token, public_url,
+  published_page_id, version, published_at, is_active}`. Repeated publishes reuse
+  the same high-entropy token (refresh-in-place). Each canvas kind (web page /
+  free layout / fixed size) owns an independent public link.
+- `GET /workspaces/{id}/publish` — owner/editor publication status (or `{is_active: false}`).
+- `DELETE /workspaces/{id}/publish` — revoke the active link; public reads then 404.
+- `GET /public/pages/{token}/manifest` and `GET /public/pages/{token}/charts/{chart_id}/data`
+  — unauthenticated, token-only reads served from the redacted snapshot. Unknown,
+  inactive, or revoked tokens all return an undifferentiated 404.
+- Public browser route: `/p/{token}` (standalone, outside the authenticated shell).
+- Workspace membership is owner/editor only; the legacy `viewer` role no longer
+  grants workspace access and is neutralized on migration.
 
 ## Key Configuration
 

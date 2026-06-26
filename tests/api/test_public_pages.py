@@ -166,4 +166,9 @@ def test_publish_history_has_no_visibility_fields(monkeypatch, tmp_path: Path) -
         items = history.json()["published_pages"]
         assert len(items) == 1
         item = items[0]
-        assert set(item.keys()) == {"page_id", "version", "published_at", "published_by"}
+        # History carries page + canvas metadata but no visibility summary fields.
+        assert {"page_id", "version", "published_at", "published_by"} <= set(item.keys())
+        assert not (
+            set(item.keys())
+            & {"visibility_mode", "visibility_user_count", "visibility_user_ids"}
+        )

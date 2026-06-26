@@ -49,19 +49,19 @@
 
 ## 6. Tests
 
-- [ ] 6.1 Add backend unit tests for public publication create-or-refresh, stable token reuse, revoke, and token resolution.
-- [ ] 6.2 Update publish integration tests to assert `POST /publish` returns public-link metadata and does not accept visibility payloads.
-- [ ] 6.3 Add unauthenticated public-read tests for manifest and chart data loading from snapshot files.
-- [ ] 6.4 Add security tests that unknown/revoked tokens return 404 and public responses omit membership, owner identity, visibility, and filesystem internals.
-- [ ] 6.5 Add migration/permission tests proving legacy viewer workspace memberships do not grant workspace access and are not upgraded to editor.
-- [ ] 6.6 Update frontend tests for Publish dialog states: unpublished, published, copy/open/update/cancel, and no user-search/allowlist controls.
-- [ ] 6.7 Add public route rendering tests for valid and invalid token states.
-- [ ] 6.8 Remove or rewrite old tests that assert viewer app mode, portal visibility filtering, allowlist publishing, or viewer invite behavior.
+- [x] 6.1 Add backend unit tests for public publication create-or-refresh, stable token reuse, revoke, and token resolution.
+- [x] 6.2 Update publish integration tests to assert `POST /publish` returns public-link metadata and does not accept visibility payloads.
+- [x] 6.3 Add unauthenticated public-read tests for manifest and chart data loading from snapshot files.
+- [x] 6.4 Add security tests that unknown/revoked tokens return 404 and public responses omit membership, owner identity, visibility, and filesystem internals.
+- [x] 6.5 Add migration/permission tests proving legacy viewer workspace memberships do not grant workspace access and are not upgraded to editor.
+- [x] 6.6 Update frontend tests for Publish dialog states: unpublished, published, copy/open/update/cancel, and no user-search/allowlist controls.
+- [x] 6.7 Add public route rendering tests for valid and invalid token states.
+- [x] 6.8 Remove or rewrite old tests that assert viewer app mode, portal visibility filtering, allowlist publishing, or viewer invite behavior.
 
 ## 7. Cleanup and Verification
 
-- [ ] 7.1 Remove dead i18n keys and TypeScript types for visibility modes, app mode, viewer portal, and publish allowlists.
-- [ ] 7.2 Update docs and `.env.example` entries for the public base URL if a new setting is introduced.
-- [ ] 7.3 Run targeted backend tests for publish, portal/public read, workspace collaboration, auth, and security.
-- [ ] 7.4 Run targeted frontend Vitest coverage for publish dialog, public page route, auth/session, and workbench navigation.
-- [ ] 7.5 Run `openspec status --change replace-viewer-with-public-publish-links` and the relevant OpenSpec validation command before implementation is considered ready.
+- [x] 7.1 Remove dead i18n keys and TypeScript types for visibility modes, app mode, viewer portal, and publish allowlists.
+- [x] 7.2 Update docs and `.env.example` entries for the public base URL if a new setting is introduced.
+- [x] 7.3 Run targeted backend tests for publish, portal/public read, workspace collaboration, auth, and security.
+- [x] 7.4 Run targeted frontend Vitest coverage for publish dialog, public page route, auth/session, and workbench navigation.
+- [x] 7.5 Run `openspec status --change replace-viewer-with-public-publish-links` and the relevant OpenSpec validation command before implementation is considered ready.

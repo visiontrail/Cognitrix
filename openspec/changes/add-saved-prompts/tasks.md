@@ -57,4 +57,4 @@
 - [x] 7.2 Run backend tests for saved prompts and related security/audit coverage.
 - [x] 7.3 Run relevant frontend Vitest suites for chat input and saved prompts.
 - [x] 7.4 Run `make lint` or the narrow backend/frontend lint commands needed for touched files.
-- [ ] 7.5 Manually verify the composer menu flow in the browser: create prompt, insert static prompt, insert variable prompt, manage/search/edit/delete.
+- [x] 7.5 Manually verify the composer menu flow in the browser: create prompt, insert static prompt, insert variable prompt, manage/search/edit/delete.

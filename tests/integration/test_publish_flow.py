@@ -91,6 +91,78 @@ def test_publish_flow_writes_snapshot_files_and_redacts_sensitive_columns(monkey
         assert rows == [{"department": "HR", "headcount": 4}]
 
 
+def test_workspace_published_snapshot_reads_non_active_version(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_response = client.post("/workspaces", json={"name": "Restore History"}, headers=headers)
+        workspace_response.raise_for_status()
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        first_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "canvas_format": {"id": "infinite"},
+                "viewport": {"x": -12, "y": 24, "zoom": 0.75},
+                "nodes": [
+                    {
+                        "id": "chart-node-v1",
+                        "type": "chartNode",
+                        "position": {"x": 40, "y": 60},
+                        "width": 420,
+                        "height": 280,
+                        "data": {
+                            "type": "chart",
+                            "assetId": "chart-v1",
+                            "title": "Version One",
+                            "chartType": "bar",
+                            "width": 420,
+                            "height": 280,
+                        },
+                    }
+                ],
+                "edges": [],
+                "charts": [
+                    {
+                        "chart_id": "chart-v1",
+                        "title": "Version One",
+                        "chart_type": "bar",
+                        "spec": {"chartType": "bar", "title": "Version One", "echartsOption": {}},
+                        "rows": [{"department": "HR", "headcount": 4, "salary": 100}],
+                    }
+                ],
+            },
+        )
+        first_response.raise_for_status()
+        first_page_id = first_response.json()["published_page_id"]
+
+        second_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={"canvas_format": {"id": "a4-portrait"}, "nodes": [], "edges": [], "charts": []},
+        )
+        second_response.raise_for_status()
+        assert second_response.json()["published_page_id"] != first_page_id
+
+        snapshot_response = client.get(
+            f"/workspaces/{workspace_id}/published/{first_page_id}/snapshot",
+            headers=headers,
+        )
+        snapshot_response.raise_for_status()
+        payload = snapshot_response.json()
+        assert payload["version"] == 1
+        assert payload["canvas_format_id"] == "infinite"
+        assert payload["canvas_kind"] == "free_layout"
+        assert payload["manifest"]["canvas"]["viewport"] == {"x": -12.0, "y": 24.0, "zoom": 0.75}
+        assert payload["manifest"]["content"]["nodes"][0]["id"] == "chart-node-v1"
+        assert "spec_path" not in payload["manifest"]["charts"][0]
+        assert payload["charts"][0]["chart_id"] == "chart-v1"
+        assert payload["charts"][0]["spec"]["title"] == "Version One"
+        assert payload["charts"][0]["rows"] == [{"department": "HR", "headcount": 4}]
+
+
 def test_publish_flow_supports_free_and_fixed_canvas_modes(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 

@@ -29,6 +29,8 @@ from .published_pages import (
     get_snapshot_writer,
     manifest_canvas_format_id,
     manifest_canvas_kind,
+    read_chart_data,
+    read_manifest,
 )
 
 logger = logging.getLogger("cognitrix.workspaces")
@@ -1465,6 +1467,56 @@ async def list_workspace_published_pages(
     return {
         "count": len(history),
         "published_pages": history,
+    }
+
+
+@router.get("/{workspace_id}/published/{page_id}/snapshot")
+async def get_workspace_published_page_snapshot(
+    workspace_id: str,
+    page_id: str,
+    identity: AuthIdentity = Depends(get_current_identity),
+) -> dict[str, object]:
+    service = get_workspace_service()
+    try:
+        service.assert_workspace_access(
+            workspace_id=workspace_id,
+            user_id=identity.user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    store = get_published_page_store()
+    try:
+        page = store.get(page_id=page_id)
+    except PublishedPageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    if page.workspace_id != workspace_id:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PUBLISHED_PAGE_NOT_FOUND", "message": "Published page not found"},
+        )
+
+    try:
+        manifest = read_manifest(page)
+        charts = [
+            read_chart_data(page, chart_id=str(chart.get("chart_id") or ""))
+            for chart in manifest.get("charts", [])
+            if isinstance(chart, dict) and str(chart.get("chart_id") or "").strip()
+        ]
+    except PublishedPageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    return {
+        "page_id": page.id,
+        "version": page.version,
+        "published_at": page.published_at,
+        "published_by": page.published_by,
+        "canvas_format_id": manifest_canvas_format_id(page),
+        "canvas_kind": manifest_canvas_kind(page),
+        "manifest": manifest,
+        "charts": charts,
     }
 
 

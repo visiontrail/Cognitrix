@@ -17,6 +17,7 @@ import {
   NotebookPen,
   Pencil,
   Printer,
+  RotateCcw,
   Send,
   Type,
   X,
@@ -37,6 +38,7 @@ import { useRenameWorkspace, useWorkspaceCatalog } from "@/hooks/use-workspace";
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { toast } from "sonner";
+import { saveWorkspaceSnapshot } from "@/lib/workspace/api";
 import { CANVAS_FORMAT_PRESETS, getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
 import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import {
@@ -46,10 +48,12 @@ import {
   printFixedCanvas,
 } from "@/lib/workspace/canvas-export";
 import {
+  buildWorkspaceSnapshotFromPublishedVersion,
   buildActiveCanvasPublishPayload,
   cancelPublication,
   fetchPublicationStatus,
   fetchPublishHistory,
+  fetchPublishedVersionSnapshot,
   publishWorkspace,
   resolvePublicUrl,
   type CanvasPublishSnapshot,
@@ -66,6 +70,7 @@ import type {
 
 const DEFAULT_TEXT_NODE_WIDTH = 480;
 const DEFAULT_TEXT_NODE_HEIGHT = 220;
+const PUBLISH_HISTORY_VISIBLE_LIMIT = 3;
 
 type TextLevel = "title" | "heading" | "body";
 
@@ -121,6 +126,9 @@ export function WorkspaceToolbar() {
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
   const webDesign = useWorkspaceStore((s) => s.webDesign);
   const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
+  const loadSnapshot = useWorkspaceStore((s) => s.loadSnapshot);
+  const getWorkspaceSnapshot = useWorkspaceStore((s) => s.getSnapshot);
+  const setHasUnsavedChanges = useWorkspaceStore((s) => s.setHasUnsavedChanges);
   const activePanel = useUIStore((s) => s.activePanel);
   const isSaving = useUIStore((s) => s.isSaving);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
@@ -136,6 +144,7 @@ export function WorkspaceToolbar() {
   const [publication, setPublication] = useState<PublicationState | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<PublishHistoryItem[]>([]);
+  const [restoringPageId, setRestoringPageId] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const isChatVisible = activePanel === "both";
@@ -151,11 +160,20 @@ export function WorkspaceToolbar() {
     () => validatePublishSnapshot(activePublishSnapshot),
     [activePublishSnapshot]
   );
+  const visibleHistory = useMemo(
+    () => history.slice(0, PUBLISH_HISTORY_VISIBLE_LIMIT),
+    [history]
+  );
 
   useEffect(() => {
     setTitleDraft(workspace?.title ?? "");
     setIsEditingTitle(false);
   }, [workspace?.id, workspace?.title]);
+
+  useEffect(() => {
+    setHistoryOpen(false);
+    setHistory([]);
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !canPublish) {
@@ -267,6 +285,9 @@ export function WorkspaceToolbar() {
     try {
       const result = await publishWorkspace(activeWorkspaceId, activePublishSnapshot);
       setPublication({ ...result, is_active: true });
+      if (historyOpen) {
+        refreshHistory().catch(() => toast.error(t("workspace.publish.toast.historyFailed")));
+      }
       toast.success(t("workspace.publish.toast.published"), {
         description: t("workspace.publish.toast.versionReady", { version: result.version }),
         action: {
@@ -300,13 +321,40 @@ export function WorkspaceToolbar() {
 
   const loadHistory = async () => {
     if (!activeWorkspaceId) return;
-    setHistoryOpen((value) => !value);
-    if (!historyOpen) {
-      try {
-        setHistory(await fetchPublishHistory(activeWorkspaceId));
-      } catch {
-        toast.error(t("workspace.publish.toast.historyFailed"));
+    const shouldOpen = !historyOpen;
+    setHistoryOpen(shouldOpen);
+    if (shouldOpen) {
+      refreshHistory().catch(() => toast.error(t("workspace.publish.toast.historyFailed")));
+    }
+  };
+
+  const refreshHistory = async () => {
+    if (!activeWorkspaceId) return;
+    setHistory(await fetchPublishHistory(activeWorkspaceId));
+  };
+
+  const handleRestorePublishedVersion = async (item: PublishHistoryItem) => {
+    if (!activeWorkspaceId || restoringPageId) return;
+    let restoredLocally = false;
+    setRestoringPageId(item.page_id);
+    try {
+      const published = await fetchPublishedVersionSnapshot(activeWorkspaceId, item.page_id);
+      const restoredSnapshot = buildWorkspaceSnapshotFromPublishedVersion({
+        workspaceId: activeWorkspaceId,
+        published,
+        baseSnapshot: getWorkspaceSnapshot(),
+      });
+      loadSnapshot(restoredSnapshot);
+      restoredLocally = true;
+      await saveWorkspaceSnapshot(restoredSnapshot);
+      toast.success(t("workspace.publish.toast.versionRestored", { version: item.version }));
+    } catch {
+      if (restoredLocally) {
+        setHasUnsavedChanges(true);
       }
+      toast.error(t("workspace.publish.toast.restoreFailed"));
+    } finally {
+      setRestoringPageId(null);
     }
   };
 
@@ -647,13 +695,52 @@ export function WorkspaceToolbar() {
           {history.length === 0 ? (
             <span className="text-[#777166]">{t("workspace.publish.noPublishedVersions")}</span>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {history.map((item) => (
-                <span key={item.page_id} className="rounded-md border border-[#d8d1c1] bg-white px-2 py-1">
-                  v{item.version} · {formatCanvasMode(item.canvas_format_id, t)} ·{" "}
-                  {new Date(item.published_at).toLocaleString()}
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                {visibleHistory.map((item) => {
+                  const modeLabel = formatCanvasMode(item.canvas_format_id, t);
+                  const restoring = restoringPageId === item.page_id;
+                  return (
+                    <Button
+                      key={item.page_id}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRestorePublishedVersion(item)}
+                      disabled={Boolean(restoringPageId)}
+                      aria-label={t("workspace.publish.restoreVersion", {
+                        version: item.version,
+                        mode: modeLabel,
+                      })}
+                      className="h-auto min-h-10 max-w-full justify-start gap-2 rounded-md border-[#d8d1c1] bg-white px-2 py-1 text-left hover:border-terracotta hover:bg-[#fff4ec]"
+                    >
+                      {restoring ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5 shrink-0 text-terracotta" />
+                      )}
+                      <span className="flex min-w-0 flex-col items-start">
+                        <span className="flex max-w-full items-center gap-1.5">
+                          <span className="font-medium text-near-black">v{item.version}</span>
+                          <span className="rounded border border-[#d8d1c1] bg-parchment px-1.5 py-0.5 text-xs text-[#6d6258]">
+                            {formatCanvasType(item.canvas_kind, t)}
+                          </span>
+                        </span>
+                        <span className="max-w-[280px] truncate text-xs font-normal text-[#555250]">
+                          {modeLabel} · {formatHistoryTimestamp(item.published_at)}
+                        </span>
+                      </span>
+                    </Button>
+                  );
+                })}
+              </div>
+              {history.length > visibleHistory.length && (
+                <span className="text-xs text-[#777166]">
+                  {t("workspace.publish.historyLimitNotice", {
+                    visible: visibleHistory.length,
+                    total: history.length,
+                  })}
                 </span>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -778,4 +865,19 @@ function formatCanvasMode(
     ? (formatId as WorkspaceCanvasFormatId)
     : "web-design";
   return t(getCanvasFormatPreset(id).labelKey);
+}
+
+function formatCanvasType(
+  kind: PublishHistoryItem["canvas_kind"] | undefined,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  if (kind === "free_layout") return t("workspace.publish.canvasType.freeLayout");
+  if (kind === "fixed_size") return t("workspace.publish.canvasType.fixedSize");
+  if (kind === "web_page") return t("workspace.publish.canvasType.webPage");
+  return t("workspace.publish.canvasType.unknown");
+}
+
+function formatHistoryTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }

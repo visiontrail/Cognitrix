@@ -33,6 +33,108 @@ function renderWithProviders(ui: React.ReactElement) {
   );
 }
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function stubWorkspaceNetwork() {
+  const history = [
+    {
+      page_id: "page-4",
+      version: 4,
+      published_at: "2026-06-26T09:04:00+00:00",
+      published_by: "alice",
+      canvas_format_id: "infinite",
+      canvas_kind: "free_layout",
+    },
+    {
+      page_id: "page-3",
+      version: 3,
+      published_at: "2026-06-26T09:03:00+00:00",
+      published_by: "alice",
+      canvas_format_id: "a4-portrait",
+      canvas_kind: "fixed_size",
+    },
+    {
+      page_id: "page-2",
+      version: 2,
+      published_at: "2026-06-26T09:02:00+00:00",
+      published_by: "alice",
+      canvas_format_id: "web-design",
+      canvas_kind: "web_page",
+    },
+    {
+      page_id: "page-1",
+      version: 1,
+      published_at: "2026-06-26T09:01:00+00:00",
+      published_by: "alice",
+      canvas_format_id: "infinite",
+      canvas_kind: "free_layout",
+    },
+  ];
+
+  const snapshot = {
+    page_id: "page-4",
+    version: 4,
+    published_at: "2026-06-26T09:04:00+00:00",
+    published_by: "alice",
+    canvas_format_id: "infinite",
+    canvas_kind: "free_layout",
+    manifest: {
+      schema_version: 2,
+      workspace_id: "ws-test",
+      version: 4,
+      published_at: "2026-06-26T09:04:00+00:00",
+      canvas: {
+        format_id: "infinite",
+        kind: "free_layout",
+        viewport: { x: 10, y: 20, zoom: 0.8 },
+      },
+      content: {
+        nodes: [
+          {
+            id: "restored-note",
+            type: "textNode",
+            position: { x: 40, y: 60 },
+            width: 240,
+            height: 120,
+            data: { type: "text", content: "Restored", width: 240, height: 120 },
+          },
+        ],
+        edges: [],
+      },
+      layout: { grid: { columns: 3, rows: [] }, zones: [] },
+      sidebar: [],
+      charts: [],
+    },
+    charts: [],
+  };
+
+  return vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/catalog")) {
+      return Promise.resolve(jsonResponse({ entries: [] }));
+    }
+    if (url.includes("/published/page-4/snapshot")) {
+      return Promise.resolve(jsonResponse(snapshot));
+    }
+    if (url.includes("/published")) {
+      return Promise.resolve(jsonResponse({ count: history.length, published_pages: history }));
+    }
+    if (url.includes("/canvas-snapshot") && method === "PUT") {
+      return Promise.resolve(jsonResponse({ ok: true }));
+    }
+    if (url.includes("/publish")) {
+      return Promise.resolve(jsonResponse({ is_active: false, canvas_kind: "free_layout" }));
+    }
+    return Promise.resolve(jsonResponse({}));
+  });
+}
+
 describe("WorkspaceToolbar", () => {
   beforeEach(() => {
     setInMemoryToken("test-token", Math.floor(Date.now() / 1000) + 3600);
@@ -133,5 +235,72 @@ describe("WorkspaceToolbar", () => {
 
     expect(screen.getByText("Export PNG")).toBeInTheDocument();
     expect(screen.queryByText("Print")).not.toBeInTheDocument();
+  });
+
+  it("shows only the latest three published history entries with canvas type labels", async () => {
+    vi.stubGlobal("fetch", stubWorkspaceNetwork());
+    useWorkspaceStore.setState({
+      workspaces: [
+        {
+          id: "ws-test",
+          title: "Original Canvas",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          nodeCount: 0,
+          role: "editor",
+        },
+      ],
+    });
+
+    renderWithProviders(<WorkspaceToolbar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+
+    expect(await screen.findByText("v4")).toBeInTheDocument();
+    expect(screen.getByText("v3")).toBeInTheDocument();
+    expect(screen.getByText("v2")).toBeInTheDocument();
+    expect(screen.queryByText("v1")).not.toBeInTheDocument();
+    expect(screen.getByText("Free canvas")).toBeInTheDocument();
+    expect(screen.getByText("Fixed page")).toBeInTheDocument();
+    expect(screen.getByText("Web page")).toBeInTheDocument();
+    expect(screen.getByText("Showing latest 3 of 4. Full history is retained.")).toBeInTheDocument();
+  });
+
+  it("restores the workspace to a clicked published history version", async () => {
+    const fetchMock = stubWorkspaceNetwork();
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceStore.setState({
+      workspaces: [
+        {
+          id: "ws-test",
+          title: "Original Canvas",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          nodeCount: 0,
+          role: "editor",
+        },
+      ],
+    });
+
+    renderWithProviders(<WorkspaceToolbar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Restore v4 · Infinite canvas" }));
+
+    await waitFor(() => {
+      const state = useWorkspaceStore.getState();
+      expect(state.canvasFormat.id).toBe("infinite");
+      expect(state.viewport).toEqual({ x: 10, y: 20, zoom: 0.8 });
+      expect(state.nodes[0]?.id).toBe("restored-note");
+      expect(state.hasUnsavedChanges).toBe(false);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/workspaces/ws-test/published/page-4/snapshot"),
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/workspaces/ws-test/canvas-snapshot"),
+      expect.objectContaining({ method: "PUT" })
+    );
   });
 });

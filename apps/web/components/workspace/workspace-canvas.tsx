@@ -18,6 +18,7 @@ import {
   type Node,
   type Edge,
   BackgroundVariant,
+  PanOnScrollMode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Layers, Trash2, Ungroup } from "lucide-react";
@@ -28,7 +29,13 @@ import {
   getCanvasFormatPreset,
   getCanvasPageCount,
   getCanvasPageRects,
+  getCanvasPageStride,
+  isBoundedCanvasFormat,
 } from "@/lib/workspace/canvas-formats";
+import {
+  composeCanvasBackgroundStyle,
+  resolveCanvasBackgroundPreset,
+} from "@/lib/workspace/canvas-backgrounds";
 import { ChartNode } from "./nodes/chart-node";
 import { TextNode } from "./nodes/text-node";
 import { StickyNoteNode } from "./nodes/sticky-note-node";
@@ -44,6 +51,11 @@ const nodeTypes: NodeTypes = {
   dividerNode: DividerNode,
   sectionNode: SectionNode,
 };
+
+// On paged (A4/A3/Letter/16:9) canvases the wheel scrolls the document like
+// Word/PowerPoint; zooming moves to the modifier key (⌘ on macOS, Ctrl on
+// Windows/Linux) plus wheel, matching those apps.
+const ZOOM_ACTIVATION_KEYS = ["Meta", "Control"];
 
 function normalizeWorkspaceNodes(nodes: WorkspaceNode[]): Node[] {
   return nodes.map((node) => {
@@ -62,11 +74,13 @@ export function WorkspaceCanvas() {
   const storeViewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
   const canvasPages = useWorkspaceStore((s) => s.canvasPages);
+  const canvasBackgrounds = useWorkspaceStore((s) => s.canvasBackgrounds);
   const setStoreNodes = useWorkspaceStore((s) => s.setNodes);
   const setViewport = useWorkspaceStore((s) => s.setViewport);
   const removeNodes = useWorkspaceStore((s) => s.removeNodes);
   const groupNodes = useWorkspaceStore((s) => s.groupNodes);
   const ungroupNodes = useWorkspaceStore((s) => s.ungroupNodes);
+  const deleteCanvasPage = useWorkspaceStore((s) => s.deleteCanvasPage);
 
   const [nodes, setNodes] = useNodesState(normalizeWorkspaceNodes(storeNodes));
   const [edges, setEdges] = useEdgesState(storeEdges as Edge[]);
@@ -76,6 +90,25 @@ export function WorkspaceCanvas() {
   const canvasPreset = getCanvasFormatPreset(canvasFormat.id);
   const pageCount = getCanvasPageCount(canvasFormat.id, canvasPages);
   const pageRects = getCanvasPageRects(canvasPreset, pageCount);
+  const isBoundedCanvas = isBoundedCanvasFormat(canvasPreset);
+
+  // The chosen backdrop paints the page surface on bounded canvases (paper /
+  // slide) and the full-bleed pane on the infinite canvas. On bounded canvases
+  // the surrounding "desk" keeps the neutral ReactFlow dot grid.
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
+
+  // Paper/slide canvases behave like a document: the wheel pans vertically and
+  // zoom is gated behind the modifier key. The infinite canvas keeps the
+  // default zoom-on-scroll behaviour.
+  const scrollPanProps = isBoundedCanvas
+    ? {
+        zoomOnScroll: false,
+        panOnScroll: true,
+        panOnScrollMode: PanOnScrollMode.Vertical,
+        zoomActivationKeyCode: ZOOM_ACTIVATION_KEYS,
+      }
+    : {};
 
   useEffect(() => {
     const nextNodes = normalizeWorkspaceNodes(storeNodes);
@@ -132,12 +165,34 @@ export function WorkspaceCanvas() {
     setSelectedNodes([]);
   }, [selectedNodeIds, ungroupNodes]);
 
+  const handleDeletePage = useCallback(
+    (pageIndex: number) => {
+      const stride = getCanvasPageStride(canvasPreset);
+      const top = pageIndex * stride;
+      const bottom = top + stride;
+      const hasContent = nodesRef.current.some((node) => {
+        if (node.parentId) return false;
+        const y = Number(node.position?.y ?? 0);
+        return y >= top && y < bottom;
+      });
+      if (
+        hasContent &&
+        typeof window !== "undefined" &&
+        !window.confirm(t("workspace.pages.deleteConfirm", { page: pageIndex + 1 }))
+      ) {
+        return;
+      }
+      deleteCanvasPage(pageIndex);
+    },
+    [canvasPreset, deleteCanvasPage, t]
+  );
+
   if (canvasFormat.id === "web-design") {
     return <WebDesignCanvas />;
   }
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full" style={isBoundedCanvas ? undefined : backgroundStyle}>
       {/* suppress ReactFlow selection outline for text nodes — editing panel provides its own indicator */}
       <style>{`.react-flow__node-textNode { outline: none !important; box-shadow: none !important; }`}</style>
       <ReactFlow
@@ -158,6 +213,7 @@ export function WorkspaceCanvas() {
         snapToGrid
         snapGrid={[10, 10]}
         proOptions={{ hideAttribution: true }}
+        {...scrollPanProps}
       >
         {selectedNodes.length > 1 && (
           <Panel position="top-center" className="canvas-export-ignore">
@@ -198,24 +254,31 @@ export function WorkspaceCanvas() {
             </div>
           </Panel>
         )}
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="#d1cfc5"
-        />
+        {/* Bounded canvases keep a neutral "desk" grid behind the pages; the
+            infinite canvas is painted full-bleed by the wrapper instead. */}
+        {isBoundedCanvas && (
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            color="#d1cfc5"
+          />
+        )}
         {pageRects.length > 0 && (
           <ViewportPortal>
             {pageRects.map((rect) => (
               <div
                 key={rect.index}
                 aria-hidden="true"
-                className="workspace-page-frame"
+                className={`workspace-page-frame${
+                  backgroundPreset.dark ? " workspace-page-frame--dark" : ""
+                }`}
                 style={{
                   left: rect.x,
                   top: rect.y,
                   width: rect.width,
                   height: rect.height,
+                  ...backgroundStyle,
                 }}
               >
                 {pageCount > 1 && (
@@ -228,6 +291,20 @@ export function WorkspaceCanvas() {
                 )}
               </div>
             ))}
+            {pageCount > 1 &&
+              pageRects.map((rect) => (
+                <button
+                  key={`delete-${rect.index}`}
+                  type="button"
+                  className="workspace-page-delete canvas-export-ignore nopan nodrag"
+                  style={{ left: rect.x + rect.width - 36, top: rect.y + 8 }}
+                  onClick={() => handleDeletePage(rect.index)}
+                  title={t("workspace.pages.delete")}
+                  aria-label={t("workspace.pages.delete")}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              ))}
           </ViewportPortal>
         )}
         <Controls

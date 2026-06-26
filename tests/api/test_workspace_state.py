@@ -92,6 +92,54 @@ def test_chat_session_and_messages_round_trip(monkeypatch, tmp_path: Path) -> No
         assert fetched[1]["chartAsset"] == {"assetId": "a1", "title": "Headcount", "chartType": "bar"}
 
 
+def test_replace_messages_tolerates_duplicate_client_ids(monkeypatch, tmp_path: Path) -> None:
+    """A payload with colliding client message ids must not 500 on the global PK.
+
+    Regression for `sqlite3.IntegrityError: UNIQUE constraint failed: chat_messages.id`
+    where the internal row id was derived from the (non-unique) client message id.
+    """
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="hr", clearance=5)
+        workspace_id = _create_workspace(client, headers)
+
+        client.put(
+            f"/workspaces/{workspace_id}/chat/sessions/sess-1",
+            headers=headers,
+            json={"title": "dup", "messageCount": 2},
+        )
+
+        # Two messages sharing the same client id, plus a missing-id message.
+        messages = [
+            {"id": "dup", "role": "user", "content": "a", "timestamp": "t1"},
+            {"id": "dup", "role": "assistant", "content": "b", "timestamp": "t2"},
+            {"role": "assistant", "content": "c", "timestamp": "t3"},
+        ]
+        put_msgs = client.put(
+            f"/workspaces/{workspace_id}/chat/sessions/sess-1/messages",
+            headers=headers,
+            json={"messages": messages},
+        )
+        assert put_msgs.status_code == 200, put_msgs.text
+        assert put_msgs.json()["count"] == 3
+
+        listed = client.get(
+            f"/workspaces/{workspace_id}/chat/sessions/sess-1/messages", headers=headers
+        )
+        fetched = listed.json()["messages"]
+        assert [m["content"] for m in fetched] == ["a", "b", "c"]
+
+        # Re-replacing the same session must also be idempotent (no global-PK collision).
+        again = client.put(
+            f"/workspaces/{workspace_id}/chat/sessions/sess-1/messages",
+            headers=headers,
+            json={"messages": messages},
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()["count"] == 3
+
+
 def test_chart_assets_round_trip(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 

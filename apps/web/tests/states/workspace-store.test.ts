@@ -128,6 +128,61 @@ describe("workspace store selection persistence", () => {
     expect(state.hasUnsavedChanges).toBe(true);
   });
 
+  it("deletes a middle page, dropping its nodes and sliding lower pages up", async () => {
+    vi.resetModules();
+    const { useWorkspaceStore } = await import("../../stores/workspace-store");
+    const { getCanvasFormatPreset, getCanvasPageStride } = await import(
+      "../../lib/workspace/canvas-formats"
+    );
+    const stride = getCanvasPageStride(getCanvasFormatPreset("a4-portrait"));
+
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      canvasFormat: { id: "a4-portrait" },
+      canvasPages: { "a4-portrait": 3 },
+      nodes: [
+        chartNode("page-0", 40, 80),
+        chartNode("page-1", 40, stride + 80),
+        chartNode("page-2", 40, stride * 2 + 80),
+      ],
+      edges: [],
+      hasUnsavedChanges: false,
+    });
+
+    useWorkspaceStore.getState().deleteCanvasPage(1);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.nodes.map((node) => node.id)).toEqual(["page-0", "page-2"]);
+    // page-0 stays put; page-2 slides up into the freed page-1 band.
+    expect(state.nodes.find((node) => node.id === "page-0")?.position).toEqual({ x: 40, y: 80 });
+    expect(state.nodes.find((node) => node.id === "page-2")?.position).toEqual({
+      x: 40,
+      y: stride + 80,
+    });
+    expect(state.canvasPages["a4-portrait"]).toBe(2);
+    expect(state.hasUnsavedChanges).toBe(true);
+  });
+
+  it("refuses to delete the final remaining page", async () => {
+    vi.resetModules();
+    const { useWorkspaceStore } = await import("../../stores/workspace-store");
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      canvasFormat: { id: "a4-portrait" },
+      canvasPages: { "a4-portrait": 1 },
+      nodes: [chartNode("only", 40, 80)],
+      edges: [],
+      hasUnsavedChanges: false,
+    });
+
+    useWorkspaceStore.getState().deleteCanvasPage(0);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.nodes.map((node) => node.id)).toEqual(["only"]);
+    expect(state.canvasPages["a4-portrait"]).toBe(1);
+    expect(state.hasUnsavedChanges).toBe(false);
+  });
+
   it("ungroups a section and restores child nodes to absolute canvas coordinates", async () => {
     vi.resetModules();
     const { useWorkspaceStore } = await import("../../stores/workspace-store");
@@ -156,6 +211,44 @@ describe("workspace store selection persistence", () => {
       position: { x: 260, y: 160 },
     });
     expect(useWorkspaceStore.getState().hasUnsavedChanges).toBe(true);
+  });
+
+  it("stores canvas backgrounds per format and round-trips them through a snapshot", async () => {
+    vi.resetModules();
+    const { useWorkspaceStore } = await import("../../stores/workspace-store");
+
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      canvasFormat: { id: "infinite" },
+      canvasBackgrounds: {},
+      nodes: [],
+      edges: [],
+      hasUnsavedChanges: false,
+    });
+
+    useWorkspaceStore.getState().setCanvasBackground("blueprint");
+    expect(useWorkspaceStore.getState().canvasBackgrounds.infinite).toBe("blueprint");
+    expect(useWorkspaceStore.getState().hasUnsavedChanges).toBe(true);
+
+    // Choice is scoped to the active format only.
+    useWorkspaceStore.getState().setCanvasFormat({ id: "a4-portrait" });
+    expect(useWorkspaceStore.getState().canvasBackgrounds["a4-portrait"]).toBeUndefined();
+    useWorkspaceStore.getState().setCanvasBackground("legal-pad");
+
+    const snapshot = useWorkspaceStore.getState().getSnapshot();
+    expect(snapshot?.canvasBackgrounds).toMatchObject({
+      infinite: "blueprint",
+      "a4-portrait": "legal-pad",
+    });
+
+    // Unknown ids are dropped on load so a removed preset falls back to default.
+    useWorkspaceStore.getState().loadSnapshot({
+      ...snapshot!,
+      canvasBackgrounds: { infinite: "blueprint", "a3-portrait": "not-a-real-id" },
+    });
+    const reloaded = useWorkspaceStore.getState().canvasBackgrounds;
+    expect(reloaded.infinite).toBe("blueprint");
+    expect(reloaded["a3-portrait"]).toBeUndefined();
   });
 });
 

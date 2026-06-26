@@ -230,7 +230,13 @@ class WorkspaceStateStore:
                 (session_id, workspace_id, user_id),
             )
             for seq, message in enumerate(messages):
-                message_id = str(message.get("id") or f"{session_id}-{seq}")
+                # The `id` column is a global PRIMARY KEY used only internally;
+                # the client's own message id is preserved verbatim in `payload`.
+                # Deriving the row id from session_id + seq keeps it unique within
+                # the just-cleared session *and* globally (session ids are unique),
+                # so a payload with duplicate/colliding client message ids can no
+                # longer trip a UNIQUE constraint failure.
+                message_id = f"{session_id}#{seq}"
                 conn.execute(
                     """
                     INSERT INTO chat_messages

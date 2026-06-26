@@ -4,10 +4,12 @@ import {
   MAX_CANVAS_PAGES,
   getCanvasFormatPreset,
   getCanvasPageCount,
+  getCanvasPageStride,
   getMaxOccupiedCanvasPage,
   isBoundedCanvasFormat,
   normalizeCanvasFormat,
 } from "@/lib/workspace/canvas-formats";
+import { getCanvasBackgroundPreset } from "@/lib/workspace/canvas-backgrounds";
 import {
   WORKSPACE_SELECTION_STORAGE_KEY,
   WORKSPACE_SNAPSHOT_STORAGE_KEY,
@@ -69,6 +71,7 @@ type WorkspaceState = {
   nodesByFormat: Partial<Record<WorkspaceCanvasFormatId, WorkspaceNode[]>>;
   edgesByFormat: Partial<Record<WorkspaceCanvasFormatId, WorkspaceEdge[]>>;
   canvasPages: Partial<Record<WorkspaceCanvasFormatId, number>>;
+  canvasBackgrounds: Partial<Record<WorkspaceCanvasFormatId, string>>;
   viewport: { x: number; y: number; zoom: number };
   canvasFormat: WorkspaceCanvasFormat;
   webDesign: WebDesignLayout;
@@ -90,8 +93,10 @@ type WorkspaceState = {
   ungroupNodes: (nodeIds: string[]) => void;
   setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
   setCanvasFormat: (canvasFormat: WorkspaceCanvasFormat) => void;
+  setCanvasBackground: (backgroundId: string) => void;
   addCanvasPage: () => void;
   removeCanvasPage: () => void;
+  deleteCanvasPage: (pageIndex: number) => void;
   setWebDesignColumns: (columns: number) => void;
   addWebDesignRow: () => void;
   removeWebDesignRow: (rowId: string) => void;
@@ -142,6 +147,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   nodesByFormat: {},
   edgesByFormat: {},
   canvasPages: {},
+  canvasBackgrounds: {},
   viewport: { x: 0, y: 0, zoom: 1 },
   canvasFormat: DEFAULT_CANVAS_FORMAT,
   webDesign: DEFAULT_WEB_DESIGN_LAYOUT,
@@ -210,6 +216,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       nodesByFormat: {},
       edgesByFormat: {},
       canvasPages: {},
+      canvasBackgrounds: {},
       viewport: { x: 0, y: 0, zoom: 1 },
       canvasFormat: DEFAULT_CANVAS_FORMAT,
       webDesign: DEFAULT_WEB_DESIGN_LAYOUT,
@@ -427,6 +434,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }),
 
+  setCanvasBackground: (backgroundId) =>
+    set((state) => {
+      if (state.canvasBackgrounds[state.canvasFormat.id] === backgroundId) {
+        return {};
+      }
+      return {
+        canvasBackgrounds: {
+          ...state.canvasBackgrounds,
+          [state.canvasFormat.id]: backgroundId,
+        },
+        hasUnsavedChanges: true,
+      };
+    }),
+
   addCanvasPage: () =>
     set((state) => {
       const preset = getCanvasFormatPreset(state.canvasFormat.id);
@@ -452,6 +473,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (next === current) return {};
       return {
         canvasPages: { ...state.canvasPages, [state.canvasFormat.id]: next },
+        hasUnsavedChanges: true,
+      };
+    }),
+
+  // Delete an arbitrary page (Word/PPT style): drop the nodes that sit on that
+  // page, slide every node below it up by one page, and decrement the count.
+  deleteCanvasPage: (pageIndex) =>
+    set((state) => {
+      const preset = getCanvasFormatPreset(state.canvasFormat.id);
+      if (!isBoundedCanvasFormat(preset)) return {};
+      const current = getCanvasPageCount(state.canvasFormat.id, state.canvasPages);
+      if (current <= 1) return {};
+      const index = Math.trunc(pageIndex);
+      if (!Number.isFinite(index) || index < 0 || index >= current) return {};
+
+      const stride = getCanvasPageStride(preset);
+      const pageTop = index * stride;
+      const pageBottom = pageTop + stride;
+
+      // Only top-level nodes carry absolute coordinates; grouped children move
+      // with their parent, so classify and shift by parent position alone.
+      const removeIds = state.nodes
+        .filter((node) => !node.parentId)
+        .filter((node) => {
+          const top = Number(node.position?.y ?? 0);
+          return top >= pageTop && top < pageBottom;
+        })
+        .map((node) => node.id);
+
+      const pruned = removeIds.length
+        ? removeNodesFromCanvas(state.nodes, state.edges, removeIds)
+        : { nodes: state.nodes, edges: state.edges };
+
+      const nextNodes = pruned.nodes.map((node) => {
+        if (node.parentId) return node;
+        const top = Number(node.position?.y ?? 0);
+        if (top >= pageBottom) {
+          return { ...node, position: { ...node.position, y: top - stride } };
+        }
+        return node;
+      });
+
+      return {
+        nodes: nextNodes,
+        edges: pruned.edges,
+        canvasPages: { ...state.canvasPages, [state.canvasFormat.id]: current - 1 },
         hasUnsavedChanges: true,
       };
     }),
@@ -794,6 +861,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         nodesByFormat,
         edgesByFormat,
         canvasPages: normalizeCanvasPages(snapshot.canvasPages),
+        canvasBackgrounds: normalizeCanvasBackgrounds(snapshot.canvasBackgrounds),
         viewport: snapshot.viewport,
         canvasFormat,
         webDesign: normalizeWebDesignLayout(snapshot.webDesign),
@@ -802,7 +870,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
 
   getSnapshot: () => {
-    const { activeWorkspaceId, nodes, edges, nodesByFormat, edgesByFormat, canvasPages, viewport, canvasFormat, webDesign } = get();
+    const { activeWorkspaceId, nodes, edges, nodesByFormat, edgesByFormat, canvasPages, canvasBackgrounds, viewport, canvasFormat, webDesign } = get();
     if (!activeWorkspaceId) return null;
 
     // Flush active format's nodes into the per-format maps before saving
@@ -822,6 +890,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       nodesByFormat: snapshotNodesByFormat,
       edgesByFormat: snapshotEdgesByFormat,
       canvasPages,
+      canvasBackgrounds,
       viewport,
       canvasFormat,
       webDesign,
@@ -845,6 +914,20 @@ function normalizeCanvasPages(
     if (Number.isFinite(count) && count >= 1) {
       result[key as WorkspaceCanvasFormatId] = clamp(count, 1, MAX_CANVAS_PAGES);
     }
+  }
+  return result;
+}
+
+function normalizeCanvasBackgrounds(
+  value: WorkspaceSnapshot["canvasBackgrounds"]
+): Partial<Record<WorkspaceCanvasFormatId, string>> {
+  if (!value || typeof value !== "object") return {};
+  const result: Partial<Record<WorkspaceCanvasFormatId, string>> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== "string") continue;
+    // Drop unknown ids so a removed/renamed preset falls back to the default.
+    if (getCanvasBackgroundPreset(raw).id !== raw) continue;
+    result[key as WorkspaceCanvasFormatId] = raw;
   }
   return result;
 }

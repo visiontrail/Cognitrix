@@ -127,19 +127,31 @@
   cursor: grabbing;
 }
 
+/* The page surface itself (color / grid / texture) is painted inline from the
+   selected canvas background preset; this rule owns only the frame chrome. */
 .workspace-page-frame {
   position: absolute;
   z-index: -1;
   pointer-events: none;
-  background:
-    linear-gradient(90deg, rgba(201, 100, 66, 0.08) 1px, transparent 1px),
-    linear-gradient(rgba(201, 100, 66, 0.08) 1px, transparent 1px),
-    #fffef9;
-  background-size: 40px 40px;
   border: 1px solid theme("colors.ring-warm");
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.85),
     0 18px 48px rgba(20, 20, 19, 0.12);
+}
+
+/* Dark backdrops: swap the bright inner ring for a soft hairline so the page
+   edge reads against deep tones. */
+.workspace-page-frame--dark {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 18px 48px rgba(0, 0, 0, 0.4);
+}
+
+.workspace-page-frame--dark .workspace-page-number {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(20, 20, 19, 0.55);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .workspace-page-number {
@@ -157,6 +169,41 @@
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Per-page delete affordance — sits in each page's top-right corner and floats
+   above node content so it stays clickable. */
+.workspace-page-delete {
+  position: absolute;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(201, 100, 66, 0.25);
+  background: rgba(255, 255, 255, 0.9);
+  color: #b4472b;
+  cursor: pointer;
+  opacity: 0.55;
+  box-shadow: 0 4px 12px rgba(20, 20, 19, 0.12);
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.workspace-page-delete:hover {
+  opacity: 1;
+  background: #c96442;
+  color: #fff;
+}
+
+.workspace-page-delete:focus-visible {
+  opacity: 1;
+  outline: 2px solid #c96442;
+  outline-offset: 2px;
 }
 
 /* ECharts container */

@@ -71,6 +71,7 @@ import {
   type PublishHistoryItem,
 } from "@/lib/workspace/publish";
 import { PublishPanel } from "@/components/workspace/publish-dialog";
+import { CanvasBackgroundPicker } from "@/components/workspace/canvas-background-picker";
 import type {
   DividerNodeData,
   StickyNoteNodeData,
@@ -607,6 +608,8 @@ export function WorkspaceToolbar() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {!isWebDesign && <CanvasBackgroundPicker />}
 
           {canPublish && (
             <>

@@ -30,6 +30,8 @@ export function AppShell() {
   const chatSidebarOpen = useUIStore((s) => s.chatSidebarOpen);
   const chatCanvasSplitRatio = useUIStore((s) => s.chatCanvasSplitRatio);
   const setChatCanvasSplitRatio = useUIStore((s) => s.setChatCanvasSplitRatio);
+  const catalogOverlayInWorkspace = useUIStore((s) => s.catalogOverlayInWorkspace);
+  const setCatalogOverlayInWorkspace = useUIStore((s) => s.setCatalogOverlayInWorkspace);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
@@ -246,7 +248,11 @@ export function AppShell() {
               activePanel === "both" ? "min-w-0 flex-1" : "flex-1"
             )}
           >
-            <WorkspacePanel />
+            {catalogOverlayInWorkspace ? (
+              <WorkspaceCatalogPage onClose={() => setCatalogOverlayInWorkspace(false)} />
+            ) : (
+              <WorkspacePanel />
+            )}
           </div>
         )}
       </div>

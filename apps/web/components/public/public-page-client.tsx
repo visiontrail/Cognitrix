@@ -7,11 +7,13 @@ import { PublicPageSidebar } from "@/components/public/public-page-sidebar";
 import { PublishedFixedCanvas, PublishedFreeCanvas } from "@/components/public/published-canvas-renderers";
 import {
   fetchPublicManifest,
+  PublicPageError,
   type PublicManifestResponse,
 } from "@/lib/public/api";
 import { useI18n } from "@/lib/i18n/context";
+import { Button } from "@/components/ui/button";
 
-type LoadState = "loading" | "ready" | "invalid";
+type LoadState = "loading" | "ready" | "invalid" | "auth_required" | "forbidden";
 
 export function PublicPageClient({ token }: { token: string }) {
   const { t } = useI18n();
@@ -42,8 +44,18 @@ export function PublicPageClient({ token }: { token: string }) {
         }
         setState("ready");
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return;
+        if (error instanceof PublicPageError) {
+          if (error.code === "authentication_required") {
+            setState("auth_required");
+            return;
+          }
+          if (error.code === "forbidden") {
+            setState("forbidden");
+            return;
+          }
+        }
         // Neutral failure: never reveal whether the link ever existed.
         setState("invalid");
       });
@@ -61,6 +73,28 @@ export function PublicPageClient({ token }: { token: string }) {
   }
 
   if (state === "invalid" || !page) {
+    if (state === "auth_required") {
+      const next = encodeURIComponent(`/p/${token}`);
+      return (
+        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center">
+          <p className="font-medium text-[#2f332f]">{t("public.loginRequiredTitle")}</p>
+          <p className="max-w-sm text-sm text-[#777166]">{t("public.loginRequiredDesc")}</p>
+          <Button asChild>
+            <a href={`/login?next=${next}`}>{t("public.loginAction")}</a>
+          </Button>
+        </div>
+      );
+    }
+
+    if (state === "forbidden") {
+      return (
+        <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#f7f4eb] text-center">
+          <p className="font-medium text-[#2f332f]">{t("public.forbiddenTitle")}</p>
+          <p className="max-w-sm text-sm text-[#777166]">{t("public.forbiddenDesc")}</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#f7f4eb] text-center">
         <p className="font-medium text-[#2f332f]">{t("public.invalidTitle")}</p>

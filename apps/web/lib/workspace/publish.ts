@@ -36,11 +36,28 @@ export type PublicationStatus = {
   is_active: boolean;
   canvas_format_id?: string;
   canvas_kind?: "free_layout" | "fixed_size" | "web_page";
+  visibility_mode?: PublishVisibilityMode;
+  visibility_user_ids?: string[];
+  visibility_user_count?: number;
 };
 
 export type PublicationState =
   | (PublicationStatus & { is_active: true })
   | { is_active: false };
+
+export type PublishVisibilityMode = "public" | "registered" | "allowlist";
+
+export type PublishVisibilityOptions = {
+  visibility_mode: PublishVisibilityMode;
+  visibility_user_ids?: string[];
+};
+
+export type PublishVisibilityUser = {
+  id: string;
+  email_masked: string;
+  display_name: string;
+  job_label: string;
+};
 
 /**
  * Resolve a browser-openable public URL for a published page.
@@ -66,6 +83,9 @@ export type PublishHistoryItem = {
   published_by: string;
   canvas_format_id?: string;
   canvas_kind?: "free_layout" | "fixed_size" | "web_page";
+  visibility_mode?: PublishVisibilityMode;
+  visibility_user_count?: number | null;
+  visibility_user_ids?: string[];
 };
 
 export type PublishedVersionChartData = {
@@ -218,16 +238,18 @@ function roundPosition(position: { x: number; y: number }): { x: number; y: numb
 
 export async function publishWorkspace(
   workspaceId: string,
-  snapshot: CanvasPublishSnapshot
+  snapshot: CanvasPublishSnapshot,
+  visibility: PublishVisibilityOptions = { visibility_mode: "public" }
 ): Promise<PublicationStatus> {
   const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const visibilityPayload = normalizePublishVisibility(visibility);
   const response = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/publish`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...headers,
     },
-    body: JSON.stringify(snapshot),
+    body: JSON.stringify({ ...snapshot, ...visibilityPayload }),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -237,6 +259,53 @@ export async function publishWorkspace(
     throw new Error(detail?.message || "Publish failed");
   }
   return payload as PublicationStatus;
+}
+
+export async function fetchUsersByIds(userIds: string[]): Promise<PublishVisibilityUser[]> {
+  const cleaned = Array.from(new Set(userIds.map((id) => id.trim()).filter(Boolean)));
+  if (cleaned.length === 0) return [];
+  const headers = await getAuthorizationHeader(API_BASE_URL, DEFAULT_AUTH_CONTEXT);
+  const response = await fetch(`${API_BASE_URL}/users/batch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify({ user_ids: cleaned }),
+  });
+  if (!response.ok) throw new Error("User lookup failed");
+  const payload = await response.json().catch(() => null);
+  const users = isRecord(payload) && Array.isArray(payload.users)
+    ? payload.users
+    : [];
+  return users.filter(isPublishVisibilityUser).map((user) => ({
+    id: user.id,
+    email_masked: user.email_masked,
+    display_name: user.display_name,
+    job_label: typeof user.job_label === "string" ? user.job_label : "",
+  }));
+}
+
+function normalizePublishVisibility(visibility: PublishVisibilityOptions): PublishVisibilityOptions {
+  const mode = visibility.visibility_mode;
+  if (mode !== "allowlist") {
+    return { visibility_mode: mode, visibility_user_ids: [] };
+  }
+  return {
+    visibility_mode: "allowlist",
+    visibility_user_ids: Array.from(
+      new Set((visibility.visibility_user_ids ?? []).map((id) => id.trim()).filter(Boolean))
+    ),
+  };
+}
+
+function isPublishVisibilityUser(value: unknown): value is PublishVisibilityUser {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.email_masked === "string" &&
+    typeof value.display_name === "string"
+  );
 }
 
 export async function fetchPublicationStatus(

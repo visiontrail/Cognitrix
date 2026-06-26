@@ -56,6 +56,6 @@ CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace
     ON workspace_invites(workspace_id, revoked_at);
 
 -- Extend published_pages with visibility columns
-ALTER TABLE published_pages ADD COLUMN visibility_mode TEXT NOT NULL DEFAULT 'private'
-    CHECK (visibility_mode IN ('private', 'registered', 'allowlist'));
+ALTER TABLE published_pages ADD COLUMN visibility_mode TEXT NOT NULL DEFAULT 'public'
+    CHECK (visibility_mode IN ('public', 'private', 'registered', 'allowlist'));
 ALTER TABLE published_pages ADD COLUMN visibility_user_ids TEXT;

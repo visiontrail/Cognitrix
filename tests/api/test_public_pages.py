@@ -25,6 +25,8 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("AGENT_MAX_SQL_ROWS", "5")
+    monkeypatch.setenv("AUTH_BOOTSTRAP_ADMIN_EMAIL", "")
+    monkeypatch.setenv("AUTH_BOOTSTRAP_ADMIN_PASSWORD", "")
     get_settings.cache_clear()
     clear_auth_cache()
     clear_audit_logger_cache()
@@ -35,6 +37,9 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     clear_view_storage_service_cache()
     clear_workspace_service_cache()
     clear_published_page_store_cache()
+    from apps.api.db_migrations import apply_migrations
+
+    apply_migrations()
 
 
 _PUBLISH_BODY = {
@@ -65,6 +70,21 @@ def _make_workspace(client: TestClient, headers) -> str:
     resp = client.post("/workspaces", json={"name": "Public Pages"}, headers=headers)
     resp.raise_for_status()
     return resp.json()["workspace_id"]
+
+
+def _register_user(client: TestClient, *, email: str, display_name: str) -> tuple[str, dict[str, str]]:
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": "password123",
+            "display_name": display_name,
+            "job_id": 1,
+        },
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload["user"]["id"], {"Authorization": f"Bearer {payload['access_token']}"}
 
 
 def test_publish_returns_public_link_and_status_and_revoke(monkeypatch, tmp_path: Path) -> None:
@@ -101,17 +121,18 @@ def test_publish_returns_public_link_and_status_and_revoke(monkeypatch, tmp_path
         assert client.get(f"/public/pages/{token}/manifest").status_code == 404
 
 
-def test_publish_ignores_visibility_payload(monkeypatch, tmp_path: Path) -> None:
+def test_publish_accepts_registered_visibility_payload(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
     with TestClient(app) as client:
         headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
         workspace_id = _make_workspace(client, headers)
 
-        body = {**_PUBLISH_BODY, "visibility_mode": "registered", "visibility_user_ids": ["x"]}
+        body = {**_PUBLISH_BODY, "visibility_mode": "registered", "visibility_user_ids": ["ignored"]}
         resp = client.post(f"/workspaces/{workspace_id}/publish", headers=headers, json=body)
         assert resp.status_code == 200
         payload = resp.json()
-        assert "visibility_mode" not in payload
+        assert payload["visibility_mode"] == "registered"
+        assert payload["visibility_user_ids"] == []
         assert payload["is_active"] is True
 
 
@@ -154,21 +175,125 @@ def test_unknown_token_returns_404(monkeypatch, tmp_path: Path) -> None:
         assert client.get("/public/pages/never-existed/charts/x/data").status_code == 404
 
 
-def test_publish_history_has_no_visibility_fields(monkeypatch, tmp_path: Path) -> None:
+def test_publish_history_includes_visibility_summary(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
     with TestClient(app) as client:
         headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
         workspace_id = _make_workspace(client, headers)
-        _publish(client, headers, workspace_id)
+        published = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={**_PUBLISH_BODY, "visibility_mode": "registered"},
+        )
+        published.raise_for_status()
 
         history = client.get(f"/workspaces/{workspace_id}/published", headers=headers)
         assert history.status_code == 200
         items = history.json()["published_pages"]
         assert len(items) == 1
         item = items[0]
-        # History carries page + canvas metadata but no visibility summary fields.
         assert {"page_id", "version", "published_at", "published_by"} <= set(item.keys())
-        assert not (
-            set(item.keys())
-            & {"visibility_mode", "visibility_user_count", "visibility_user_ids"}
+        assert item["visibility_mode"] == "registered"
+        assert item["visibility_user_count"] is None
+        assert item["visibility_user_ids"] == []
+
+
+def test_registered_publication_requires_real_registered_login(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        owner_id, owner_headers = _register_user(
+            client, email="owner@example.com", display_name="Owner"
         )
+        assert owner_id
+        workspace_id = _make_workspace(client, owner_headers)
+        publish = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=owner_headers,
+            json={**_PUBLISH_BODY, "visibility_mode": "registered"},
+        )
+        publish.raise_for_status()
+        token = publish.json()["token"]
+
+        client.cookies.clear()
+        assert client.get(f"/public/pages/{token}/manifest").status_code == 401
+
+        viewer_id, viewer_headers = _register_user(
+            client, email="viewer@example.com", display_name="Viewer"
+        )
+        assert viewer_id
+        registered = client.get(f"/public/pages/{token}/manifest", headers=viewer_headers)
+        assert registered.status_code == 200
+
+        legacy_headers = auth_headers(
+            client, user_id="legacy-only", project_id="north", role="viewer", clearance=1
+        )
+        legacy = client.get(f"/public/pages/{token}/manifest", headers=legacy_headers)
+        assert legacy.status_code == 401
+
+
+def test_allowlist_publication_is_limited_to_selected_registered_users(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        _, owner_headers = _register_user(client, email="owner@example.com", display_name="Owner")
+        allowed_id, allowed_headers = _register_user(
+            client, email="allowed@example.com", display_name="Allowed"
+        )
+        _, blocked_headers = _register_user(
+            client, email="blocked@example.com", display_name="Blocked"
+        )
+        workspace_id = _make_workspace(client, owner_headers)
+
+        publish = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=owner_headers,
+            json={
+                **_PUBLISH_BODY,
+                "visibility_mode": "allowlist",
+                "visibility_user_ids": [allowed_id],
+            },
+        )
+        publish.raise_for_status()
+        payload = publish.json()
+        token = payload["token"]
+        assert payload["visibility_mode"] == "allowlist"
+        assert payload["visibility_user_ids"] == [allowed_id]
+
+        client.cookies.clear()
+        assert client.get(f"/public/pages/{token}/manifest").status_code == 401
+        assert client.get(f"/public/pages/{token}/manifest", headers=allowed_headers).status_code == 200
+        assert client.get(
+            f"/public/pages/{token}/charts/chart-1/data",
+            headers=allowed_headers,
+        ).status_code == 200
+        assert client.get(f"/public/pages/{token}/manifest", headers=blocked_headers).status_code == 403
+
+
+def test_allowlist_publish_rejects_unknown_user_ids(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        _, owner_headers = _register_user(client, email="owner@example.com", display_name="Owner")
+        workspace_id = _make_workspace(client, owner_headers)
+
+        empty = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=owner_headers,
+            json={
+                **_PUBLISH_BODY,
+                "visibility_mode": "allowlist",
+                "visibility_user_ids": [],
+            },
+        )
+        assert empty.status_code == 422
+        assert empty.json()["detail"]["code"] == "PUBLISH_VISIBILITY_USERS_REQUIRED"
+
+        resp = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=owner_headers,
+            json={
+                **_PUBLISH_BODY,
+                "visibility_mode": "allowlist",
+                "visibility_user_ids": ["missing-user"],
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "PUBLISH_VISIBILITY_USERS_INVALID"

@@ -14,7 +14,7 @@ from threading import Lock
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .config import get_settings
 from .data_policy import forbidden_sensitive_columns, redact_rows
@@ -108,9 +108,15 @@ class PublishedViewport(BaseModel):
     zoom: float = 1
 
 
-# Legacy visibility modes retained only for read-compat with rows written before
-# the public-link migration. New publishes do not write visibility decisions.
-VISIBILITY_MODES = {"private", "registered", "allowlist"}
+# Published-link visibility. ``private`` is retained for read compatibility with
+# rows written before explicit visibility existed; new public-link publishes use
+# ``public`` unless the caller opts into a login-gated mode.
+VISIBILITY_PUBLIC = "public"
+VISIBILITY_REGISTERED = "registered"
+VISIBILITY_ALLOWLIST = "allowlist"
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_MODES = {VISIBILITY_PUBLIC, VISIBILITY_REGISTERED, VISIBILITY_ALLOWLIST, VISIBILITY_PRIVATE}
+MAX_VISIBILITY_USER_IDS = 100
 
 # Public token entropy: 32 url-safe bytes -> ~256 bits, well above the 128-bit floor.
 PUBLIC_TOKEN_BYTES = 32
@@ -134,6 +140,39 @@ class PublishWorkspaceRequest(BaseModel):
     layout: dict[str, Any] = Field(default_factory=dict)
     sidebar: list[dict[str, Any]] = Field(default_factory=list)
     charts: list[PublishedChartSnapshot] = Field(default_factory=list)
+    visibility_mode: str = VISIBILITY_PUBLIC
+    visibility_user_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("visibility_mode")
+    @classmethod
+    def validate_visibility_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized == VISIBILITY_PRIVATE:
+            normalized = VISIBILITY_PUBLIC
+        if normalized not in {VISIBILITY_PUBLIC, VISIBILITY_REGISTERED, VISIBILITY_ALLOWLIST}:
+            raise ValueError("visibility_mode must be public, registered, or allowlist")
+        return normalized
+
+    @field_validator("visibility_user_ids")
+    @classmethod
+    def validate_visibility_user_ids(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            user_id = str(raw).strip()
+            if not user_id or user_id in seen:
+                continue
+            cleaned.append(user_id)
+            seen.add(user_id)
+        if len(cleaned) > MAX_VISIBILITY_USER_IDS:
+            raise ValueError(f"At most {MAX_VISIBILITY_USER_IDS} visibility users are allowed")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_allowlist(self) -> "PublishWorkspaceRequest":
+        if self.visibility_mode != VISIBILITY_ALLOWLIST:
+            self.visibility_user_ids = []
+        return self
 
     def canvas_format_id(self) -> str:
         return self.canvas_format.id if self.canvas_format else CANVAS_FORMAT_WEB_DESIGN
@@ -151,11 +190,11 @@ class PublishedPage(BaseModel):
     published_at: str
     published_by: str
     manifest_path: str
-    visibility_mode: str = "private"
+    visibility_mode: str = VISIBILITY_PUBLIC
     visibility_user_ids: list[str] = Field(default_factory=list)
 
     def to_history_item(self) -> dict[str, Any]:
-        user_count = len(self.visibility_user_ids) if self.visibility_mode == "allowlist" else None
+        user_count = len(self.visibility_user_ids) if self.visibility_mode == VISIBILITY_ALLOWLIST else None
         return {
             "page_id": self.id,
             "version": self.version,
@@ -166,15 +205,17 @@ class PublishedPage(BaseModel):
             "canvas_kind": manifest_canvas_kind(self),
             "visibility_mode": self.visibility_mode,
             "visibility_user_count": user_count,
-            "visibility_user_ids": self.visibility_user_ids if self.visibility_mode == "allowlist" else [],
+            "visibility_user_ids": self.visibility_user_ids if self.visibility_mode == VISIBILITY_ALLOWLIST else [],
         }
 
     def is_visible_to(self, *, user_id: str, workspace_member_roles: set[str]) -> bool:
-        if self.visibility_mode == "registered":
+        if self.visibility_mode == VISIBILITY_PUBLIC:
             return True
-        if self.visibility_mode == "private":
+        if self.visibility_mode == VISIBILITY_REGISTERED:
+            return True
+        if self.visibility_mode == VISIBILITY_PRIVATE:
             return bool(workspace_member_roles & {"owner", "editor"})
-        if self.visibility_mode == "allowlist":
+        if self.visibility_mode == VISIBILITY_ALLOWLIST:
             if bool(workspace_member_roles & {"owner", "editor"}):
                 return True
             if user_id and any(uid == user_id for uid in self.visibility_user_ids):
@@ -395,7 +436,7 @@ class PublishedPageStore:
         published_by: str,
         manifest_path: Path,
         published_at: str | None = None,
-        visibility_mode: str = "private",
+        visibility_mode: str = VISIBILITY_PUBLIC,
         visibility_user_ids: list[str] | None = None,
     ) -> PublishedPage:
         normalized_workspace_id = workspace_id.strip()
@@ -412,10 +453,14 @@ class PublishedPageStore:
                 message="published_by is required",
                 status_code=401,
             )
+        normalized_visibility = _normalize_visibility_mode(visibility_mode)
+        normalized_visibility_user_ids = _normalize_visibility_user_ids(visibility_user_ids or [])
+        if normalized_visibility != VISIBILITY_ALLOWLIST:
+            normalized_visibility_user_ids = []
 
         page_id = uuid.uuid4().hex
         now = published_at or _utc_now()
-        vis_user_ids_json = json.dumps(visibility_user_ids or [])
+        vis_user_ids_json = json.dumps(normalized_visibility_user_ids)
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
@@ -431,7 +476,7 @@ class PublishedPageStore:
                     now,
                     normalized_publisher,
                     str(manifest_path),
-                    visibility_mode,
+                    normalized_visibility,
                     vis_user_ids_json,
                 ),
             )
@@ -444,8 +489,8 @@ class PublishedPageStore:
             published_at=now,
             published_by=normalized_publisher,
             manifest_path=str(manifest_path),
-            visibility_mode=visibility_mode,
-            visibility_user_ids=visibility_user_ids or [],
+            visibility_mode=normalized_visibility,
+            visibility_user_ids=normalized_visibility_user_ids,
         )
 
     def get(self, *, page_id: str) -> PublishedPage:
@@ -536,7 +581,11 @@ class PublishedPageStore:
         visibility_mode: str,
         visibility_user_ids: list[str],
     ) -> PublishedPage:
-        vis_user_ids_json = json.dumps(visibility_user_ids)
+        normalized_visibility = _normalize_visibility_mode(visibility_mode)
+        normalized_user_ids = _normalize_visibility_user_ids(visibility_user_ids)
+        if normalized_visibility != VISIBILITY_ALLOWLIST:
+            normalized_user_ids = []
+        vis_user_ids_json = json.dumps(normalized_user_ids)
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
@@ -544,7 +593,7 @@ class PublishedPageStore:
                 SET visibility_mode = ?, visibility_user_ids = ?
                 WHERE id = ?
                 """,
-                (visibility_mode, vis_user_ids_json, page_id),
+                (normalized_visibility, vis_user_ids_json, page_id),
             )
             conn.commit()
         return self.get(page_id=page_id)
@@ -742,10 +791,11 @@ class PublishedPageStore:
         with self._connect() as conn:
             conn.executescript(PUBLISHED_SCHEMA_PATH.read_text(encoding="utf-8"))
             conn.commit()
-            # Add legacy visibility columns (idempotent). Retained read-only for
-            # rollback compatibility; new publishes no longer write them.
+            # Add visibility columns (idempotent). Older published links used a
+            # "private" default even though token possession still made them
+            # public; serialization normalizes that legacy value to "public".
             for stmt in [
-                "ALTER TABLE published_pages ADD COLUMN visibility_mode TEXT NOT NULL DEFAULT 'private'",
+                "ALTER TABLE published_pages ADD COLUMN visibility_mode TEXT NOT NULL DEFAULT 'public'",
                 "ALTER TABLE published_pages ADD COLUMN visibility_user_ids TEXT",
             ]:
                 try:
@@ -873,6 +923,7 @@ class PublishedPageStore:
                 vis_ids = []
         except (json.JSONDecodeError, TypeError):
             vis_ids = []
+        visibility_mode = _normalize_visibility_mode(row["visibility_mode"])
         return PublishedPage(
             id=str(row["id"]),
             workspace_id=str(row["workspace_id"]),
@@ -880,8 +931,12 @@ class PublishedPageStore:
             published_at=str(row["published_at"]),
             published_by=str(row["published_by"]),
             manifest_path=str(row["manifest_path"]),
-            visibility_mode=str(row["visibility_mode"]) if row["visibility_mode"] else "private",
-            visibility_user_ids=[str(x) for x in vis_ids if x is not None],
+            visibility_mode=visibility_mode,
+            visibility_user_ids=(
+                _normalize_visibility_user_ids([str(x) for x in vis_ids if x is not None])
+                if visibility_mode == VISIBILITY_ALLOWLIST
+                else []
+            ),
         )
 
 
@@ -914,6 +969,29 @@ def clear_published_page_store_cache() -> None:
 def get_snapshot_writer() -> SnapshotWriter:
     settings = get_settings()
     return SnapshotWriter(upload_dir=settings.upload_dir, max_rows=settings.agent_max_sql_rows)
+
+
+def _normalize_visibility_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    # Published links were historically public even though the compatibility
+    # column defaulted to "private". Preserve that observed behavior.
+    if not mode or mode == VISIBILITY_PRIVATE:
+        return VISIBILITY_PUBLIC
+    return mode if mode in VISIBILITY_MODES else VISIBILITY_PUBLIC
+
+
+def _normalize_visibility_user_ids(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        user_id = str(raw).strip()
+        if not user_id or user_id in seen:
+            continue
+        normalized.append(user_id)
+        seen.add(user_id)
+        if len(normalized) >= MAX_VISIBILITY_USER_IDS:
+            break
+    return normalized
 
 
 def _normalize_canvas_kind(value: Any) -> str:

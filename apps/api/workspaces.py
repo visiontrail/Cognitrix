@@ -22,7 +22,10 @@ from .config import get_settings
 from .datasets import DuckDBSessionManager
 from .published_pages import (
     CANVAS_KIND_WEB_PAGE,
+    VISIBILITY_ALLOWLIST,
     PublishedPageError,
+    PublishedPage,
+    PublicPublication,
     PublishWorkspaceRequest,
     canvas_kind_for_format,
     get_published_page_store,
@@ -1303,6 +1306,66 @@ def _build_public_url_for_request(token: str, request: Request) -> str:
     return build_public_url(token, request_base_url=request_base)
 
 
+def _validate_publish_visibility_users(
+    service: WorkspaceService,
+    *,
+    visibility_mode: str,
+    user_ids: list[str],
+) -> list[str]:
+    if visibility_mode != VISIBILITY_ALLOWLIST:
+        return []
+    from .users import get_users_by_ids
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for user_id in user_ids:
+        normalized = user_id.strip()
+        if not normalized or normalized in seen:
+            continue
+        cleaned.append(normalized)
+        seen.add(normalized)
+    if not cleaned:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PUBLISH_VISIBILITY_USERS_REQUIRED",
+                "message": "Select at least one registered user for restricted publishing",
+            },
+        )
+
+    conn = service._connect()
+    try:
+        users = get_users_by_ids(conn, cleaned)
+    finally:
+        conn.close()
+    found = {str(user.get("id") or "") for user in users}
+    missing = [user_id for user_id in cleaned if user_id not in found]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PUBLISH_VISIBILITY_USERS_INVALID",
+                "message": "One or more selected users are not registered or active",
+                "user_ids": missing,
+            },
+        )
+    return cleaned
+
+
+def _publication_status_with_visibility(
+    publication: PublicPublication,
+    *,
+    page: PublishedPage | None,
+    public_url: str,
+) -> dict[str, object]:
+    status = publication.to_status(public_url=public_url)
+    if page is not None:
+        status["visibility_mode"] = page.visibility_mode
+        status["visibility_user_ids"] = page.visibility_user_ids
+        status["visibility_user_count"] = len(page.visibility_user_ids)
+    return status
+
+
 @router.post("/{workspace_id}/publish")
 async def publish_workspace(
     workspace_id: str,
@@ -1335,6 +1398,11 @@ async def publish_workspace(
     writer = get_snapshot_writer()
     version = store.next_version(workspace_id=workspace_id)
     published_at = _utc_now()
+    visibility_user_ids = _validate_publish_visibility_users(
+        service,
+        visibility_mode=request.visibility_mode,
+        user_ids=request.visibility_user_ids,
+    )
     try:
         snapshot = writer.write(
             workspace_id=workspace_id,
@@ -1358,6 +1426,8 @@ async def publish_workspace(
         published_by=identity.user_id,
         manifest_path=snapshot.manifest_path,
         published_at=published_at,
+        visibility_mode=request.visibility_mode,
+        visibility_user_ids=visibility_user_ids,
     )
     canvas_kind = snapshot.manifest.get("canvas", {}).get("kind", CANVAS_KIND_WEB_PAGE)
     publication = store.upsert_publication(
@@ -1368,7 +1438,7 @@ async def publish_workspace(
         published_at=published_at,
     )
     public_url = _build_public_url_for_request(publication.token, http_request)
-    status = publication.to_status(public_url=public_url)
+    status = _publication_status_with_visibility(publication, page=page, public_url=public_url)
     status["canvas_format_id"] = request.canvas_format_id()
     status["canvas_kind"] = canvas_kind
     return status
@@ -1407,6 +1477,9 @@ async def get_workspace_publication(
         page = get_published_page_store().get(page_id=publication.active_page_id)
         status["canvas_format_id"] = manifest_canvas_format_id(page)
         status["canvas_kind"] = manifest_canvas_kind(page)
+        status["visibility_mode"] = page.visibility_mode
+        status["visibility_user_ids"] = page.visibility_user_ids
+        status["visibility_user_count"] = len(page.visibility_user_ids)
     except Exception:
         pass
     return status
@@ -1453,17 +1526,7 @@ async def list_workspace_published_pages(
         raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
     pages = get_published_page_store().list_by_workspace(workspace_id=workspace_id)
-    history = [
-        {
-            "page_id": page.id,
-            "version": page.version,
-            "published_at": page.published_at,
-            "published_by": page.published_by,
-            "canvas_format_id": manifest_canvas_format_id(page),
-            "canvas_kind": manifest_canvas_kind(page),
-        }
-        for page in pages
-    ]
+    history = [page.to_history_item() for page in pages]
     return {
         "count": len(history),
         "published_pages": history,

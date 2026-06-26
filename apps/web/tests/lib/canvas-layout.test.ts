@@ -67,6 +67,37 @@ describe("findOpenCanvasPosition", () => {
     expect(position).toEqual({ x: 50, y: 50 });
   });
 
+  it("spills onto the next page once the first A4 page is full", () => {
+    const size = { width: 480, height: 220 };
+    const stride = 1123 + 48; // A4 height + CANVAS_PAGE_GAP
+    const placed: Node[] = [];
+    const positions: { x: number; y: number }[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const position = findOpenCanvasPosition(placed, size, "a4-portrait", 2);
+      positions.push(position);
+      placed.push(makeNode(position.x, position.y, size.width, size.height));
+    }
+
+    // Four 480×220 blocks fill page one; the fifth lands on page two.
+    for (let i = 0; i < 4; i += 1) {
+      expect(positions[i].y).toBeLessThan(stride);
+    }
+    expect(positions[4].y).toBeGreaterThanOrEqual(stride);
+    expect(positions[4].y + size.height).toBeLessThanOrEqual(stride + 1123);
+
+    // Nothing overlaps across either page.
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        expect(
+          overlaps(
+            { position: placed[i].position, width: size.width, height: size.height },
+            { position: placed[j].position, width: size.width, height: size.height }
+          )
+        ).toBe(false);
+      }
+    }
+  });
+
   it("keeps elements inside fixed-size (A4) page bounds", () => {
     // A4 portrait is 794×1123; place several text blocks and ensure all stay in bounds.
     const size = { width: 480, height: 220 };

@@ -1,6 +1,6 @@
 import type { Node } from "@xyflow/react";
 import type { WorkspaceCanvasFormatId, WorkspaceNode } from "@/types/workspace";
-import { getCanvasFormatPreset } from "./canvas-formats";
+import { getCanvasFormatPreset, getCanvasPageStride } from "./canvas-formats";
 
 export type CanvasPoint = { x: number; y: number };
 export type CanvasSize = { width: number; height: number };
@@ -71,13 +71,16 @@ function toCandidateRect(point: CanvasPoint, size: CanvasSize): Rect {
  *
  * The scan walks a grid sized to the new element (plus a gap), left-to-right then
  * top-to-bottom. On fixed-size canvases (A4/Letter/16:9) columns/rows are bounded
- * by the page; on the infinite canvas the grid uses a fixed column count and grows
- * downward. If no free slot is found we drop the element below everything else.
+ * by the page and the scan continues onto each subsequent page (pages are stacked
+ * vertically with `CANVAS_PAGE_GAP` between them); on the infinite canvas the grid
+ * uses a fixed column count and grows downward. If no free slot is found we drop
+ * the element below everything else.
  */
 export function findOpenCanvasPosition(
   nodes: Node[] | WorkspaceNode[],
   size: CanvasSize,
-  canvasFormatId: WorkspaceCanvasFormatId = "infinite"
+  canvasFormatId: WorkspaceCanvasFormatId = "infinite",
+  pageCount = 1
 ): CanvasPoint {
   const obstacles = (nodes as Node[])
     .filter((node) => !node.hidden)
@@ -89,37 +92,61 @@ export function findOpenCanvasPosition(
   const stepY = size.height + PLACEMENT_GAP;
 
   const bounded = preset.width != null && preset.height != null;
-  const startX = bounded ? FIXED_CANVAS_MARGIN : INFINITE_START.x;
-  const startY = bounded ? FIXED_CANVAS_MARGIN : INFINITE_START.y;
 
-  let columns = INFINITE_COLUMNS;
-  let maxRows = MAX_SCAN_ROWS;
-  if (bounded) {
-    const usableWidth = preset.width! - FIXED_CANVAS_MARGIN * 2;
-    const usableHeight = preset.height! - FIXED_CANVAS_MARGIN * 2;
-    columns = Math.max(1, Math.floor((usableWidth + PLACEMENT_GAP) / stepX));
-    maxRows = Math.max(1, Math.floor((usableHeight + PLACEMENT_GAP) / stepY));
-  }
-
-  if (obstacles.length === 0) {
-    return { x: startX, y: startY };
-  }
-
-  for (let row = 0; row < maxRows; row += 1) {
-    for (let col = 0; col < columns; col += 1) {
-      const candidate = { x: startX + col * stepX, y: startY + row * stepY };
-      if (bounded) {
-        // Keep the whole element inside the page bounds.
-        if (candidate.x + size.width > preset.width! - FIXED_CANVAS_MARGIN + PLACEMENT_GAP) continue;
-        if (candidate.y + size.height > preset.height! - FIXED_CANVAS_MARGIN + PLACEMENT_GAP) continue;
+  if (!bounded) {
+    if (obstacles.length === 0) {
+      return { x: INFINITE_START.x, y: INFINITE_START.y };
+    }
+    for (let row = 0; row < MAX_SCAN_ROWS; row += 1) {
+      for (let col = 0; col < INFINITE_COLUMNS; col += 1) {
+        const candidate = {
+          x: INFINITE_START.x + col * stepX,
+          y: INFINITE_START.y + row * stepY,
+        };
+        if (!collides(toCandidateRect(candidate, size), obstacles)) {
+          return candidate;
+        }
       }
-      if (!collides(toCandidateRect(candidate, size), obstacles)) {
-        return candidate;
+    }
+    const lowestBottom = obstacles.reduce(
+      (max, rect) => Math.max(max, rect.bottom),
+      INFINITE_START.y
+    );
+    return { x: INFINITE_START.x, y: lowestBottom + PLACEMENT_GAP };
+  }
+
+  const usableWidth = preset.width! - FIXED_CANVAS_MARGIN * 2;
+  const usableHeight = preset.height! - FIXED_CANVAS_MARGIN * 2;
+  const columns = Math.max(1, Math.floor((usableWidth + PLACEMENT_GAP) / stepX));
+  const maxRows = Math.max(1, Math.floor((usableHeight + PLACEMENT_GAP) / stepY));
+  const stride = getCanvasPageStride(preset);
+  const pages = Math.max(1, Math.trunc(pageCount));
+
+  // Fill page one first, then spill onto each subsequent page.
+  for (let page = 0; page < pages; page += 1) {
+    const pageTop = page * stride;
+    for (let row = 0; row < maxRows; row += 1) {
+      for (let col = 0; col < columns; col += 1) {
+        const candidate = {
+          x: FIXED_CANVAS_MARGIN + col * stepX,
+          y: pageTop + FIXED_CANVAS_MARGIN + row * stepY,
+        };
+        // Keep the whole element inside the current page's bounds.
+        if (candidate.x + size.width > preset.width! - FIXED_CANVAS_MARGIN + PLACEMENT_GAP) continue;
+        if (candidate.y + size.height > pageTop + preset.height! - FIXED_CANVAS_MARGIN + PLACEMENT_GAP) {
+          continue;
+        }
+        if (!collides(toCandidateRect(candidate, size), obstacles)) {
+          return candidate;
+        }
       }
     }
   }
 
   // Fallback: stack below the lowest existing element so it stays reachable.
-  const lowestBottom = obstacles.reduce((max, rect) => Math.max(max, rect.bottom), startY);
-  return { x: startX, y: lowestBottom + PLACEMENT_GAP };
+  const lowestBottom = obstacles.reduce(
+    (max, rect) => Math.max(max, rect.bottom),
+    FIXED_CANVAS_MARGIN
+  );
+  return { x: FIXED_CANVAS_MARGIN, y: lowestBottom + PLACEMENT_GAP };
 }

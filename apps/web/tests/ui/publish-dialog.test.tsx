@@ -3,13 +3,26 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublishPanel } from "../../components/workspace/publish-dialog";
-import type { PublicationState } from "../../lib/workspace/publish";
+import type { PublicationState, PublishVisibilityUser } from "../../lib/workspace/publish";
 
 const copyTextToClipboardMock = vi.fn<(text: string) => Promise<boolean>>();
+const fetchUsersByIdsMock = vi.hoisted(() =>
+  vi.fn<(userIds: string[]) => Promise<PublishVisibilityUser[]>>()
+);
 
 vi.mock("@/lib/clipboard", () => ({
   copyTextToClipboard: (text: string) => copyTextToClipboardMock(text),
 }));
+
+vi.mock("@/lib/workspace/publish", async () => {
+  const actual = await vi.importActual<typeof import("../../lib/workspace/publish")>(
+    "../../lib/workspace/publish"
+  );
+  return {
+    ...actual,
+    fetchUsersByIds: fetchUsersByIdsMock,
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -31,6 +44,7 @@ const EXPECTED_SUFFIX = "/p/tok-abc123";
 describe("PublishPanel dialog states", () => {
   beforeEach(() => {
     copyTextToClipboardMock.mockReset().mockResolvedValue(true);
+    fetchUsersByIdsMock.mockReset().mockResolvedValue([]);
   });
 
   it("shows the create-link action and no link when unpublished", () => {
@@ -93,18 +107,59 @@ describe("PublishPanel dialog states", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("renders no user-search or allowlist controls", () => {
-    const { container } = render(
-      <PublishPanel publication={ACTIVE_PUBLICATION} onPublish={vi.fn()} onCancel={vi.fn()} />
+  it("renders visibility controls and passes registered visibility to publish", () => {
+    const onPublish = vi.fn();
+    render(<PublishPanel publication={null} onPublish={onPublish} onCancel={vi.fn()} />);
+
+    expect(screen.getByTestId("publish-visibility-public")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("publish-visibility-registered"));
+    expect(screen.getByTestId("publish-visibility-registered")).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("publish-confirm"));
+    expect(onPublish).toHaveBeenCalledWith({
+      visibility_mode: "registered",
+      visibility_user_ids: [],
+    });
+  });
+
+  it("requires at least one selected user for allowlist publishing", () => {
+    const onPublish = vi.fn();
+    render(<PublishPanel publication={null} onPublish={onPublish} onCancel={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("publish-visibility-allowlist"));
+
+    expect(screen.getByTestId("publish-allowlist-controls")).toBeInTheDocument();
+    expect(screen.getByText("Select at least one registered user.")).toBeInTheDocument();
+    expect(screen.getByTestId("publish-confirm")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("publish-confirm"));
+    expect(onPublish).not.toHaveBeenCalled();
+  });
+
+  it("loads allowlisted users for an active restricted publication", async () => {
+    fetchUsersByIdsMock.mockResolvedValue([
+      {
+        id: "user-1",
+        display_name: "Ada Analyst",
+        email_masked: "ad***@example.com",
+        job_label: "Data Analyst",
+      },
+    ]);
+
+    render(
+      <PublishPanel
+        publication={{
+          ...ACTIVE_PUBLICATION,
+          visibility_mode: "allowlist",
+          visibility_user_ids: ["user-1"],
+          visibility_user_count: 1,
+        }}
+        onPublish={vi.fn()}
+        onCancel={vi.fn()}
+      />
     );
 
-    // The viewer/allowlist visibility model is gone: no search inputs, no
-    // allowlist user pickers, no visibility radio options.
-    expect(container.querySelector('input[type="search"]')).toBeNull();
-    expect(container.querySelector('input[type="radio"]')).toBeNull();
-    expect(screen.queryByText(/allowlist/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/visibility/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/registered users/i)).not.toBeInTheDocument();
+    expect(await screen.findByText("Ada Analyst")).toBeInTheDocument();
+    expect(fetchUsersByIdsMock).toHaveBeenCalledWith(["user-1"]);
   });
 
   it("treats a revoked publication as unpublished", () => {

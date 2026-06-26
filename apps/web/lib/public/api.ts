@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/lib/api-base";
+import { getInMemoryToken } from "@/lib/auth/session";
 
 // Public published-page types. These mirror the snapshot manifest written at
 // publish time and are fetched by public token without any auth headers.
@@ -152,23 +153,35 @@ export type PublicChartData = {
 
 export class PublicPageError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: "not_found" | "authentication_required" | "forbidden" | "error";
+  constructor(
+    message: string,
+    status: number,
+    code: "not_found" | "authentication_required" | "forbidden" | "error" = "error"
+  ) {
     super(message);
     this.name = "PublicPageError";
     this.status = status;
+    this.code = code;
   }
 }
 
 export async function fetchPublicManifest(token: string): Promise<PublicManifestResponse> {
   const response = await fetch(
     `${API_BASE_URL}/public/pages/${encodeURIComponent(token)}/manifest`,
-    { cache: "no-store" }
+    { cache: "no-store", credentials: "include", headers: publicAuthHeaders() }
   );
   if (response.status === 404) {
-    throw new PublicPageError("not_found", 404);
+    throw new PublicPageError("not_found", 404, "not_found");
+  }
+  if (response.status === 401) {
+    throw new PublicPageError("authentication_required", 401, "authentication_required");
+  }
+  if (response.status === 403) {
+    throw new PublicPageError("forbidden", 403, "forbidden");
   }
   if (!response.ok) {
-    throw new PublicPageError("error", response.status);
+    throw new PublicPageError("error", response.status, "error");
   }
   return response.json();
 }
@@ -179,13 +192,24 @@ export async function fetchPublicChartData(
 ): Promise<PublicChartData> {
   const response = await fetch(
     `${API_BASE_URL}/public/pages/${encodeURIComponent(token)}/charts/${encodeURIComponent(chartId)}/data`,
-    { cache: "no-store" }
+    { cache: "no-store", credentials: "include", headers: publicAuthHeaders() }
   );
   if (response.status === 404) {
-    throw new PublicPageError("not_found", 404);
+    throw new PublicPageError("not_found", 404, "not_found");
+  }
+  if (response.status === 401) {
+    throw new PublicPageError("authentication_required", 401, "authentication_required");
+  }
+  if (response.status === 403) {
+    throw new PublicPageError("forbidden", 403, "forbidden");
   }
   if (!response.ok) {
-    throw new PublicPageError("error", response.status);
+    throw new PublicPageError("error", response.status, "error");
   }
   return response.json();
+}
+
+function publicAuthHeaders(): Record<string, string> | undefined {
+  const token = getInMemoryToken();
+  return token ? { Authorization: `Bearer ${token}` } : undefined;
 }

@@ -24,7 +24,11 @@ import { Layers, Trash2, Ungroup } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import {
+  getCanvasFormatPreset,
+  getCanvasPageCount,
+  getCanvasPageRects,
+} from "@/lib/workspace/canvas-formats";
 import { ChartNode } from "./nodes/chart-node";
 import { TextNode } from "./nodes/text-node";
 import { StickyNoteNode } from "./nodes/sticky-note-node";
@@ -57,6 +61,7 @@ export function WorkspaceCanvas() {
   const storeEdges = useWorkspaceStore((s) => s.edges);
   const storeViewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const canvasPages = useWorkspaceStore((s) => s.canvasPages);
   const setStoreNodes = useWorkspaceStore((s) => s.setNodes);
   const setViewport = useWorkspaceStore((s) => s.setViewport);
   const removeNodes = useWorkspaceStore((s) => s.removeNodes);
@@ -69,6 +74,8 @@ export function WorkspaceCanvas() {
   const nodesRef = useRef<Node[]>(normalizeWorkspaceNodes(storeNodes));
 
   const canvasPreset = getCanvasFormatPreset(canvasFormat.id);
+  const pageCount = getCanvasPageCount(canvasFormat.id, canvasPages);
+  const pageRects = getCanvasPageRects(canvasPreset, pageCount);
 
   useEffect(() => {
     const nextNodes = normalizeWorkspaceNodes(storeNodes);
@@ -197,18 +204,30 @@ export function WorkspaceCanvas() {
           size={1}
           color="#d1cfc5"
         />
-        {canvasPreset.width && canvasPreset.height && (
+        {pageRects.length > 0 && (
           <ViewportPortal>
-            <div
-              aria-hidden="true"
-              className="workspace-page-frame"
-              style={{
-                left: 0,
-                top: 0,
-                width: canvasPreset.width,
-                height: canvasPreset.height,
-              }}
-            />
+            {pageRects.map((rect) => (
+              <div
+                key={rect.index}
+                aria-hidden="true"
+                className="workspace-page-frame"
+                style={{
+                  left: rect.x,
+                  top: rect.y,
+                  width: rect.width,
+                  height: rect.height,
+                }}
+              >
+                {pageCount > 1 && (
+                  <span className="workspace-page-number canvas-export-ignore">
+                    {t("workspace.page.indicator", {
+                      current: rect.index + 1,
+                      total: pageCount,
+                    })}
+                  </span>
+                )}
+              </div>
+            ))}
           </ViewportPortal>
         )}
         <Controls

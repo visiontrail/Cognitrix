@@ -223,7 +223,8 @@ describe("WorkspaceToolbar", () => {
     });
     expect(canvasExport.printFixedCanvas).toHaveBeenCalledWith(
       expect.objectContaining({ id: "a4-portrait", printable: true }),
-      "Original Canvas"
+      "Original Canvas",
+      1
     );
   });
 
@@ -235,6 +236,36 @@ describe("WorkspaceToolbar", () => {
 
     expect(screen.getByText("Export PNG")).toBeInTheDocument();
     expect(screen.queryByText("Print")).not.toBeInTheDocument();
+  });
+
+  it("labels the PDF export as a slide deck for 16:9 canvases", async () => {
+    useWorkspaceStore.setState({ canvasFormat: { id: "wide-16-9" } });
+    renderWithProviders(<WorkspaceToolbar />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    expect(screen.getByText("Export slides PDF")).toBeInTheDocument();
+    expect(screen.queryByText("Export PDF")).not.toBeInTheDocument();
+  });
+
+  it("adds a page to a fixed canvas and surfaces the page count", async () => {
+    useWorkspaceStore.setState({ canvasFormat: { id: "a4-portrait" }, canvasPages: {} });
+    renderWithProviders(<WorkspaceToolbar />);
+
+    expect(screen.getByText("1 pages")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add page" }));
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().canvasPages["a4-portrait"]).toBe(2);
+    });
+    expect(screen.getByText("2 pages")).toBeInTheDocument();
+  });
+
+  it("hides page controls on the infinite canvas", () => {
+    useWorkspaceStore.setState({ canvasFormat: DEFAULT_CANVAS_FORMAT, canvasPages: {} });
+    renderWithProviders(<WorkspaceToolbar />);
+
+    expect(screen.queryByRole("button", { name: "Add page" })).not.toBeInTheDocument();
   });
 
   it("shows only the latest three published history entries with canvas type labels", async () => {

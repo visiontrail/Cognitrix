@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublicPageClient } from "../../components/public/public-page-client";
-import { fetchPublicManifest } from "../../lib/public/api";
+import { fetchPublicManifest, PublicPageError } from "../../lib/public/api";
 
 vi.mock("@/lib/public/api", async () => {
   const actual = await vi.importActual<typeof import("../../lib/public/api")>("../../lib/public/api");
@@ -108,5 +108,30 @@ describe("PublicPageClient", () => {
     expect(await screen.findByText("Link unavailable")).toBeInTheDocument();
     expect(screen.queryByTestId("published-free-canvas")).not.toBeInTheDocument();
     expect(screen.queryByTestId("published-fixed-canvas")).not.toBeInTheDocument();
+  });
+
+  it("prompts for login when a restricted published page requires authentication", async () => {
+    fetchPublicManifestMock.mockRejectedValue(
+      new PublicPageError("authentication_required", 401, "authentication_required")
+    );
+
+    render(<PublicPageClient token="restricted-token" />);
+
+    expect(await screen.findByText("Login required")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Login to view" })).toHaveAttribute(
+      "href",
+      "/login?next=%2Fp%2Frestricted-token"
+    );
+  });
+
+  it("shows a no-access state when the logged-in user is not allowed", async () => {
+    fetchPublicManifestMock.mockRejectedValue(
+      new PublicPageError("forbidden", 403, "forbidden")
+    );
+
+    render(<PublicPageClient token="restricted-token" />);
+
+    expect(await screen.findByText("No access")).toBeInTheDocument();
+    expect(screen.queryByText("Link unavailable")).not.toBeInTheDocument();
   });
 });

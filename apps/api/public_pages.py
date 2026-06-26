@@ -1,8 +1,8 @@
-"""Unauthenticated public read routes for published workspace pages.
+"""Public read routes for published workspace pages.
 
-Access is granted solely by possession of a high-entropy public token. These
-routes never depend on bearer tokens, cookies, ``get_current_identity``,
-workspace membership, or ``X-App-Mode``. Unknown, inactive, revoked, or
+Public pages are resolved by high-entropy token. Pages published to all users
+remain anonymously readable; login-gated modes require a bearer/cookie session
+that belongs to an active registered user. Unknown, inactive, revoked, or
 missing-snapshot tokens all return an undifferentiated HTTP 404.
 """
 
@@ -13,10 +13,14 @@ from collections import defaultdict
 from threading import Lock
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from .auth import AuthIdentity, get_optional_identity
 from .published_pages import (
     PublishedPageError,
+    VISIBILITY_ALLOWLIST,
+    VISIBILITY_PUBLIC,
+    VISIBILITY_REGISTERED,
     get_published_page_store,
     read_chart_data,
     read_manifest,
@@ -36,6 +40,16 @@ _NO_STORE_HEADERS = {"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache
 _NOT_FOUND = HTTPException(
     status_code=404,
     detail={"code": "not_found", "message": "Not found"},
+)
+_AUTH_REQUIRED = HTTPException(
+    status_code=401,
+    headers=_NO_STORE_HEADERS,
+    detail={"code": "authentication_required", "message": "Login is required to view this page"},
+)
+_FORBIDDEN = HTTPException(
+    status_code=403,
+    headers=_NO_STORE_HEADERS,
+    detail={"code": "published_page_forbidden", "message": "You do not have access to this page"},
 )
 
 
@@ -79,10 +93,70 @@ def _resolve_page(token: str) -> Any:
         raise _NOT_FOUND from exc
 
 
+def _registered_user_id(identity: AuthIdentity | None) -> str:
+    if identity is None:
+        return ""
+
+    from .users import get_user_by_id
+    from .workspaces import get_workspace_service
+
+    service = get_workspace_service()
+    conn = service._connect()
+    try:
+        user = get_user_by_id(conn, identity.user_id)
+    finally:
+        conn.close()
+    if user is None or user.status != "active":
+        return ""
+    return user.id
+
+
+def _workspace_member_roles(*, workspace_id: str, user_id: str) -> set[str]:
+    if not user_id:
+        return set()
+    from .workspaces import WorkspaceError, get_workspace_service
+
+    try:
+        role = get_workspace_service().assert_workspace_access(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError:
+        return set()
+    return {role}
+
+
+def _authorize_page(page: Any, identity: AuthIdentity | None) -> None:
+    visibility_mode = str(getattr(page, "visibility_mode", VISIBILITY_PUBLIC) or VISIBILITY_PUBLIC)
+    if visibility_mode == VISIBILITY_PUBLIC:
+        return
+
+    user_id = _registered_user_id(identity)
+    if not user_id:
+        raise _AUTH_REQUIRED
+
+    roles = _workspace_member_roles(workspace_id=str(page.workspace_id), user_id=user_id)
+    if visibility_mode == VISIBILITY_REGISTERED:
+        return
+    if visibility_mode == VISIBILITY_ALLOWLIST and page.is_visible_to(
+        user_id=user_id,
+        workspace_member_roles=roles,
+    ):
+        return
+    raise _FORBIDDEN
+
+
 @router.get("/pages/{token}/manifest")
-async def get_public_manifest(token: str, request: Request, response: Response) -> dict[str, Any]:
+async def get_public_manifest(
+    token: str,
+    request: Request,
+    response: Response,
+    identity: AuthIdentity | None = Depends(get_optional_identity),
+) -> dict[str, Any]:
     _enforce_rate_limit(request)
     page = _resolve_page(token)
+    _authorize_page(page, identity)
     try:
         manifest = read_manifest(page)
     except PublishedPageError as exc:
@@ -101,9 +175,11 @@ async def get_public_chart_data(
     chart_id: str,
     request: Request,
     response: Response,
+    identity: AuthIdentity | None = Depends(get_optional_identity),
 ) -> dict[str, Any]:
     _enforce_rate_limit(request)
     page = _resolve_page(token)
+    _authorize_page(page, identity)
     try:
         payload = read_chart_data(page, chart_id=chart_id)
     except PublishedPageError as exc:

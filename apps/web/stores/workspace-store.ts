@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import {
   DEFAULT_CANVAS_FORMAT,
+  MAX_CANVAS_PAGES,
+  getCanvasFormatPreset,
+  getCanvasPageCount,
+  getMaxOccupiedCanvasPage,
+  isBoundedCanvasFormat,
   normalizeCanvasFormat,
 } from "@/lib/workspace/canvas-formats";
 import {
@@ -63,6 +68,7 @@ type WorkspaceState = {
   edges: WorkspaceEdge[];
   nodesByFormat: Partial<Record<WorkspaceCanvasFormatId, WorkspaceNode[]>>;
   edgesByFormat: Partial<Record<WorkspaceCanvasFormatId, WorkspaceEdge[]>>;
+  canvasPages: Partial<Record<WorkspaceCanvasFormatId, number>>;
   viewport: { x: number; y: number; zoom: number };
   canvasFormat: WorkspaceCanvasFormat;
   webDesign: WebDesignLayout;
@@ -84,6 +90,8 @@ type WorkspaceState = {
   ungroupNodes: (nodeIds: string[]) => void;
   setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
   setCanvasFormat: (canvasFormat: WorkspaceCanvasFormat) => void;
+  addCanvasPage: () => void;
+  removeCanvasPage: () => void;
   setWebDesignColumns: (columns: number) => void;
   addWebDesignRow: () => void;
   removeWebDesignRow: (rowId: string) => void;
@@ -133,6 +141,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   edges: [],
   nodesByFormat: {},
   edgesByFormat: {},
+  canvasPages: {},
   viewport: { x: 0, y: 0, zoom: 1 },
   canvasFormat: DEFAULT_CANVAS_FORMAT,
   webDesign: DEFAULT_WEB_DESIGN_LAYOUT,
@@ -200,6 +209,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       edges: [],
       nodesByFormat: {},
       edgesByFormat: {},
+      canvasPages: {},
       viewport: { x: 0, y: 0, zoom: 1 },
       canvasFormat: DEFAULT_CANVAS_FORMAT,
       webDesign: DEFAULT_WEB_DESIGN_LAYOUT,
@@ -413,6 +423,35 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         edges: edgesByFormat[nextCanvasFormat.id] ?? [],
         nodesByFormat,
         edgesByFormat,
+        hasUnsavedChanges: true,
+      };
+    }),
+
+  addCanvasPage: () =>
+    set((state) => {
+      const preset = getCanvasFormatPreset(state.canvasFormat.id);
+      if (!isBoundedCanvasFormat(preset)) return {};
+      const current = getCanvasPageCount(state.canvasFormat.id, state.canvasPages);
+      const next = Math.min(MAX_CANVAS_PAGES, current + 1);
+      if (next === current) return {};
+      return {
+        canvasPages: { ...state.canvasPages, [state.canvasFormat.id]: next },
+        hasUnsavedChanges: true,
+      };
+    }),
+
+  removeCanvasPage: () =>
+    set((state) => {
+      const preset = getCanvasFormatPreset(state.canvasFormat.id);
+      if (!isBoundedCanvasFormat(preset)) return {};
+      const current = getCanvasPageCount(state.canvasFormat.id, state.canvasPages);
+      // Never drop a page that still holds content, so removal can't orphan nodes
+      // beyond the visible canvas.
+      const minPages = Math.max(1, getMaxOccupiedCanvasPage(state.nodes, preset) + 1);
+      const next = Math.max(minPages, current - 1);
+      if (next === current) return {};
+      return {
+        canvasPages: { ...state.canvasPages, [state.canvasFormat.id]: next },
         hasUnsavedChanges: true,
       };
     }),
@@ -754,6 +793,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         edges: edgesByFormat[canvasFormat.id] ?? [],
         nodesByFormat,
         edgesByFormat,
+        canvasPages: normalizeCanvasPages(snapshot.canvasPages),
         viewport: snapshot.viewport,
         canvasFormat,
         webDesign: normalizeWebDesignLayout(snapshot.webDesign),
@@ -762,7 +802,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
 
   getSnapshot: () => {
-    const { activeWorkspaceId, nodes, edges, nodesByFormat, edgesByFormat, viewport, canvasFormat, webDesign } = get();
+    const { activeWorkspaceId, nodes, edges, nodesByFormat, edgesByFormat, canvasPages, viewport, canvasFormat, webDesign } = get();
     if (!activeWorkspaceId) return null;
 
     // Flush active format's nodes into the per-format maps before saving
@@ -781,6 +821,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       edges,
       nodesByFormat: snapshotNodesByFormat,
       edgesByFormat: snapshotEdgesByFormat,
+      canvasPages,
       viewport,
       canvasFormat,
       webDesign,
@@ -792,6 +833,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function normalizeCanvasPages(
+  value: WorkspaceSnapshot["canvasPages"]
+): Partial<Record<WorkspaceCanvasFormatId, number>> {
+  if (!value || typeof value !== "object") return {};
+  const result: Partial<Record<WorkspaceCanvasFormatId, number>> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const count = Number(raw);
+    if (Number.isFinite(count) && count >= 1) {
+      result[key as WorkspaceCanvasFormatId] = clamp(count, 1, MAX_CANVAS_PAGES);
+    }
+  }
+  return result;
 }
 
 function roundPosition(position: { x: number; y: number }): { x: number; y: number } {

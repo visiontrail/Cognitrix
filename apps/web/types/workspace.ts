@@ -85,6 +85,8 @@ export type WorkspaceSnapshot = {
   edges?: WorkspaceEdge[];
   nodesByFormat?: Partial<Record<WorkspaceCanvasFormatId, WorkspaceNode[]>>;
   edgesByFormat?: Partial<Record<WorkspaceCanvasFormatId, WorkspaceEdge[]>>;
+  /** Per-format page count for paginated fixed canvases (A4/A3/Letter/16:9). */
+  canvasPages?: Partial<Record<WorkspaceCanvasFormatId, number>>;
   viewport: { x: number; y: number; zoom: number };
   canvasFormat?: WorkspaceCanvasFormat;
   webDesign?: WebDesignLayout;

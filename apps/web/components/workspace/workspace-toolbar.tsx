@@ -13,9 +13,11 @@ import {
   MessageSquare,
   Heading1,
   Heading2,
+  Files,
   Minus,
   NotebookPen,
   Pencil,
+  Plus,
   Printer,
   RotateCcw,
   Send,
@@ -39,7 +41,14 @@ import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
 import { toast } from "sonner";
 import { saveWorkspaceSnapshot } from "@/lib/workspace/api";
-import { CANVAS_FORMAT_PRESETS, getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import {
+  CANVAS_FORMAT_PRESETS,
+  MAX_CANVAS_PAGES,
+  getCanvasFormatPreset,
+  getCanvasPageCount,
+  getMaxOccupiedCanvasPage,
+  isBoundedCanvasFormat,
+} from "@/lib/workspace/canvas-formats";
 import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import {
   exportInfiniteCanvasToPng,
@@ -58,6 +67,7 @@ import {
   resolvePublicUrl,
   type CanvasPublishSnapshot,
   type PublicationState,
+  type PublishVisibilityOptions,
   type PublishHistoryItem,
 } from "@/lib/workspace/publish";
 import { PublishPanel } from "@/components/workspace/publish-dialog";
@@ -124,14 +134,18 @@ export function WorkspaceToolbar() {
   const edges = useWorkspaceStore((s) => s.edges);
   const viewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const canvasPages = useWorkspaceStore((s) => s.canvasPages);
   const webDesign = useWorkspaceStore((s) => s.webDesign);
   const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
+  const addCanvasPage = useWorkspaceStore((s) => s.addCanvasPage);
+  const removeCanvasPage = useWorkspaceStore((s) => s.removeCanvasPage);
   const loadSnapshot = useWorkspaceStore((s) => s.loadSnapshot);
   const getWorkspaceSnapshot = useWorkspaceStore((s) => s.getSnapshot);
   const setHasUnsavedChanges = useWorkspaceStore((s) => s.setHasUnsavedChanges);
   const activePanel = useUIStore((s) => s.activePanel);
   const isSaving = useUIStore((s) => s.isSaving);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
+  const setCatalogOverlayInWorkspace = useUIStore((s) => s.setCatalogOverlayInWorkspace);
   const renameWorkspace = useRenameWorkspace();
   const catalogQuery = useWorkspaceCatalog(activeWorkspaceId);
   const tableCount = (catalogQuery.data ?? []).length;
@@ -151,6 +165,12 @@ export function WorkspaceToolbar() {
 
   const workspace = workspaces.find((w) => w.id === activeWorkspaceId);
   const activeCanvasPreset = getCanvasFormatPreset(canvasFormat.id);
+  const isBoundedCanvas = isBoundedCanvasFormat(activeCanvasPreset);
+  const pageCount = getCanvasPageCount(canvasFormat.id, canvasPages);
+  const maxOccupiedPage = getMaxOccupiedCanvasPage(nodes, activeCanvasPreset);
+  const canAddPage = isBoundedCanvas && pageCount < MAX_CANVAS_PAGES;
+  const canRemovePage = isBoundedCanvas && pageCount > 1 && pageCount - 1 > maxOccupiedPage;
+  const isSlideCanvas = activeCanvasPreset.printStyle === "slide";
   const canPublish = workspace?.role === "owner" || workspace?.role === "editor";
   const activePublishSnapshot = useMemo(
     () => buildActiveCanvasPublishPayload({ canvasFormat, viewport, nodes, edges, webDesign }),
@@ -239,7 +259,7 @@ export function WorkspaceToolbar() {
       if (isInfinite) {
         await exportInfiniteCanvasToPng(nodes, workspaceTitle);
       } else {
-        await exportFixedCanvasToPng(activeCanvasPreset, workspaceTitle);
+        await exportFixedCanvasToPng(activeCanvasPreset, workspaceTitle, pageCount);
       }
       toast.success(t("workspace.export.success"));
     } catch (err) {
@@ -258,7 +278,7 @@ export function WorkspaceToolbar() {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      await exportFixedCanvasToPdf(activeCanvasPreset, workspaceTitle);
+      await exportFixedCanvasToPdf(activeCanvasPreset, workspaceTitle, pageCount);
       toast.success(t("workspace.export.success"));
     } catch {
       toast.error(t("workspace.export.error"));
@@ -271,7 +291,7 @@ export function WorkspaceToolbar() {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      await printFixedCanvas(activeCanvasPreset, workspaceTitle);
+      await printFixedCanvas(activeCanvasPreset, workspaceTitle, pageCount);
     } catch {
       toast.error(t("workspace.print.error"));
     } finally {
@@ -279,11 +299,11 @@ export function WorkspaceToolbar() {
     }
   };
 
-  const handlePublishConfirm = async () => {
+  const handlePublishConfirm = async (visibility: PublishVisibilityOptions) => {
     if (!activeWorkspaceId) return;
     setIsPublishing(true);
     try {
-      const result = await publishWorkspace(activeWorkspaceId, activePublishSnapshot);
+      const result = await publishWorkspace(activeWorkspaceId, activePublishSnapshot, visibility);
       setPublication({ ...result, is_active: true });
       if (historyOpen) {
         refreshHistory().catch(() => toast.error(t("workspace.publish.toast.historyFailed")));
@@ -505,7 +525,7 @@ export function WorkspaceToolbar() {
                   <TooltipTrigger asChild>
                     <Button
                       size="sm"
-                      onClick={() => setActivePanel("catalog")}
+                      onClick={() => setCatalogOverlayInWorkspace(true)}
                       className="ml-1 h-7 bg-red-600 px-2 text-xs text-white hover:bg-red-700 focus-visible:ring-red-500"
                     >
                       {t("workspace.catalog.noTableAlert")}
@@ -519,7 +539,7 @@ export function WorkspaceToolbar() {
                   <TooltipTrigger asChild>
                     <Button
                       size="sm"
-                      onClick={() => setActivePanel("catalog")}
+                      onClick={() => setCatalogOverlayInWorkspace(true)}
                       className="ml-1 h-7 bg-green-600 px-2 text-xs text-white hover:bg-green-700 focus-visible:ring-green-500"
                     >
                       {t("workspace.catalog.hasTableAlert", { count: tableCount })}
@@ -674,7 +694,7 @@ export function WorkspaceToolbar() {
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={handleExportPdf}>
                       <FileText className="w-4 h-4 mr-2" />
-                      {t("workspace.export.pdf")}
+                      {isSlideCanvas ? t("workspace.export.pdfSlides") : t("workspace.export.pdf")}
                     </DropdownMenuItem>
                     {activeCanvasPreset.printable && (
                       <DropdownMenuItem onSelect={handlePrint}>
@@ -797,6 +817,61 @@ export function WorkspaceToolbar() {
             </TooltipTrigger>
             <TooltipContent>{t("workspace.addDivider")}</TooltipContent>
           </Tooltip>
+
+          {isBoundedCanvas && (
+            <div className="ml-auto flex items-center gap-1 pl-2">
+              <Files className="h-3.5 w-3.5 text-stone-gray" />
+              <span className="mr-0.5 text-label text-stone-gray shrink-0">
+                {t("workspace.pages.label")}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-7 w-7"
+                      onClick={removeCanvasPage}
+                      disabled={!canRemovePage}
+                      aria-label={t("workspace.pages.remove")}
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {pageCount <= 1
+                    ? t("workspace.pages.remove")
+                    : canRemovePage
+                      ? t("workspace.pages.remove")
+                      : t("workspace.pages.removeBlocked")}
+                </TooltipContent>
+              </Tooltip>
+              <span
+                className="min-w-[3.5rem] text-center text-xs tabular-nums text-near-black"
+                aria-label={t("workspace.pages.count", { count: pageCount })}
+              >
+                {t("workspace.pages.count", { count: pageCount })}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-7 w-7"
+                      onClick={addCanvasPage}
+                      disabled={!canAddPage}
+                      aria-label={t("workspace.pages.add")}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{t("workspace.pages.add")}</TooltipContent>
+              </Tooltip>
+            </div>
+          )}
         </div>
       )}
     </header>

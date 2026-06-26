@@ -17,7 +17,7 @@ import { API_BASE_URL } from "@/lib/api-base";
 import { getActiveAuthContext, getAuthorizationHeader } from "@/lib/auth/session";
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
-import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
+import { getCanvasFormatPreset, getCanvasPageCount } from "@/lib/workspace/canvas-formats";
 import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { toast } from "sonner";
@@ -53,6 +53,7 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const nodes = useWorkspaceStore((s) => s.nodes);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const canvasPages = useWorkspaceStore((s) => s.canvasPages);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
 
   const asset = getAsset(assetId);
@@ -75,7 +76,8 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
         : findOpenCanvasPosition(
             nodes,
             { width: DEFAULT_CHART_NODE_WIDTH, height: DEFAULT_CHART_NODE_HEIGHT },
-            canvasFormat.id
+            canvasFormat.id,
+            getCanvasPageCount(canvasFormat.id, canvasPages)
           );
 
     const nodeData: ChartNodeData = {
@@ -107,7 +109,7 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
 
     setActivePanel("both");
     toast.success(t("chat.toast.addedToWorkspace", { title: asset.title, canvasName }));
-  }, [asset, activeWorkspaceId, nodes, canvasFormat.id, addNode, addNodeToWebDesign, setActivePanel, t, canvasName]);
+  }, [asset, activeWorkspaceId, nodes, canvasFormat.id, canvasPages, addNode, addNodeToWebDesign, setActivePanel, t, canvasName]);
 
   const handleCopyAsPng = useCallback(async () => {
     if (!asset || !chartCaptureRef.current) {
@@ -245,6 +247,7 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const nodes = useWorkspaceStore((s) => s.nodes);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const canvasPages = useWorkspaceStore((s) => s.canvasPages);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const canvasName = t(getCanvasFormatPreset(canvasFormat.id).labelKey);
 
@@ -282,7 +285,8 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
           : findOpenCanvasPosition(
               placedNodes,
               { width: DEFAULT_CHART_NODE_WIDTH, height: DEFAULT_CHART_NODE_HEIGHT },
-              canvasFormat.id
+              canvasFormat.id,
+              getCanvasPageCount(canvasFormat.id, canvasPages)
             );
       const node = {
         id: `node-${generateId()}`,
@@ -310,6 +314,7 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
     addNodeToWebDesign,
     assets,
     canvasFormat.id,
+    canvasPages,
     canvasName,
     getAsset,
     nodes,

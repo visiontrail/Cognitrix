@@ -10,6 +10,7 @@ type UIState = {
   isSending: boolean;
   sendingBySession: Record<string, boolean>;
   isSaving: boolean;
+  catalogOverlayInWorkspace: boolean;
 
   setActivePanel: (panel: ActivePanel) => void;
   setChatSidebarOpen: (open: boolean) => void;
@@ -20,6 +21,7 @@ type UIState = {
   setIsSending: (value: boolean) => void;
   setSessionSending: (sessionId: string, value: boolean) => void;
   setIsSaving: (value: boolean) => void;
+  setCatalogOverlayInWorkspace: (value: boolean) => void;
 };
 
 export const useUIStore = create<UIState>((set) => ({
@@ -30,8 +32,9 @@ export const useUIStore = create<UIState>((set) => ({
   isSending: false,
   sendingBySession: {},
   isSaving: false,
+  catalogOverlayInWorkspace: false,
 
-  setActivePanel: (panel) => set({ activePanel: panel }),
+  setActivePanel: (panel) => set({ activePanel: panel, catalogOverlayInWorkspace: false }),
   setChatSidebarOpen: (open) => set({ chatSidebarOpen: open }),
   setWorkspaceSidebarOpen: (open) => set({ workspaceSidebarOpen: open }),
   setChatCanvasSplitRatio: (ratio) => set({ chatCanvasSplitRatio: ratio }),
@@ -52,4 +55,5 @@ export const useUIStore = create<UIState>((set) => ({
       };
     }),
   setIsSaving: (value) => set({ isSaving: value }),
+  setCatalogOverlayInWorkspace: (value) => set({ catalogOverlayInWorkspace: value }),
 }));

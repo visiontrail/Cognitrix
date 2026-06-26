@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, PanelLeftOpen } from "lucide-react";
+import { PanelLeftOpen, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,7 +10,7 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { WorkspaceCatalogReadonly } from "./workspace-catalog-readonly";
 import { WorkspaceEmptyState } from "./workspace-empty-state";
 
-export function WorkspaceCatalogPage() {
+export function WorkspaceCatalogPage({ onClose }: { onClose?: () => void }) {
   const { t } = useI18n();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const activeWorkspaceTitle = useWorkspaceStore((s) => {
@@ -20,6 +20,8 @@ export function WorkspaceCatalogPage() {
   const chatSidebarOpen = useUIStore((s) => s.chatSidebarOpen);
   const setChatSidebarOpen = useUIStore((s) => s.setChatSidebarOpen);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
+
+  const handleClose = onClose ?? (() => setActivePanel("both"));
 
   if (!activeWorkspaceId) {
     return <WorkspaceEmptyState />;
@@ -46,9 +48,8 @@ export function WorkspaceCatalogPage() {
           </div>
         </div>
 
-        <Button variant="outline" size="sm" onClick={() => setActivePanel("workspace")}>
-          <LayoutDashboard className="h-4 w-4" />
-          {t("workspace.catalog.openCanvas")}
+        <Button variant="ghost" size="icon-sm" onClick={handleClose} aria-label={t("workspace.catalog.close")}>
+          <X className="h-4 w-4" />
         </Button>
       </header>
 

@@ -88,6 +88,27 @@ The Designer chat composer SHALL expose saved prompts through the existing "+" a
 - **THEN** the selected text is replaced by "turnover by department"
 - **AND** the surrounding composer text is preserved
 
+### Requirement: Historical user prompts can be saved or copied from chat bubbles
+The Designer chat history SHALL expose compact actions on user-authored message bubbles. These actions MUST appear only when the user message row is hovered or receives keyboard focus. The actions MUST include saving the message text as a saved prompt template through a prefilled create flow and copying the exact message text to the clipboard. The system MUST NOT show these actions on assistant, system, agent trace, chart, or ingestion-control messages.
+
+#### Scenario: Save historical user prompt opens prefilled create flow
+- **WHEN** a user hovers over a historical user chat bubble containing "Show attrition by department"
+- **AND** the user selects the save-as-prompt action
+- **THEN** the create prompt dialog opens
+- **AND** the prompt body field is prefilled with "Show attrition by department"
+- **AND** the prompt name field is prefilled with an editable name derived from the message text
+- **AND** the prompt is saved through the same validation and API path as composer-created saved prompts
+
+#### Scenario: Copy historical user prompt copies exact text
+- **WHEN** a user hovers over a historical user chat bubble containing "Compare HR and PM turnover"
+- **AND** the user selects the copy prompt action
+- **THEN** the exact message text "Compare HR and PM turnover" is copied to the clipboard
+- **AND** the UI reports whether the copy succeeded or failed
+
+#### Scenario: Assistant messages do not expose prompt actions
+- **WHEN** an assistant message, chart card, agent trace, or ingestion confirmation is rendered
+- **THEN** save-as-prompt and copy-prompt actions are not shown for that generated content
+
 ### Requirement: Variable prompts collect values before insertion
 The system SHALL collect values for saved prompts that contain variables before inserting the rendered prompt into the composer. The variable-fill UI MUST show one input per unique variable in stored order, require values for every variable, and render every occurrence of the variable with the supplied value. Variable values are transient and MUST NOT be persisted into the saved prompt body.
 

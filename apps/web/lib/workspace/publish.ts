@@ -126,11 +126,12 @@ export function buildActiveCanvasPublishPayload({
       spec: node.data.spec,
       rows: extractChartRows(node.data),
     }));
+  const publishNodes = canvasFormat.id === "web-design" ? nodes : flattenGroupedCanvasNodes(nodes);
 
   const payload: CanvasPublishSnapshot = {
     canvas_format: canvasFormat,
     viewport,
-    nodes,
+    nodes: publishNodes,
     edges,
     charts,
   };
@@ -154,6 +155,40 @@ export function buildActiveCanvasPublishPayload({
   }
 
   return payload;
+}
+
+function flattenGroupedCanvasNodes(nodes: WorkspaceNode[]): WorkspaceNode[] {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.map((node) => ({
+    ...node,
+    parentId: undefined,
+    extent: undefined,
+    expandParent: undefined,
+    position: roundPosition(getAbsoluteNodePosition(node, nodeMap)),
+  }));
+}
+
+function getAbsoluteNodePosition(
+  node: WorkspaceNode,
+  nodeMap: Map<string, WorkspaceNode>,
+  visited = new Set<string>()
+): { x: number; y: number } {
+  if (!node.parentId || visited.has(node.id)) return node.position;
+  const parent = nodeMap.get(node.parentId);
+  if (!parent) return node.position;
+  visited.add(node.id);
+  const parentPosition = getAbsoluteNodePosition(parent, nodeMap, visited);
+  return {
+    x: parentPosition.x + node.position.x,
+    y: parentPosition.y + node.position.y,
+  };
+}
+
+function roundPosition(position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.round(position.x),
+    y: Math.round(position.y),
+  };
 }
 
 export async function publishWorkspace(

@@ -16,6 +16,12 @@ const MIN_TEXT_NODE_HEIGHT = 140;
 const DEFAULT_TEXT_FONT_SIZE = 18;
 const DEFAULT_TEXT_COLOR = "#3f3d39";
 const TEXT_COLORS = ["#3f3d39", "#c96442", "#3f6f5f", "#2457a6", "#7a4c9f"];
+const EDITOR_CHROME_HEIGHT = 68;
+const EDITOR_TEXTAREA_VERTICAL_SPACE = 44;
+
+function getMinimumEditorHeight(fontSize: number) {
+  return Math.ceil(fontSize * 1.45 + EDITOR_CHROME_HEIGHT + EDITOR_TEXTAREA_VERTICAL_SPACE);
+}
 
 function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const { t } = useI18n();
@@ -57,6 +63,7 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const fontSize = nodeData.fontSize ?? DEFAULT_TEXT_FONT_SIZE;
   const fontWeight = nodeData.fontWeight ?? "normal";
   const color = nodeData.color ?? DEFAULT_TEXT_COLOR;
+  const editorHeight = Math.max(nodeHeight, MIN_TEXT_NODE_HEIGHT, getMinimumEditorHeight(fontSize));
   const textStyle = {
     color,
     fontSize,
@@ -90,8 +97,9 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
         {/* Editing overlay: absolute-positioned so its height does NOT feed back into
             React Flow's measured node dimensions. */}
         <div
+          data-testid="text-node-editor"
           className="absolute left-0 top-0 flex flex-col bg-ivory rounded-comfortable border border-terracotta shadow-[0px_0px_0px_2px_#c96442]"
-          style={{ width: nodeWidth, height: nodeHeight, zIndex: 10 }}
+          style={{ width: nodeWidth, height: editorHeight, zIndex: 10 }}
         >
           <ResizableNode
             id={id}

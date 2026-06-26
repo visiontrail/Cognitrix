@@ -88,4 +88,43 @@ describe("buildActiveCanvasPublishPayload", () => {
     expect(payload.charts.map((chart) => chart.chart_id)).toEqual(["chart-1", "chart-2"]);
     expect(payload.charts[1].rows).toEqual([{ month: "Jan", rate: 0.1 }]);
   });
+
+  it("flattens grouped free-layout child nodes to absolute positions for publishing", () => {
+    const groupNode: WorkspaceNode = {
+      id: "group-1",
+      type: "sectionNode",
+      position: { x: 70, y: 80 },
+      width: 500,
+      height: 320,
+      data: {
+        type: "section",
+        title: "Group",
+        width: 500,
+        height: 320,
+      },
+    };
+    const groupedChartNode: WorkspaceNode = {
+      ...chartNode,
+      parentId: "group-1",
+      extent: "parent",
+      expandParent: true,
+      position: { x: 30, y: 40 },
+    };
+
+    const payload = buildActiveCanvasPublishPayload({
+      canvasFormat: { id: "infinite" },
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [groupNode, groupedChartNode],
+      edges: [],
+      webDesign,
+    });
+
+    expect(payload.nodes.find((node) => node.id === "node-chart")).toMatchObject({
+      parentId: undefined,
+      extent: undefined,
+      expandParent: undefined,
+      position: { x: 100, y: 120 },
+    });
+    expect(payload.nodes.find((node) => node.id === "group-1")?.position).toEqual({ x: 70, y: 80 });
+  });
 });

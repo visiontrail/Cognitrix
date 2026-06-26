@@ -1,126 +1,83 @@
-# published-portal Specification
-
-## Purpose
-TBD - created by archiving change canvas-web-publish-portal. Update Purpose after archive.
-## Requirements
-### Requirement: Portal entry page at /portal
-A new route `app/portal/page.tsx` SHALL serve the published workspace browser. The left panel lists all published workspaces visible to the current user; the right panel renders the selected published page. The route MUST require authentication: unauthenticated visitors are redirected to `/login?next=<path>`. The layout MUST integrate with the application-level `viewer` mode (when the user is in viewer mode the portal becomes the only top-level surface).
-
-#### Scenario: Portal page loads for authenticated user
-- **WHEN** the authenticated user navigates to `/portal`
-- **THEN** the page renders with a left sidebar listing workspaces visible to that user, and an empty right panel with a prompt to select a workspace
-
-#### Scenario: Unauthenticated visit redirects
-- **WHEN** an unauthenticated visitor opens `/portal`
-- **THEN** the browser is redirected to `/login?next=%2Fportal`
-
-#### Scenario: No visible published workspaces
-- **WHEN** the user has no workspaces visible under the visibility rules
-- **THEN** the left sidebar displays an empty-state message: "暂无可见的发布页。请联系设计者获取访问权限。"
-
-### Requirement: Left sidebar lists published workspaces
-The portal sidebar SHALL display each published workspace as a card or list item showing workspace name, latest publish date, and a thumbnail (if available). Clicking a workspace loads its latest published page in the right panel.
-
-#### Scenario: Workspace selected
-- **WHEN** the user clicks a workspace in the sidebar
-- **THEN** the right panel fetches and renders the latest published page for that workspace, including the page's own multi-level sidebar and chart grid
-
-#### Scenario: Active workspace highlighted
-- **WHEN** a workspace is selected
-- **THEN** its sidebar entry is visually highlighted
+## MODIFIED Requirements
 
 ### Requirement: Published page renders with page-level sidebar and chart grid
-When a published page is loaded in the right panel, the system SHALL render:
-- The page's multi-level sidebar (defined at design time) on the left of the right panel
-- The chart grid filling the remaining area, with charts loaded from snapshot data
-- Clicking a sidebar section smoothly scrolls to the linked grid row
+
+When a public published page is loaded by token, the system SHALL render:
+- The page's multi-level sidebar defined at design time
+- The chart grid and text zones from the published snapshot
+- Charts loaded from snapshot data by public token
+- No editor controls, workspace toolbars, collaborator controls, login prompts, or viewer-mode chrome
+
+Clicking a sidebar section SHALL smoothly scroll to the linked grid row.
 
 #### Scenario: Page sidebar navigation
-- **WHEN** the user clicks a section in the page's sidebar
+- **WHEN** the visitor clicks a section in the published page sidebar
 - **THEN** the grid scrolls smoothly to the row anchored to that section
 
 #### Scenario: Charts load from snapshot
-- **WHEN** the published page is rendered
-- **THEN** each chart zone fetches its spec and data from `GET /portal/pages/{page_id}/charts/{chart_id}/data` and renders using ECharts or Recharts consistent with the chart type
+- **WHEN** the public published page is rendered
+- **THEN** each chart zone fetches its spec and data through the public token route and renders using ECharts or Recharts consistent with the chart type
 
 #### Scenario: Text zones render formatted text
 - **WHEN** a zone contains a text block
 - **THEN** the text is rendered as formatted markdown (bold, italic, headings supported)
 
+## ADDED Requirements
+
+### Requirement: Public published page opens directly by link
+
+The frontend SHALL provide a standalone public route for published pages, such as `/p/{token}`. This route MUST render outside the authenticated workbench shell and MUST NOT require login. The page SHALL fetch the public manifest and chart data using only the route token.
+
+#### Scenario: 未登录访问公开发布页
+- **WHEN** 未登录访问者打开有效的公开发布链接
+- **THEN** 前端渲染只读发布页
+- **AND** MUST NOT 重定向到 `/login`
+
+#### Scenario: 无效链接显示失效状态
+- **WHEN** 访问者打开无效或已取消的公开发布链接
+- **THEN** 前端展示链接不存在或已失效的只读错误状态
+- **AND** MUST NOT 泄露该链接是否曾经存在
+
+## REMOVED Requirements
+
+### Requirement: Portal entry page at /portal
+
+**Reason**: The viewer portal is removed. Published pages are opened through direct public links rather than a logged-in workspace browser.
+
+**Migration**: Replace portal entry navigation with public-link URLs returned by Publish. `/portal` may redirect designers to the workspace/editor home or to documentation, but it is not the public consumption surface.
+
+### Requirement: Left sidebar lists published workspaces
+
+**Reason**: Public readers do not browse all visible workspaces. Possession of a direct link is the access mechanism.
+
+**Migration**: Remove `GET /portal/workspaces` usage from public consumption flows.
+
 ### Requirement: AI chat window embedded in portal page view
-The published page view in the right panel SHALL include an embedded AI chat window. The chat window MAY be collapsed or expanded. When expanded it appears as a panel overlay anchored to the right edge of the page, taking up at most 30% of the right panel width.
 
-#### Scenario: Chat window collapsed by default
-- **WHEN** a published page is first loaded
-- **THEN** the AI chat window is collapsed, showing only a chat icon button
+**Reason**: Public-link v1 is a read-only snapshot surface. Embedded AI chat introduces cost, abuse, and auth assumptions that require a separate design.
 
-#### Scenario: Expand chat window
-- **WHEN** the user clicks the chat icon
-- **THEN** the chat window expands to its configured width with an input field and message history
-
-#### Scenario: Chat window persists across sidebar navigation
-- **WHEN** the user scrolls through the page using the sidebar
-- **THEN** the chat window remains visible at its fixed position and retains the current conversation
+**Migration**: Remove the embedded chat from public published pages for this change. A future public chart-chat feature can be proposed independently.
 
 ### Requirement: Portal designed for future per-user workspace visibility
-The portal's workspace list endpoint (`GET /portal/workspaces`) SHALL always derive the active user from the bearer token / session cookie. The legacy `user_id` query parameter is removed; passing it MUST be ignored. The endpoint MUST return only workspaces visible to that user as defined in the "Portal 列表按当前用户可见性过滤" requirement.
 
-#### Scenario: Authenticated request returns filtered list
-- **WHEN** an authenticated user calls `GET /portal/workspaces`
-- **THEN** only workspaces matching that user's visibility rules are returned
+**Reason**: Per-user published-page visibility is no longer part of the product model.
 
-#### Scenario: Legacy user_id parameter ignored
-- **WHEN** the request URL contains `?user_id=<other>`
-- **THEN** the parameter is ignored; the response still reflects the authenticated user's identity
-
-#### Scenario: Unauthenticated request rejected
-- **WHEN** `GET /portal/workspaces` is called without a valid session
-- **THEN** the API returns HTTP 401 `{"error": "authentication_required"}`
+**Migration**: Delete user-visibility filtering from public page access. Public token validity replaces per-user visibility.
 
 ### Requirement: Portal 路由要求登录态
-`/portal` 路由 SHALL 要求用户已登录。未登录访问 `/portal` 或其子路径 MUST 重定向到 `/login?next=<原始路径>`。登录后系统 MUST 跳回原始 portal 路径（含 page_id 等参数）。
 
-#### Scenario: 未登录访问 portal
-- **WHEN** 未登录用户访问 `/portal/pages/abc`
-- **THEN** 浏览器重定向到 `/login?next=%2Fportal%2Fpages%2Fabc`
+**Reason**: Public published pages MUST NOT require login.
 
-#### Scenario: 登录后跳回
-- **WHEN** 用户在 `/login?next=...` 完成登录
-- **THEN** 自动跳转回 `next` 参数指定的路径
+**Migration**: The new public page route renders without auth. Authenticated designer history remains under workspace management routes.
 
 ### Requirement: Portal 列表按当前用户可见性过滤
-`GET /portal/workspaces` MUST 始终基于当前登录用户身份过滤可见的发布页：
-- 包含该用户作为 owner 或 editor 的所有工作空间最新发布；
-- 包含 `visibility_mode = registered` 的所有工作空间最新发布；
-- 包含 `visibility_mode = allowlist` 且 `current_user.id ∈ visibility_user_ids` 的发布；
-- 排除 `visibility_mode = private` 且当前用户不是 owner/editor 的发布。
 
-设计者本人始终可见自己发布的页面（无论 visibility_mode），通过 owner/editor 分支保证。
+**Reason**: There is no viewer portal list or visibility matrix.
 
-#### Scenario: viewer 用户看到允许列表内的页
-- **WHEN** 用户 A 不是工作空间 W 的成员，但被加入 W 最新发布的 allowlist
-- **THEN** A 调用 `GET /portal/workspaces` 时返回结果包含 W
-
-#### Scenario: 私密发布不外泄
-- **WHEN** 用户 A 不是工作空间 W 的成员，且 W 最新发布是 private
-- **THEN** A 的 `GET /portal/workspaces` 结果不包含 W
-
-#### Scenario: 设计者总能看到自己的发布
-- **WHEN** owner 把自己工作空间发布为 private 后访问 portal
-- **THEN** 列表仍包含该工作空间
+**Migration**: Remove private/registered/allowlist filtering. Designers use workspace publish status/history; public readers use direct links.
 
 ### Requirement: Portal 详情接口校验可见性
-`GET /portal/pages/{page_id}/manifest` 与 `GET /portal/pages/{page_id}/charts/{chart_id}/data` MUST 在返回快照前校验当前用户对该 published version 的可见性。不可见时 MUST 返回 HTTP 403 `{"error": "page_not_visible"}`，不返回 404 以避免与"snapshot 不存在"语义混淆。
 
-#### Scenario: 可见用户拉取 manifest
-- **WHEN** 已授权用户 A 调用 `GET /portal/pages/{page_id}/manifest`
-- **THEN** 后端返回 manifest JSON（依然来自快照文件）
+**Reason**: Public access is authorized by high-entropy token and active/revoked state, not by logged-in user visibility.
 
-#### Scenario: 不可见用户被拒
-- **WHEN** 不在 allowlist 内的用户 A 直接访问 `GET /portal/pages/{page_id}/manifest`
-- **THEN** 后端返回 HTTP 403 `{"error": "page_not_visible"}`
-
-#### Scenario: 不存在的 page_id 仍返回 404
-- **WHEN** `page_id` 在 `published_versions` 表中不存在
-- **THEN** 后端返回 HTTP 404（与可见性 403 区分）
-
+**Migration**: Replace page-id + identity visibility checks with token + active-publication checks. Unknown/revoked token returns 404.

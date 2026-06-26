@@ -79,6 +79,9 @@ type WorkspaceState = {
   addNodeToWebDesign: (node: WorkspaceNode) => void;
   updateNode: (nodeId: string, data: Partial<WorkspaceNode>) => void;
   removeNode: (nodeId: string) => void;
+  removeNodes: (nodeIds: string[]) => void;
+  groupNodes: (nodeIds: string[], title?: string) => string | null;
+  ungroupNodes: (nodeIds: string[]) => void;
   setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
   setCanvasFormat: (canvasFormat: WorkspaceCanvasFormat) => void;
   setWebDesignColumns: (columns: number) => void;
@@ -276,10 +279,114 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   removeNode: (nodeId) =>
     set((state) => ({
-      nodes: state.nodes.filter((n) => n.id !== nodeId),
-      edges: state.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
+      ...removeNodesFromCanvas(state.nodes, state.edges, [nodeId]),
       hasUnsavedChanges: true,
     })),
+
+  removeNodes: (nodeIds) =>
+    set((state) => ({
+      ...removeNodesFromCanvas(state.nodes, state.edges, nodeIds),
+      hasUnsavedChanges: true,
+    })),
+
+  groupNodes: (nodeIds, title = "Group") => {
+    let groupId: string | null = null;
+    set((state) => {
+      const selectedIds = new Set(nodeIds);
+      const nodeMap = new Map(state.nodes.map((node) => [node.id, node]));
+      const groupableNodes = state.nodes.filter(
+        (node) => selectedIds.has(node.id) && node.data.type !== "section"
+      );
+      if (groupableNodes.length < 2) return {};
+
+      const nextGroupId = `section-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      groupId = nextGroupId;
+      const padding = 28;
+      const bounds = getNodesAbsoluteBounds(groupableNodes, nodeMap);
+      const groupPosition = {
+        x: Math.round(bounds.x - padding),
+        y: Math.round(bounds.y - padding),
+      };
+      const groupWidth = Math.round(bounds.width + padding * 2);
+      const groupHeight = Math.round(bounds.height + padding * 2);
+      const groupNode: WorkspaceNode = {
+        id: nextGroupId,
+        type: "sectionNode",
+        position: groupPosition,
+        width: groupWidth,
+        height: groupHeight,
+        initialWidth: groupWidth,
+        initialHeight: groupHeight,
+        data: {
+          type: "section",
+          title,
+          width: groupWidth,
+          height: groupHeight,
+        },
+      };
+
+      const groupableIds = new Set(groupableNodes.map((node) => node.id));
+      const nextNodes = state.nodes.map((node) => {
+        if (!groupableIds.has(node.id)) return { ...node, selected: false };
+        const absolutePosition = getAbsoluteNodePosition(node, nodeMap);
+        return {
+          ...node,
+          parentId: nextGroupId,
+          extent: "parent" as const,
+          expandParent: true,
+          position: {
+            x: Math.round(absolutePosition.x - groupPosition.x),
+            y: Math.round(absolutePosition.y - groupPosition.y),
+          },
+          selected: false,
+        };
+      });
+
+      return {
+        nodes: [groupNode, ...nextNodes],
+        hasUnsavedChanges: true,
+      };
+    });
+    return groupId;
+  },
+
+  ungroupNodes: (nodeIds) =>
+    set((state) => {
+      const selectedIds = new Set(nodeIds);
+      const nodeMap = new Map(state.nodes.map((node) => [node.id, node]));
+      const groupIds = new Set<string>();
+
+      for (const node of state.nodes) {
+        if (!selectedIds.has(node.id)) continue;
+        if (node.data.type === "section") {
+          groupIds.add(node.id);
+        } else if (node.parentId) {
+          groupIds.add(node.parentId);
+        }
+      }
+
+      if (!groupIds.size) return {};
+
+      const descendantIds = collectDescendantNodeIds(state.nodes, groupIds);
+      const nextNodes = state.nodes
+        .filter((node) => !groupIds.has(node.id))
+        .map((node) => {
+          if (!descendantIds.has(node.id)) return node;
+          return {
+            ...node,
+            parentId: undefined,
+            extent: undefined,
+            expandParent: undefined,
+            position: roundPosition(getAbsoluteNodePosition(node, nodeMap)),
+            selected: selectedIds.has(node.id) || Boolean(node.parentId && groupIds.has(node.parentId)),
+          };
+        });
+
+      return {
+        nodes: nextNodes,
+        hasUnsavedChanges: true,
+      };
+    }),
 
   setViewport: (viewport) => set({ viewport }),
 
@@ -685,6 +792,95 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function roundPosition(position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.round(position.x),
+    y: Math.round(position.y),
+  };
+}
+
+function removeNodesFromCanvas(
+  nodes: WorkspaceNode[],
+  edges: WorkspaceEdge[],
+  nodeIds: string[]
+): Pick<WorkspaceState, "nodes" | "edges"> {
+  const idsToRemove = collectDescendantNodeIds(nodes, new Set(nodeIds));
+  for (const id of nodeIds) {
+    idsToRemove.add(id);
+  }
+  return {
+    nodes: nodes.filter((node) => !idsToRemove.has(node.id)),
+    edges: edges.filter((edge) => !idsToRemove.has(edge.source) && !idsToRemove.has(edge.target)),
+  };
+}
+
+function collectDescendantNodeIds(nodes: WorkspaceNode[], rootIds: Set<string>): Set<string> {
+  const ids = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      if ((rootIds.has(node.parentId) || ids.has(node.parentId)) && !ids.has(node.id)) {
+        ids.add(node.id);
+        changed = true;
+      }
+    }
+  }
+  return ids;
+}
+
+function getAbsoluteNodePosition(
+  node: WorkspaceNode,
+  nodeMap: Map<string, WorkspaceNode>,
+  visited = new Set<string>()
+): { x: number; y: number } {
+  if (!node.parentId || visited.has(node.id)) return node.position;
+  const parent = nodeMap.get(node.parentId);
+  if (!parent) return node.position;
+  visited.add(node.id);
+  const parentPosition = getAbsoluteNodePosition(parent, nodeMap, visited);
+  return {
+    x: parentPosition.x + node.position.x,
+    y: parentPosition.y + node.position.y,
+  };
+}
+
+function getNodeDimensions(node: WorkspaceNode): { width: number; height: number } {
+  const width = Number(node.width ?? node.measured?.width ?? ("width" in node.data ? node.data.width : 240) ?? 240);
+  const height = Number(
+    node.height ??
+      node.measured?.height ??
+      ("height" in node.data ? node.data.height : undefined) ??
+      (node.data.type === "divider" ? 24 : 160)
+  );
+  return {
+    width: Number.isFinite(width) ? width : 240,
+    height: Number.isFinite(height) ? height : 160,
+  };
+}
+
+function getNodesAbsoluteBounds(
+  nodes: WorkspaceNode[],
+  nodeMap: Map<string, WorkspaceNode>
+): { x: number; y: number; width: number; height: number } {
+  const boxes = nodes.map((node) => {
+    const position = getAbsoluteNodePosition(node, nodeMap);
+    const dimensions = getNodeDimensions(node);
+    return {
+      x: position.x,
+      y: position.y,
+      right: position.x + dimensions.width,
+      bottom: position.y + dimensions.height,
+    };
+  });
+  const x = Math.min(...boxes.map((box) => box.x));
+  const y = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.right));
+  const bottom = Math.max(...boxes.map((box) => box.bottom));
+  return { x, y, width: right - x, height: bottom - y };
 }
 
 function normalizeWebDesignLayout(value: unknown): WebDesignLayout {

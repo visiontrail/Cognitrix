@@ -21,16 +21,16 @@ const textNodeData: TextNodeData = {
   height: 220,
 };
 
-function renderTextNode(selected = true) {
+function renderTextNode(selected = true, data: TextNodeData = textNodeData) {
   return render(
     <TextNode
       {...({
         id: "node-text",
-        data: textNodeData,
+        data,
         selected,
         type: "textNode",
-        width: 480,
-        height: 220,
+        width: data.width,
+        height: data.height,
         xPos: 0,
         yPos: 0,
         zIndex: 0,
@@ -82,5 +82,21 @@ describe("TextNode", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(screen.getByTestId("resize-controls")).toBeInTheDocument();
+  });
+
+  it("expands the editor overlay enough to cover compact heading nodes", async () => {
+    renderTextNode(true, {
+      ...textNodeData,
+      content: "标题",
+      fontSize: 34,
+      fontWeight: "bold",
+      width: 620,
+      height: 88,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit text block" }));
+
+    const editor = screen.getByTestId("text-node-editor");
+    expect(parseFloat(editor.style.height)).toBeGreaterThan(150);
   });
 });

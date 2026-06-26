@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
+  Panel,
   ViewportPortal,
   useNodesState,
   useEdgesState,
@@ -19,12 +20,16 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Layers, Trash2, Ungroup } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { getCanvasFormatPreset } from "@/lib/workspace/canvas-formats";
 import { ChartNode } from "./nodes/chart-node";
 import { TextNode } from "./nodes/text-node";
 import { StickyNoteNode } from "./nodes/sticky-note-node";
 import { DividerNode } from "./nodes/divider-node";
+import { SectionNode } from "./nodes/section-node";
 import { WebDesignCanvas } from "./web-design-canvas";
 import type { WorkspaceNode } from "@/types/workspace";
 
@@ -33,6 +38,7 @@ const nodeTypes: NodeTypes = {
   textNode: TextNode,
   stickyNoteNode: StickyNoteNode,
   dividerNode: DividerNode,
+  sectionNode: SectionNode,
 };
 
 function normalizeWorkspaceNodes(nodes: WorkspaceNode[]): Node[] {
@@ -40,21 +46,27 @@ function normalizeWorkspaceNodes(nodes: WorkspaceNode[]): Node[] {
     if (node.type === "textNode") return { ...node, dragHandle: ".text-node-drag-handle" };
     if (node.type === "stickyNoteNode") return { ...node, dragHandle: ".sticky-note-drag-handle" };
     if (node.type === "dividerNode") return { ...node, dragHandle: ".divider-node-drag-handle" };
+    if (node.type === "sectionNode") return { ...node, dragHandle: ".section-node-drag-handle" };
     return node;
   }) as Node[];
 }
 
 export function WorkspaceCanvas() {
+  const { t } = useI18n();
   const storeNodes = useWorkspaceStore((s) => s.nodes);
   const storeEdges = useWorkspaceStore((s) => s.edges);
   const storeViewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
   const setStoreNodes = useWorkspaceStore((s) => s.setNodes);
   const setViewport = useWorkspaceStore((s) => s.setViewport);
+  const removeNodes = useWorkspaceStore((s) => s.removeNodes);
+  const groupNodes = useWorkspaceStore((s) => s.groupNodes);
+  const ungroupNodes = useWorkspaceStore((s) => s.ungroupNodes);
 
   const [nodes, setNodes] = useNodesState(normalizeWorkspaceNodes(storeNodes));
   const [edges, setEdges] = useEdgesState(storeEdges as Edge[]);
-  const nodesRef = useRef<Node[]>(storeNodes as Node[]);
+  const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+  const nodesRef = useRef<Node[]>(normalizeWorkspaceNodes(storeNodes));
 
   const canvasPreset = getCanvasFormatPreset(canvasFormat.id);
 
@@ -91,6 +103,28 @@ export function WorkspaceCanvas() {
     [setEdges]
   );
 
+  const selectedNodeIds = selectedNodes.map((node) => node.id);
+  const selectedGroupableCount = selectedNodes.filter((node) => node.data.type !== "section").length;
+  const canGroupSelection = selectedGroupableCount >= 2;
+  const canUngroupSelection = selectedNodes.some(
+    (node) => node.data.type === "section" || Boolean(node.parentId)
+  );
+
+  const handleDeleteSelection = useCallback(() => {
+    removeNodes(selectedNodeIds);
+    setSelectedNodes([]);
+  }, [removeNodes, selectedNodeIds]);
+
+  const handleGroupSelection = useCallback(() => {
+    const groupId = groupNodes(selectedNodeIds, t("workspace.selection.defaultGroupTitle"));
+    if (groupId) setSelectedNodes([]);
+  }, [groupNodes, selectedNodeIds, t]);
+
+  const handleUngroupSelection = useCallback(() => {
+    ungroupNodes(selectedNodeIds);
+    setSelectedNodes([]);
+  }, [selectedNodeIds, ungroupNodes]);
+
   if (canvasFormat.id === "web-design") {
     return <WebDesignCanvas />;
   }
@@ -104,6 +138,7 @@ export function WorkspaceCanvas() {
         edges={edges}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
+        onSelectionChange={({ nodes: nextSelectedNodes }) => setSelectedNodes(nextSelectedNodes)}
         nodeTypes={nodeTypes}
         defaultViewport={storeViewport}
         onViewportChange={setViewport}
@@ -117,6 +152,45 @@ export function WorkspaceCanvas() {
         snapGrid={[10, 10]}
         proOptions={{ hideAttribution: true }}
       >
+        {selectedNodes.length > 1 && (
+          <Panel position="top-center" className="canvas-export-ignore">
+            <div className="flex items-center gap-1 rounded-md border border-border-cream bg-ivory/95 px-2 py-1.5 text-xs text-stone-gray shadow-ring-warm backdrop-blur">
+              <span className="px-1.5 font-medium text-near-black">
+                {t("workspace.selection.count", { count: selectedNodes.length })}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={!canGroupSelection}
+                onClick={handleGroupSelection}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                {t("workspace.selection.group")}
+              </Button>
+              {canUngroupSelection && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2"
+                  onClick={handleUngroupSelection}
+                >
+                  <Ungroup className="h-3.5 w-3.5" />
+                  {t("workspace.selection.ungroup")}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 hover:text-error-crimson"
+                onClick={handleDeleteSelection}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("workspace.selection.delete")}
+              </Button>
+            </div>
+          </Panel>
+        )}
         <Background
           variant={BackgroundVariant.Dots}
           gap={20}

@@ -26,11 +26,15 @@ import { cn } from "@/lib/utils";
 export function SavedPromptEditorDialog({
   open,
   prompt,
+  initialName,
+  initialBody,
   onOpenChange,
   onSaved,
 }: {
   open: boolean;
   prompt: SavedPrompt | null;
+  initialName?: string;
+  initialBody?: string;
   onOpenChange: (open: boolean) => void;
   onSaved?: (prompt: SavedPrompt) => void;
 }) {
@@ -46,11 +50,11 @@ export function SavedPromptEditorDialog({
   // Reset form whenever the dialog opens (for a fresh create or a given prompt).
   useEffect(() => {
     if (!open) return;
-    setName(prompt?.name ?? "");
-    setBody(prompt?.body ?? "");
+    setName(prompt?.name ?? initialName ?? "");
+    setBody(prompt?.body ?? initialBody ?? "");
     setCapabilities(new Set(prompt?.capabilities ?? []));
     setServerError(null);
-  }, [open, prompt]);
+  }, [initialBody, initialName, open, prompt]);
 
   const parse = useMemo(() => parseVariables(body), [body]);
   const variableError = useMemo(() => {

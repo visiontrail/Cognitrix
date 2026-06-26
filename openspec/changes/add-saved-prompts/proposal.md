@@ -14,6 +14,7 @@ Cognitrix users currently retype or externally store high-value BI prompts, whic
 - Add a prompt creation/editing modal with name and prompt body fields, `{variable}` detection, duplicate/invalid variable validation, optional capability/tool selection, disabled save state, and localized help text.
 - Add a management surface with search, empty state, create button, prompt list rows with previews, edit/delete actions, and insertion into the active composer.
 - Add variable-fill behavior on insertion: prompts without variables insert directly; prompts with variables ask for values and render the final prompt text into the composer at the current cursor position.
+- Add hover-only actions to historical user chat bubbles so a user can copy a previous prompt or save it into the saved prompt library through a prefilled create flow.
 - Add frontend state and API client support so saved prompts sync across browsers/devices through the backend, with local query caching only as a performance layer.
 - Add audit events for create/update/delete/use actions, recording metadata only; prompt bodies are never written to audit logs.
 - No breaking API or data-model changes for chat, ingestion, workspaces, or existing saved views.
@@ -35,6 +36,7 @@ Cognitrix users currently retype or externally store high-value BI prompts, whic
   - `audit.py` emits metadata-only prompt lifecycle/use events.
 - **Frontend (`apps/web/`)**:
   - Extend `components/chat/chat-input.tsx` "+" menu with the saved-prompts submenu and insertion wiring.
+  - Extend `components/chat/message-item.tsx` with hover-only user-message actions for copying prompt text and saving the message body as a new prompt template.
   - New `components/chat/saved-prompts-*` components for create/edit modal, variable-fill dialog, and management view.
   - New `lib/saved-prompts/` API client and hooks, plus i18n keys in `lib/i18n/dictionary.ts`.
   - Optional route or modal-driven page for "Manage prompts"; the initial product path should work from the composer without requiring global navigation changes.

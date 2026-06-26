@@ -18,6 +18,7 @@ Stakeholders:
 - Extract and validate `{variable}` placeholders from prompt bodies.
 - Insert prompts into the active composer without automatically sending the message.
 - For variable prompts, collect values and render the final text before insertion.
+- Let users reuse historical user chat turns by copying the prompt text or opening a save-as-template flow from the message bubble.
 - Preserve existing chat, ingestion, and chart-generation behavior when saved prompts are unused.
 - Keep prompt bodies private to the owning authenticated user and out of audit logs.
 
@@ -89,7 +90,17 @@ Implement the primary management experience as a modal or overlay reachable from
 
 **Why**: The screenshots show prompt management as a chat-adjacent workflow. Staying inside the composer reduces navigation cost and avoids expanding the app shell before there is a broader prompt-library IA.
 
-### 7. Audit prompt lifecycle metadata only
+### 7. Add hover-only actions to historical user messages
+
+Add a compact action row to user-authored chat bubbles. The row appears on hover or keyboard focus and includes:
+- save as prompt template, which opens the existing create prompt dialog with the historical message body prefilled and a derived editable name;
+- copy prompt, which copies the exact historical message text to the clipboard and reports success or failure with the existing toast system.
+
+Only user messages receive these prompt actions. Assistant answers, agent traces, chart cards, and ingestion confirmation controls do not receive them because saving generated responses as user prompt templates would blur the product meaning of "prompt".
+
+**Why**: The saved-prompts menu helps future composition, but many valuable prompts are discovered after a successful analysis turn. Surfacing actions directly on the historical user bubble keeps the reuse workflow local and avoids forcing the user to manually select/copy text. Opening the existing create dialog instead of writing immediately preserves name editing, variable validation, duplicate-name handling, and optional capability selection.
+
+### 8. Audit prompt lifecycle metadata only
 
 Emit audit events for `saved_prompt_create`, `saved_prompt_update`, `saved_prompt_delete`, and `saved_prompt_use`. Event details may include prompt ID, owner ID, variable count, capability IDs, and success/failure status. They MUST NOT include the prompt name or body, because either can contain sensitive business context.
 
@@ -101,6 +112,7 @@ Emit audit events for `saved_prompt_create`, `saved_prompt_update`, `saved_promp
 - **Sensitive prompt content leakage**: Prompt bodies may include business or HR details. Mitigation: owner-filter every backend query, never log bodies/names to audit, and add user-isolation tests.
 - **Variable parser false positives in JSON or code snippets**: BI prompts may include braces for examples. Mitigation: require strict variable names, support escaped braces, ignore double braces, and surface validation errors before save.
 - **Composer menu complexity**: The existing chat input already has file upload, generation options, chart triggers, and column mentions. Mitigation: implement saved prompts as isolated child components/hooks, keep `ChatInput` orchestration thin, and add focused UI tests.
+- **Message action discoverability**: Hover-only controls are intentionally quiet but can be missed. Mitigation: expose accessible labels/tooltips and show the row on keyboard focus as well as pointer hover.
 - **Stale frontend cache after edits/deletes**: A prompt list may show old data across tabs. Mitigation: use TanStack Query invalidation after mutations and refetch on menu open/manage open.
 - **Global user prompts vs workspace-specific context**: A prompt created in one workspace may be less relevant in another. Mitigation: initial version is user-global for speed and simplicity; add workspace tags/sharing only after usage data proves the need.
 

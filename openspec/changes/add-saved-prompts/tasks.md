@@ -58,3 +58,12 @@
 - [x] 7.3 Run relevant frontend Vitest suites for chat input and saved prompts.
 - [x] 7.4 Run `make lint` or the narrow backend/frontend lint commands needed for touched files.
 - [x] 7.5 Manually verify the composer menu flow in the browser: create prompt, insert static prompt, insert variable prompt, manage/search/edit/delete.
+
+## 8. Historical message prompt actions
+
+- [x] 8.1 Update the saved-prompts proposal/design/spec to include saving historical user messages as prompt templates and copying prompt text from chat bubbles.
+- [x] 8.2 Add hover/focus-only save-as-prompt and copy-prompt actions to user-authored message bubbles.
+- [x] 8.3 Reuse the saved prompt create dialog with the historical message body and derived editable name prefilled.
+- [x] 8.4 Add localized labels/toasts for historical prompt save/copy actions.
+- [x] 8.5 Add focused frontend tests for user-message save/copy actions and absence of those actions on assistant messages.
+- [x] 8.6 Run the relevant frontend tests for saved prompts and message item behavior.

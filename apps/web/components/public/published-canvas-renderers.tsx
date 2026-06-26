@@ -354,14 +354,16 @@ function PublishedChartLoading() {
 function PublishedTextNode({ node }: { node: TextCanvasNode }) {
   return (
     <div
-      className="h-full overflow-hidden rounded-md border border-[#d8d1c1] bg-white p-4"
+      className="w-full bg-transparent"
+      data-testid={`published-text-node-${node.id}`}
       style={{
         color: node.data.color || "#3f3d39",
         fontSize: node.data.fontSize || 18,
         fontWeight: node.data.fontWeight || "normal",
+        lineHeight: 1.45,
       }}
     >
-      <p className="whitespace-pre-wrap">{node.data.content}</p>
+      <p className="whitespace-pre-wrap break-words">{node.data.content}</p>
     </div>
   );
 }

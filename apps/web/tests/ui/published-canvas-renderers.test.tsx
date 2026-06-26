@@ -72,6 +72,11 @@ describe("published canvas renderers", () => {
     render(<PublishedFreeCanvas token="pub-token" manifest={manifest} />);
 
     expect(screen.getByText("Quarterly narrative")).toBeInTheDocument();
+    const publishedTextNode = screen.getByTestId("published-text-node-text-1");
+    expect(publishedTextNode).not.toHaveClass("rounded-md");
+    expect(publishedTextNode).not.toHaveClass("border");
+    expect(publishedTextNode).not.toHaveClass("bg-white");
+    expect(publishedTextNode).not.toHaveClass("p-4");
     expect(screen.getByText("Headcount")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("chart-preview")).toHaveTextContent("Published Headcount"));
     expect(publicApiMock.fetchPublicChartData).toHaveBeenCalledWith("pub-token", "chart-1");

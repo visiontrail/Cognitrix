@@ -158,6 +158,82 @@ def test_publish_flow_writes_uncapped_redacted_assistant_rows(monkeypatch, tmp_p
         assert all("salary" not in row for row in assistant_rows)
 
 
+def test_publish_flow_assistant_available_when_only_some_charts_have_rows(monkeypatch, tmp_path: Path) -> None:
+    """A mixed canvas (some charts with assistant rows, some without) must still
+    expose the public assistant. Charts without rows are dropped from the
+    readable set rather than disabling the page-level assistant."""
+
+    _set_minimal_env(monkeypatch, tmp_path)
+    source_rows = [{"department": f"Dept {index}", "headcount": index} for index in range(3)]
+
+    class _FakePublicAgent:
+        async def run_turn_stream(self, **kwargs):
+            yield (
+                "final",
+                {
+                    "conversation_id": kwargs["conversation_id"],
+                    "request_id": kwargs["request_id"],
+                    "status": "completed",
+                    "text": "ok",
+                },
+            )
+
+    monkeypatch.setattr("apps.api.public_pages.get_chart_query_agent", lambda: _FakePublicAgent())
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_response = client.post("/workspaces", json={"name": "Mixed Assistant"}, headers=headers)
+        workspace_response.raise_for_status()
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        publish_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "layout": {
+                    "grid": {"columns": 2, "rows": [{"id": "row-1", "height": 320}]},
+                    "zones": [
+                        {"id": "zone-1", "chart_id": "chart-with-rows", "column": 0, "row": 0},
+                        {"id": "zone-2", "chart_id": "chart-legacy", "column": 1, "row": 0},
+                    ],
+                },
+                "sidebar": [],
+                "charts": [
+                    {
+                        "chart_id": "chart-with-rows",
+                        "title": "Captured",
+                        "chart_type": "bar",
+                        "spec": {"chart_type": "bar", "title": "Captured"},
+                        "rows": source_rows,
+                        "assistant_rows": source_rows,
+                        "assistant_rows_complete": True,
+                    },
+                    {
+                        # Legacy-style chart: render rows only, no assistant rows.
+                        "chart_id": "chart-legacy",
+                        "title": "Legacy",
+                        "chart_type": "bar",
+                        "spec": {"chart_type": "bar", "title": "Legacy"},
+                        "rows": source_rows,
+                    },
+                ],
+            },
+        )
+        publish_response.raise_for_status()
+        token = publish_response.json()["token"]
+
+        manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
+        assert manifest["assistant"]["available"] is True
+        assert manifest["assistant"]["chart_count"] == 2
+        by_id = {chart["chart_id"]: chart for chart in manifest["charts"]}
+        assert by_id["chart-with-rows"]["assistant_data_available"] is True
+        assert by_id["chart-legacy"]["assistant_data_available"] is False
+
+        # The assistant endpoint must be reachable for the mixed snapshot.
+        chat = client.post(f"/public/pages/{token}/chat", json={"message": "hi"})
+        assert chat.status_code != 404
+
+
 def test_workspace_published_snapshot_reads_non_active_version(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 

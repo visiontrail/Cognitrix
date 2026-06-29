@@ -441,7 +441,13 @@ class SnapshotWriter:
             "canvas": canvas,
             "content": content,
             "assistant": {
-                "available": bool(chart_entries) and all(
+                # Per-chart coverage: a chart without complete rows is simply
+                # excluded from the assistant's readable set (see design.md), so
+                # the page-level assistant is available whenever *any* published
+                # chart carries assistant data. Requiring every chart (``all``)
+                # would hide the assistant on mixed canvases that include charts
+                # authored before assistant rows were captured.
+                "available": any(
                     bool(entry.get("assistant_data_available")) for entry in chart_entries
                 ),
                 "chart_count": len(chart_entries),
@@ -1471,10 +1477,14 @@ def _normalize_chart_entries(value: Any, *, include_internal_paths: bool) -> lis
 
 def _normalize_assistant_metadata(value: Any, *, charts: list[dict[str, Any]]) -> dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
-    all_chart_data_available = bool(charts) and all(
+    # The assistant is available when at least one published chart carries
+    # complete rows. Charts without assistant data are dropped from the readable
+    # set rather than disabling the whole page (mirrors SnapshotWriter.write and
+    # design.md's per-chart coverage decision).
+    any_chart_data_available = any(
         bool(chart.get("assistant_data_available")) for chart in charts
     )
-    available = bool(raw.get("available")) and all_chart_data_available
+    available = bool(raw.get("available")) and any_chart_data_available
     raw_chart_count = raw.get("chart_count")
     raw_row_count = raw.get("row_count")
     return {

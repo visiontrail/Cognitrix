@@ -570,6 +570,8 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "share.you": "You",
     "share.ai": "AI",
     "share.noMessages": "No messages were stored for this view.",
+    "share.themeSwitchToLight": "Switch shared view to light theme",
+    "share.themeSwitchToDark": "Switch shared view to dark theme",
 
     "auth.register": "Register",
     "auth.login": "Login",
@@ -1263,6 +1265,8 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "share.you": "你",
     "share.ai": "AI",
     "share.noMessages": "该视图未保存会话消息。",
+    "share.themeSwitchToLight": "切换共享视图为浅色主题",
+    "share.themeSwitchToDark": "切换共享视图为深色主题",
 
     "auth.register": "注册",
     "auth.login": "登录",

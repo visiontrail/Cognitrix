@@ -101,6 +101,7 @@ export type WebDesignGridRow = {
 
 export type WebDesignGridConfig = {
   columns: number;
+  columnWidths?: number[];
   rows: WebDesignGridRow[];
 };
 

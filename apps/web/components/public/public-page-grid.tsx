@@ -9,6 +9,7 @@ import {
   type PublishedTextZone,
   type PublishedZone,
 } from "@/lib/public/api";
+import { getWebDesignGridTemplateColumns, getWebDesignGridWidth } from "@/lib/workspace/web-design-grid";
 import type { ChartSpec } from "@/types/chart";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -39,8 +40,10 @@ export function PublicPageGrid({
         className="grid bg-white"
         data-testid="public-page-grid-canvas"
         style={{
-          gridTemplateColumns: `repeat(${grid.columns}, minmax(180px, 1fr))`,
+          gridTemplateColumns: getWebDesignGridTemplateColumns(grid),
           gridTemplateRows: grid.rows.map((row) => `${row.height}px`).join(" "),
+          minWidth: "100%",
+          width: getWebDesignGridWidth(grid),
         }}
       >
         {grid.rows.map((row, rowIndex) => (

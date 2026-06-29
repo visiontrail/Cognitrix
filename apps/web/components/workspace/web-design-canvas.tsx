@@ -26,6 +26,11 @@ import { ChartPreview } from "@/components/charts/chart-preview";
 import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
+import {
+  getWebDesignGridTemplateColumns,
+  getWebDesignGridWidth,
+  normalizeWebDesignColumnWidths,
+} from "@/lib/workspace/web-design-grid";
 import { CollaboratorsDialog } from "@/components/sharing/share-dialog";
 import { Users } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -40,6 +45,7 @@ export function WebDesignCanvas() {
   const nodes = useWorkspaceStore((s) => s.nodes);
   const layout = useWorkspaceStore((s) => s.webDesign);
   const setColumns = useWorkspaceStore((s) => s.setWebDesignColumns);
+  const setColumnWidth = useWorkspaceStore((s) => s.setWebDesignColumnWidth);
   const addRow = useWorkspaceStore((s) => s.addWebDesignRow);
   const removeRow = useWorkspaceStore((s) => s.removeWebDesignRow);
   const setRowHeight = useWorkspaceStore((s) => s.setWebDesignRowHeight);
@@ -63,6 +69,9 @@ export function WebDesignCanvas() {
     [nodes]
   );
   const pages = getPages(layout);
+  const columnWidths = normalizeWebDesignColumnWidths(activePage.grid.columns, activePage.grid.columnWidths);
+  const gridWidth = getWebDesignGridWidth(activePage.grid);
+  const gridHeight = activePage.grid.rows.reduce((sum, row) => sum + row.height, 0);
   return (
     <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f]">
       <main className="flex min-w-0 flex-1 flex-col">
@@ -152,8 +161,10 @@ export function WebDesignCanvas() {
                   layout.preview && "border-transparent shadow-none"
                 )}
                 style={{
-                  gridTemplateColumns: `repeat(${activePage.grid.columns}, minmax(180px, 1fr))`,
+                  gridTemplateColumns: getWebDesignGridTemplateColumns(activePage.grid),
                   gridTemplateRows: activePage.grid.rows.map((row) => `${row.height}px`).join(" "),
+                  minWidth: "100%",
+                  width: gridWidth,
                 }}
               >
                 {activePage.grid.rows.map((row, rowIndex) =>
@@ -194,6 +205,20 @@ export function WebDesignCanvas() {
                   />
                 ))}
               </div>
+              {!layout.preview &&
+                columnWidths.map((width, index) => {
+                  const leftPx = columnWidths.slice(0, index + 1).reduce((sum, item) => sum + item, 0);
+                  return (
+                    <ColumnResizeHandle
+                      key={`column-${index}`}
+                      columnIndex={index}
+                      leftPx={leftPx}
+                      currentWidth={width}
+                      heightPx={gridHeight}
+                      onSetWidth={(nextWidth) => setColumnWidth(index, nextWidth)}
+                    />
+                  );
+                })}
               {!layout.preview &&
                 activePage.grid.rows.map((row, index) => {
                   const topPx = activePage.grid.rows
@@ -772,6 +797,64 @@ function SidebarEditor({ preview }: { preview: boolean }) {
         ))}
       </div>
     </aside>
+  );
+}
+
+function ColumnResizeHandle({
+  columnIndex,
+  leftPx,
+  currentWidth,
+  heightPx,
+  onSetWidth,
+}: {
+  columnIndex: number;
+  leftPx: number;
+  currentWidth: number;
+  heightPx: number;
+  onSetWidth: (width: number) => void;
+}) {
+  const { t } = useI18n();
+  const [dragging, setDragging] = useState(false);
+
+  const handleMouseDown = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = currentWidth;
+    setDragging(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: MouseEvent) => {
+      onSetWidth(startWidth + ev.clientX - startX);
+    };
+    const onUp = () => {
+      setDragging(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  return (
+    <div
+      aria-label={t("workspace.webDesign.aria.resizeColumn", { column: columnIndex + 1 })}
+      className={cn(
+        "group absolute top-0 z-30 flex w-3 cursor-col-resize select-none justify-center",
+        dragging && "z-40"
+      )}
+      style={{ left: leftPx - 6, height: heightPx }}
+      onMouseDown={handleMouseDown}
+    >
+      <div
+        className={cn(
+          "h-full w-0.5 transition-colors",
+          dragging ? "bg-[#996b35]" : "bg-transparent group-hover:bg-[#d8d1c1]"
+        )}
+      />
+    </div>
   );
 }
 

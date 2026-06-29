@@ -16,6 +16,11 @@ import {
   safeLoadFromStorage,
   safeSaveToStorage,
 } from "@/lib/chat/session-storage";
+import {
+  DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+  normalizeWebDesignColumnWidths,
+  resizeWebDesignColumnWidths,
+} from "@/lib/workspace/web-design-grid";
 import type {
   Workspace,
   WorkspaceNode,
@@ -33,6 +38,11 @@ import type {
 const DEFAULT_WEB_DESIGN_LAYOUT: WebDesignLayout = {
   grid: {
     columns: 3,
+    columnWidths: [
+      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+    ],
     rows: [
       { id: "row-1", height: 400 },
       { id: "row-2", height: 400 },
@@ -46,6 +56,11 @@ const DEFAULT_WEB_DESIGN_LAYOUT: WebDesignLayout = {
       title: "Section 1",
       grid: {
         columns: 3,
+        columnWidths: [
+          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
+        ],
         rows: [
           { id: "row-1", height: 400 },
           { id: "row-2", height: 400 },
@@ -98,6 +113,7 @@ type WorkspaceState = {
   removeCanvasPage: () => void;
   deleteCanvasPage: (pageIndex: number) => void;
   setWebDesignColumns: (columns: number) => void;
+  setWebDesignColumnWidth: (columnIndex: number, width: number) => void;
   addWebDesignRow: () => void;
   removeWebDesignRow: (rowId: string) => void;
   setWebDesignRowHeight: (rowId: string, height: number) => void;
@@ -534,6 +550,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
               grid: {
                 ...page.grid,
                 columns: nextColumns,
+                columnWidths: normalizeWebDesignColumnWidths(nextColumns, page.grid.columnWidths),
               },
             },
             nextColumns
@@ -542,6 +559,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         hasUnsavedChanges: true,
       };
     }),
+
+  setWebDesignColumnWidth: (columnIndex, width) =>
+    set((state) => ({
+      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
+        ...page,
+        grid: {
+          ...page.grid,
+          columnWidths: resizeWebDesignColumnWidths(page.grid.columns, page.grid.columnWidths, columnIndex, width),
+        },
+      })),
+      hasUnsavedChanges: true,
+    })),
 
   addWebDesignRow: () =>
     set((state) => {
@@ -1026,6 +1055,10 @@ function normalizeWebDesignLayout(value: unknown): WebDesignLayout {
   const layout = value as Partial<WebDesignLayout>;
   const grid = {
     columns: clamp(Number(layout.grid?.columns ?? 3), 2, 10),
+    columnWidths: normalizeWebDesignColumnWidths(
+      clamp(Number(layout.grid?.columns ?? 3), 2, 10),
+      layout.grid?.columnWidths
+    ),
     rows: Array.isArray(layout.grid?.rows) && layout.grid.rows.length
       ? layout.grid.rows.map((row, index) => ({
           id: String(row.id || `row-${index + 1}`),
@@ -1040,6 +1073,7 @@ function normalizeWebDesignLayout(value: unknown): WebDesignLayout {
   return ensureWebDesignPages({
     grid: {
       columns: grid.columns,
+      columnWidths: grid.columnWidths,
       rows: grid.rows,
     },
     zones,
@@ -1110,13 +1144,19 @@ function zoneOverlaps(
 }
 
 function clampPageToColumns(page: WebDesignPage, columns: number): WebDesignPage {
+  const clampZone = <T extends { column: number; colSpan: number }>(zone: T): T => {
+    const column = clamp(zone.column, 0, columns - 1);
+    return {
+      ...zone,
+      column,
+      colSpan: clamp(zone.colSpan, 1, columns - column),
+    };
+  };
+
   return {
     ...page,
-    zones: page.zones.map((zone) => ({
-      ...zone,
-      column: clamp(zone.column, 0, columns - 1),
-      colSpan: clamp(zone.colSpan, 1, columns - clamp(zone.column, 0, columns - 1)),
-    })),
+    zones: page.zones.map(clampZone),
+    textZones: (page.textZones ?? []).map(clampZone),
   };
 }
 
@@ -1252,8 +1292,10 @@ function normalizePages(
 }
 
 function normalizeGrid(grid: WebDesignLayout["grid"]): WebDesignLayout["grid"] {
+  const columns = clamp(Number(grid.columns ?? 3), 2, 10);
   return {
-    columns: clamp(Number(grid.columns ?? 3), 2, 10),
+    columns,
+    columnWidths: normalizeWebDesignColumnWidths(columns, grid.columnWidths),
     rows: Array.isArray(grid.rows) && grid.rows.length
       ? grid.rows.map((row, index) => ({
           id: String(row.id || `row-${index + 1}`),
@@ -1279,6 +1321,7 @@ function normalizeSidebar(items: WebDesignSidebarItem[], fallbackRowId: string):
 function cloneGrid(grid: WebDesignLayout["grid"]): WebDesignLayout["grid"] {
   return {
     columns: grid.columns,
+    columnWidths: normalizeWebDesignColumnWidths(grid.columns, grid.columnWidths),
     rows: grid.rows.map((row) => ({ ...row })),
   };
 }

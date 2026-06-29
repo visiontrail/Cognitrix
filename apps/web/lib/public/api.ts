@@ -28,7 +28,7 @@ export type PublishedZone = {
 export type PublishedPageLayout = {
   id: string;
   title: string;
-  grid: { columns: number; rows: { id: string; height: number }[] };
+  grid: { columns: number; columnWidths?: number[]; rows: { id: string; height: number }[] };
   zones: PublishedZone[];
   textZones?: PublishedTextZone[];
 };
@@ -66,7 +66,7 @@ export type PublishedManifest = {
     };
   };
   layout: {
-    grid: { columns: number; rows: { id: string; height: number }[] };
+    grid: { columns: number; columnWidths?: number[]; rows: { id: string; height: number }[] };
     zones: PublishedZone[];
     pages?: PublishedPageLayout[];
     activePageId?: string;

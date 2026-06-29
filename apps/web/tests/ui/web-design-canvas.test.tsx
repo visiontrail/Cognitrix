@@ -213,6 +213,16 @@ describe("WebDesignCanvas state", () => {
     expect(useWorkspaceStore.getState().webDesign.zones[0].rowSpan).toBe(1);
   });
 
+  it("resizes a Web Page Design column from the vertical drag handle", () => {
+    renderWithProviders(<WebDesignCanvas />);
+
+    fireEvent.mouseDown(screen.getByLabelText("Resize column 1"), { clientX: 100 });
+    fireEvent.mouseMove(window, { clientX: 170 });
+    fireEvent.mouseUp(window);
+
+    expect(useWorkspaceStore.getState().webDesign.grid.columnWidths).toEqual([350, 280]);
+  });
+
   it("copies a Web Page Design chart zone to the clipboard as a PNG", async () => {
     useWorkspaceStore.getState().placeWebDesignZone("node-chart", 0, 0);
     renderWithProviders(<WebDesignCanvas />);

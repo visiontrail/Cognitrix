@@ -343,7 +343,16 @@ def test_public_assistant_chat_missing_assistant_data_returns_404(monkeypatch, t
     with TestClient(app) as client:
         headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
         workspace_id = _make_workspace(client, headers)
-        token = _publish(client, headers, workspace_id)["token"]
+        # A snapshot with no chart nodes has nothing for the assistant to read,
+        # so the public assistant stays unavailable. (Charts that are published
+        # always carry render rows — the publish endpoint requires it — and the
+        # render-row fallback makes those assistant-readable.)
+        no_chart_body = {
+            "layout": {"grid": {"columns": 1, "rows": [{"id": "row-1", "height": 320}]}, "zones": []},
+            "sidebar": [{"id": "overview", "label": "Overview", "anchorRowId": "row-1", "children": []}],
+            "charts": [],
+        }
+        token = _publish_body(client, headers, workspace_id, no_chart_body)["token"]
 
         manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
         assert manifest["assistant"]["available"] is False

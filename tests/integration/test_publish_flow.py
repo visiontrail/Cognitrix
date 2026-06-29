@@ -158,10 +158,11 @@ def test_publish_flow_writes_uncapped_redacted_assistant_rows(monkeypatch, tmp_p
         assert all("salary" not in row for row in assistant_rows)
 
 
-def test_publish_flow_assistant_available_when_only_some_charts_have_rows(monkeypatch, tmp_path: Path) -> None:
-    """A mixed canvas (some charts with assistant rows, some without) must still
-    expose the public assistant. Charts without rows are dropped from the
-    readable set rather than disabling the page-level assistant."""
+def test_publish_flow_assistant_falls_back_to_render_rows(monkeypatch, tmp_path: Path) -> None:
+    """A chart authored before assistant-row capture ships render rows but no
+    assistant rows. Publishing must fall back to the render rows so the public
+    assistant is enabled, even though only the post-feature chart sent explicit
+    assistant rows."""
 
     _set_minimal_env(monkeypatch, tmp_path)
     source_rows = [{"department": f"Dept {index}", "headcount": index} for index in range(3)]
@@ -193,14 +194,15 @@ def test_publish_flow_assistant_available_when_only_some_charts_have_rows(monkey
                 "layout": {
                     "grid": {"columns": 2, "rows": [{"id": "row-1", "height": 320}]},
                     "zones": [
-                        {"id": "zone-1", "chart_id": "chart-with-rows", "column": 0, "row": 0},
+                        {"id": "zone-1", "chart_id": "chart-captured", "column": 0, "row": 0},
                         {"id": "zone-2", "chart_id": "chart-legacy", "column": 1, "row": 0},
                     ],
                 },
                 "sidebar": [],
                 "charts": [
                     {
-                        "chart_id": "chart-with-rows",
+                        # Post-feature chart: explicit assistant rows.
+                        "chart_id": "chart-captured",
                         "title": "Captured",
                         "chart_type": "bar",
                         "spec": {"chart_type": "bar", "title": "Captured"},
@@ -209,7 +211,8 @@ def test_publish_flow_assistant_available_when_only_some_charts_have_rows(monkey
                         "assistant_rows_complete": True,
                     },
                     {
-                        # Legacy-style chart: render rows only, no assistant rows.
+                        # Legacy chart: render rows only, no assistant rows.
+                        # The render-row fallback must enable it.
                         "chart_id": "chart-legacy",
                         "title": "Legacy",
                         "chart_type": "bar",
@@ -226,10 +229,11 @@ def test_publish_flow_assistant_available_when_only_some_charts_have_rows(monkey
         assert manifest["assistant"]["available"] is True
         assert manifest["assistant"]["chart_count"] == 2
         by_id = {chart["chart_id"]: chart for chart in manifest["charts"]}
-        assert by_id["chart-with-rows"]["assistant_data_available"] is True
-        assert by_id["chart-legacy"]["assistant_data_available"] is False
+        assert by_id["chart-captured"]["assistant_data_available"] is True
+        assert by_id["chart-legacy"]["assistant_data_available"] is True
+        assert by_id["chart-legacy"]["assistant_row_count"] == 3
 
-        # The assistant endpoint must be reachable for the mixed snapshot.
+        # The assistant endpoint must be reachable for the snapshot.
         chat = client.post(f"/public/pages/{token}/chat", json={"message": "hi"})
         assert chat.status_code != 404
 

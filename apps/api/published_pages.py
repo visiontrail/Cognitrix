@@ -376,7 +376,18 @@ class SnapshotWriter:
             data_truncated = len(rows) > self.max_rows
             safe_rows = self._sanitize_rows(capped_rows, role=actor_role)
             assistant_source_rows = list(chart.assistant_rows or [])
-            assistant_data_available = bool(chart.assistant_rows_complete and assistant_source_rows)
+            assistant_rows_complete = bool(chart.assistant_rows_complete)
+            if not assistant_source_rows and rows:
+                # Fallback for chart nodes authored before dedicated
+                # assistant-row capture existed: such nodes ship render rows but
+                # no assistant rows, so republishing alone could never enable the
+                # public assistant. Reuse the chart's full render rows as the
+                # assistant source. In the normal agent flow these are the same
+                # underlying rows the chart was built from, and they pass through
+                # the identical sensitive-column filtering/redaction below.
+                assistant_source_rows = rows
+                assistant_rows_complete = True
+            assistant_data_available = bool(assistant_rows_complete and assistant_source_rows)
             assistant_safe_rows = (
                 self._sanitize_rows(assistant_source_rows, role=actor_role)
                 if assistant_data_available
@@ -411,7 +422,7 @@ class SnapshotWriter:
                 "assistant_row_count": len(assistant_safe_rows),
                 "assistant_source_row_count": len(assistant_source_rows),
                 "assistant_data_available": assistant_data_available,
-                "assistant_rows_complete": bool(chart.assistant_rows_complete),
+                "assistant_rows_complete": assistant_rows_complete,
             }
             if assistant_data_available:
                 chart_entry["assistant_data_path"] = _relative_posix(assistant_data_path, target_dir)

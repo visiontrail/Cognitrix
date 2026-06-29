@@ -6,6 +6,10 @@ import { Bold, Check, Minus, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useI18n } from "@/lib/i18n/context";
+import {
+  resolveCanvasBackgroundPreset,
+  resolveCanvasTextColor,
+} from "@/lib/workspace/canvas-backgrounds";
 import type { TextNodeData } from "@/types/workspace";
 import { ResizableNode } from "./resizable-node";
 
@@ -28,6 +32,8 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const nodeData = data as unknown as TextNodeData;
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const removeNode = useWorkspaceStore((s) => s.removeNode);
+  const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
+  const canvasBackgrounds = useWorkspaceStore((s) => s.canvasBackgrounds);
 
   const [isHovered, setIsHovered] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -63,6 +69,8 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const fontSize = nodeData.fontSize ?? DEFAULT_TEXT_FONT_SIZE;
   const fontWeight = nodeData.fontWeight ?? "normal";
   const color = nodeData.color ?? DEFAULT_TEXT_COLOR;
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const displayColor = resolveCanvasTextColor(color, backgroundPreset);
   const editorHeight = Math.max(nodeHeight, MIN_TEXT_NODE_HEIGHT, getMinimumEditorHeight(fontSize));
   const textStyle = {
     color,
@@ -70,9 +78,13 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
     fontWeight,
     lineHeight: 1.45,
   };
+  const displayTextStyle = {
+    ...textStyle,
+    color: displayColor,
+  };
 
   const textLayer = (
-    <p className="whitespace-pre-wrap break-words" style={textStyle}>
+    <p className="whitespace-pre-wrap break-words" style={displayTextStyle}>
       {nodeData.content}
     </p>
   );

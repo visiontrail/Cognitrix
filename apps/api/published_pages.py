@@ -139,6 +139,7 @@ class PublishWorkspaceRequest(BaseModel):
     model_config = {"extra": "ignore"}
 
     canvas_format: PublishedCanvasFormat | None = None
+    background_preset_id: str | None = None
     page_count: int = 1
     viewport: PublishedViewport = Field(default_factory=PublishedViewport)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
@@ -154,6 +155,14 @@ class PublishWorkspaceRequest(BaseModel):
     @classmethod
     def validate_page_count(cls, value: int) -> int:
         return _clamp_page_count(value)
+
+    @field_validator("background_preset_id")
+    @classmethod
+    def validate_background_preset_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator("visibility_mode")
     @classmethod
@@ -312,6 +321,7 @@ class SnapshotWriter:
         actor_role: str,
         published_at: str,
         page_count: int = 1,
+        background_preset_id: str | None = None,
     ) -> SnapshotWriteResult:
         normalized_workspace_id = workspace_id.strip()
         if not normalized_workspace_id:
@@ -323,6 +333,9 @@ class SnapshotWriter:
         canvas = build_canvas_metadata(
             canvas_format_id=canvas_format_id, viewport=viewport, page_count=page_count
         )
+        normalized_background_preset_id = str(background_preset_id or "").strip()
+        if normalized_background_preset_id:
+            canvas["background_preset_id"] = normalized_background_preset_id
         canvas_kind = canvas["kind"]
         safe_nodes = normalize_public_nodes(nodes or [])
         safe_edges = normalize_public_edges(edges or [])
@@ -1245,6 +1258,9 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, include_internal_paths: 
                 "width": _positive_float(canvas["bounds"].get("width"), 0),
                 "height": _positive_float(canvas["bounds"].get("height"), 0),
             }
+        background_preset_id = str(canvas.get("background_preset_id") or "").strip()
+        if background_preset_id:
+            normalized_canvas["background_preset_id"] = background_preset_id
         manifest["canvas"] = normalized_canvas
         content = manifest.get("content") if isinstance(manifest.get("content"), dict) else {}
         manifest["content"] = {

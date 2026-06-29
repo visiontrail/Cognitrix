@@ -61,7 +61,11 @@ _PUBLISH_BODY = {
 
 
 def _publish(client: TestClient, headers, workspace_id: str):
-    resp = client.post(f"/workspaces/{workspace_id}/publish", headers=headers, json=_PUBLISH_BODY)
+    return _publish_body(client, headers, workspace_id, _PUBLISH_BODY)
+
+
+def _publish_body(client: TestClient, headers, workspace_id: str, body: dict):
+    resp = client.post(f"/workspaces/{workspace_id}/publish", headers=headers, json=body)
     resp.raise_for_status()
     return resp.json()
 
@@ -166,6 +170,67 @@ def test_public_manifest_unauthenticated_and_no_leakage(monkeypatch, tmp_path: P
         data = client.get(f"/public/pages/{token}/charts/chart-1/data")
         assert data.status_code == 200
         assert data.json()["rows"] == [{"department": "HR", "headcount": 4}]
+
+
+def test_publish_carries_canvas_background_into_public_manifest(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The designer-selected canvas backdrop must survive into the public read.
+
+    Regression guard for the published view ignoring the canvas background:
+    publishing an infinite/fixed canvas with ``background_preset_id`` must round
+    trip through the immutable snapshot to ``GET /public/pages/{token}/manifest``
+    so the public renderer can paint the same backdrop the editor shows.
+    """
+
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="admin", clearance=9)
+        workspace_id = _make_workspace(client, headers)
+
+        body = {
+            "canvas_format": {"id": "infinite"},
+            "background_preset_id": "graphite",
+            "viewport": {"x": 0, "y": 0, "zoom": 1},
+            "nodes": [
+                {
+                    "id": "text-1",
+                    "type": "textNode",
+                    "position": {"x": 10, "y": 10},
+                    "width": 200,
+                    "height": 80,
+                    "data": {"type": "text", "content": "hi", "color": "#3f3d39"},
+                }
+            ],
+            "edges": [],
+            "charts": [],
+        }
+        token = _publish_body(client, headers, workspace_id, body)["token"]
+
+        manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
+        assert manifest["canvas"]["format_id"] == "infinite"
+        assert manifest["canvas"]["background_preset_id"] == "graphite"
+
+        # Fixed-size canvases carry their own independent backdrop selection.
+        fixed_body = {
+            **body,
+            "canvas_format": {"id": "a4-portrait"},
+            "background_preset_id": "blueprint",
+            "nodes": [
+                {
+                    "id": "text-1",
+                    "type": "textNode",
+                    "position": {"x": 10, "y": 10},
+                    "width": 200,
+                    "height": 80,
+                    "data": {"type": "text", "content": "hi", "color": "#3f3d39"},
+                }
+            ],
+        }
+        fixed_token = _publish_body(client, headers, workspace_id, fixed_body)["token"]
+        fixed_manifest = client.get(f"/public/pages/{fixed_token}/manifest").json()["manifest"]
+        assert fixed_manifest["canvas"]["kind"] == "fixed_size"
+        assert fixed_manifest["canvas"]["background_preset_id"] == "blueprint"
 
 
 def test_unknown_token_returns_404(monkeypatch, tmp_path: Path) -> None:

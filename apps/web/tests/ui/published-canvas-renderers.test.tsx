@@ -127,6 +127,39 @@ describe("published canvas renderers", () => {
     expect(stage).toHaveStyle({ transform: "matrix(1, 0, 0, 1, 40, 25)" });
   });
 
+  it("renders dark published free-layout backgrounds with readable text", () => {
+    const manifest: PublishedManifest = {
+      ...baseManifest,
+      canvas: {
+        format_id: "infinite",
+        kind: "free_layout",
+        background_preset_id: "graphite",
+        bounds: { x: 0, y: 0, width: 640, height: 420 },
+      },
+      content: {
+        nodes: [
+          {
+            id: "text-1",
+            position: { x: 20, y: 24 },
+            width: 260,
+            height: 80,
+            data: { type: "text", content: "Dark canvas narrative", color: "#3f3d39" },
+          },
+        ],
+        edges: [],
+      },
+    };
+
+    render(<PublishedFreeCanvas token="pub-token" manifest={manifest} />);
+
+    expect(screen.getByTestId("published-free-canvas-viewport")).toHaveStyle({
+      backgroundColor: "#1f1e1c",
+    });
+    expect(screen.getByTestId("published-text-node-text-1")).toHaveStyle({
+      color: "#fffef9",
+    });
+  });
+
   it("renders fixed-size pages at the published page dimensions", () => {
     const manifest: PublishedManifest = {
       ...baseManifest,

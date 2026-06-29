@@ -228,6 +228,8 @@ export const CANVAS_BACKGROUND_PRESETS: CanvasBackgroundPreset[] = [
 ];
 
 const PRESET_BY_ID = new Map(CANVAS_BACKGROUND_PRESETS.map((preset) => [preset.id, preset]));
+const DEFAULT_DARK_TEXT_COLOR = "#3f3d39";
+const INVERTED_DARK_SURFACE_TEXT_COLOR = "#fffef9";
 
 /** Per-format default backdrop — preserves each canvas's established look. */
 const DEFAULT_BACKGROUND_BY_FORMAT: Partial<Record<WorkspaceCanvasFormatId, string>> = {
@@ -272,6 +274,63 @@ export function composeCanvasBackgroundStyle(preset: CanvasBackgroundPreset): CS
     backgroundRepeat: preset.layers.map((layer) => layer.repeat ?? "repeat").join(", "),
     backgroundPosition: "0 0",
   };
+}
+
+/**
+ * Keep free-floating canvas text readable when a dark backdrop is selected.
+ * Dark user colors (including the default near-black) are treated as foreground
+ * ink and flipped to light ink; already-light custom colors are preserved.
+ */
+export function resolveCanvasTextColor(
+  textColor: string | undefined,
+  backgroundPreset: CanvasBackgroundPreset
+): string {
+  const color = textColor || DEFAULT_DARK_TEXT_COLOR;
+  if (!backgroundPreset.dark) return color;
+  return isDarkCssColor(color) ? INVERTED_DARK_SURFACE_TEXT_COLOR : color;
+}
+
+function isDarkCssColor(color: string): boolean {
+  const rgb = parseCssColor(color);
+  if (!rgb) return false;
+  const [red, green, blue] = rgb.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  const relativeLuminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return relativeLuminance < 0.45;
+}
+
+function parseCssColor(color: string): [number, number, number] | null {
+  const normalized = color.trim().toLowerCase();
+  if (normalized === "black") return [0, 0, 0];
+  if (normalized === "white") return [255, 255, 255];
+
+  const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const value = hex[1];
+    if (value.length === 3) {
+      return value.split("").map((digit) => parseInt(`${digit}${digit}`, 16)) as [number, number, number];
+    }
+    return [
+      parseInt(value.slice(0, 2), 16),
+      parseInt(value.slice(2, 4), 16),
+      parseInt(value.slice(4, 6), 16),
+    ];
+  }
+
+  const rgb = normalized.match(/^rgba?\(\s*([.\d]+)\s*,\s*([.\d]+)\s*,\s*([.\d]+)(?:\s*,\s*[\d.]+)?\s*\)$/);
+  if (!rgb) return null;
+  return [
+    clampRgbChannel(Number(rgb[1])),
+    clampRgbChannel(Number(rgb[2])),
+    clampRgbChannel(Number(rgb[3])),
+  ];
+}
+
+function clampRgbChannel(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(255, value));
 }
 
 /** Order groups are surfaced in the picker. */

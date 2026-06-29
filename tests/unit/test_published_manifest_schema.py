@@ -59,12 +59,14 @@ def test_snapshot_writer_creates_schema_v2_manifest_for_canvas_modes(
         ],
         actor_role="viewer",
         published_at="2026-06-25T00:00:00Z",
+        background_preset_id="graphite",
     )
 
     manifest = result.manifest
     assert manifest["schema_version"] == 2
     assert manifest["canvas"]["format_id"] == canvas_format_id
     assert manifest["canvas"]["kind"] == expected_kind
+    assert manifest["canvas"]["background_preset_id"] == "graphite"
     assert manifest["charts"][0]["chart_id"] == "chart-1"
 
     if expected_kind == "web_page":

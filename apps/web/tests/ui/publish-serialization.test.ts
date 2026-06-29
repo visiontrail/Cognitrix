@@ -82,9 +82,11 @@ describe("buildActiveCanvasPublishPayload", () => {
       nodes: [chartNode, otherChartNode],
       edges: [{ id: "edge-1", source: "node-chart", target: "node-chart-2" }],
       webDesign,
+      canvasBackgrounds: { infinite: "graphite" },
     });
 
     expect(payload.canvas_format.id).toBe("infinite");
+    expect(payload.background_preset_id).toBe("graphite");
     expect(payload.viewport).toEqual({ x: -100, y: -50, zoom: 0.75 });
     expect(payload.edges).toHaveLength(1);
     expect(payload.web_design).toBeUndefined();
@@ -160,6 +162,7 @@ describe("buildActiveCanvasPublishPayload", () => {
           canvas: {
             format_id: "a4-portrait",
             kind: "fixed_size",
+            background_preset_id: "blueprint",
             viewport: { x: 0, y: 0, zoom: 1 },
             page: { preset_id: "a4-portrait", width: 794, height: 1123, count: 2, gap: 48 },
           },
@@ -185,6 +188,7 @@ describe("buildActiveCanvasPublishPayload", () => {
         nodesByFormat: {},
         edgesByFormat: {},
         canvasPages: { "a4-portrait": 1 },
+        canvasBackgrounds: {},
         viewport: { x: 0, y: 0, zoom: 1 },
         canvasFormat: { id: "a4-portrait" },
         webDesign,
@@ -193,6 +197,7 @@ describe("buildActiveCanvasPublishPayload", () => {
 
     expect(snapshot.canvasFormat?.id).toBe("a4-portrait");
     expect(snapshot.canvasPages?.["a4-portrait"]).toBe(2);
+    expect(snapshot.canvasBackgrounds?.["a4-portrait"]).toBe("blueprint");
     expect(snapshot.nodesByFormat?.["a4-portrait"]?.map((node) => node.id)).toEqual([
       "node-chart",
       "page-2-chart",

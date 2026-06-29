@@ -138,6 +138,7 @@ export function WorkspaceToolbar() {
   const viewport = useWorkspaceStore((s) => s.viewport);
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
   const canvasPages = useWorkspaceStore((s) => s.canvasPages);
+  const canvasBackgrounds = useWorkspaceStore((s) => s.canvasBackgrounds);
   const webDesign = useWorkspaceStore((s) => s.webDesign);
   const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
   const addCanvasPage = useWorkspaceStore((s) => s.addCanvasPage);
@@ -176,8 +177,16 @@ export function WorkspaceToolbar() {
   const isSlideCanvas = activeCanvasPreset.printStyle === "slide";
   const canPublish = workspace?.role === "owner" || workspace?.role === "editor";
   const activePublishSnapshot = useMemo(
-    () => buildActiveCanvasPublishPayload({ canvasFormat, pageCount, viewport, nodes, edges, webDesign }),
-    [canvasFormat, pageCount, viewport, nodes, edges, webDesign]
+    () => buildActiveCanvasPublishPayload({
+      canvasFormat,
+      pageCount,
+      viewport,
+      nodes,
+      edges,
+      webDesign,
+      canvasBackgrounds,
+    }),
+    [canvasFormat, pageCount, viewport, nodes, edges, webDesign, canvasBackgrounds]
   );
   const publishValidation = useMemo(
     () => validatePublishSnapshot(activePublishSnapshot),

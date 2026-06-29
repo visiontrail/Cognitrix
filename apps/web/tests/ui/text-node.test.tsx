@@ -57,6 +57,8 @@ describe("TextNode", () => {
       ] as WorkspaceNode[],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
+      canvasFormat: { id: "infinite" },
+      canvasBackgrounds: {},
       hasUnsavedChanges: false,
     });
   });
@@ -68,8 +70,21 @@ describe("TextNode", () => {
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
+      canvasFormat: { id: "infinite" },
+      canvasBackgrounds: {},
       hasUnsavedChanges: false,
     });
+  });
+
+  it("inverts dark text on dark canvas backgrounds", () => {
+    useWorkspaceStore.setState({
+      canvasFormat: { id: "infinite" },
+      canvasBackgrounds: { infinite: "graphite" },
+    });
+
+    renderTextNode(false);
+
+    expect(screen.getByText("Revenue grew steadily.")).toHaveStyle({ color: "#fffef9" });
   });
 
   it("keeps editing open when the text area blurs for resize handles", async () => {

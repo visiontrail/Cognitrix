@@ -10,6 +10,12 @@ import {
   type PublishedCanvasNode,
   type PublishedManifest,
 } from "@/lib/public/api";
+import {
+  composeCanvasBackgroundStyle,
+  getCanvasBackgroundPreset,
+  resolveCanvasTextColor,
+  type CanvasBackgroundPreset,
+} from "@/lib/workspace/canvas-backgrounds";
 import { useI18n } from "@/lib/i18n/context";
 import type { ChartSpec } from "@/types/chart";
 
@@ -17,6 +23,18 @@ const FREE_CANVAS_PADDING = 32;
 const MIN_FREE_CANVAS_ZOOM = 0.25;
 const MAX_FREE_CANVAS_ZOOM = 2;
 const FREE_CANVAS_ZOOM_STEP = 1.1;
+const LEGACY_FREE_CANVAS_BACKGROUND: CanvasBackgroundPreset = {
+  id: "legacy-public-free",
+  labelKey: "",
+  group: "surface",
+  baseColor: "#f7f4eb",
+};
+const LEGACY_FIXED_PAGE_BACKGROUND: CanvasBackgroundPreset = {
+  id: "legacy-public-fixed",
+  labelKey: "",
+  group: "surface",
+  baseColor: "#ffffff",
+};
 
 type FreeCanvasTransform = {
   x: number;
@@ -65,6 +83,11 @@ export function PublishedFreeCanvas({
   const top = Math.min(bounds.y, ...nodes.map((node) => node.position.y), 0);
   const width = Math.max(bounds.width + Math.abs(left) + 96, 960);
   const height = Math.max(bounds.height + Math.abs(top) + 96, 640);
+  const backgroundPreset = resolvePublishedBackgroundPreset(
+    manifest.canvas?.background_preset_id,
+    LEGACY_FREE_CANVAS_BACKGROUND
+  );
+  const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
   const offsetX = left < 0 ? Math.abs(left) + FREE_CANVAS_PADDING : FREE_CANVAS_PADDING;
   const offsetY = top < 0 ? Math.abs(top) + FREE_CANVAS_PADDING : FREE_CANVAS_PADDING;
   const initialTransform = useMemo<FreeCanvasTransform>(
@@ -158,7 +181,7 @@ export function PublishedFreeCanvas({
   return (
     <div
       ref={viewportRef}
-      className={`relative h-screen overflow-hidden bg-[#f7f4eb] text-[#2f332f] ${
+      className={`relative h-screen overflow-hidden text-[#2f332f] ${
         isDragging ? "cursor-grabbing" : "cursor-grab"
       }`}
       aria-label={t("public.canvas.viewport")}
@@ -168,7 +191,7 @@ export function PublishedFreeCanvas({
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
       onWheel={handleWheel}
-      style={{ touchAction: "none" }}
+      style={{ ...backgroundStyle, touchAction: "none" }}
     >
       <div
         ref={stageRef}
@@ -177,6 +200,7 @@ export function PublishedFreeCanvas({
         style={{
           width,
           height,
+          ...backgroundStyle,
           transform: `matrix(${transform.zoom}, 0, 0, ${transform.zoom}, ${transform.x}, ${transform.y})`,
           transformOrigin: "top left",
         }}
@@ -188,6 +212,7 @@ export function PublishedFreeCanvas({
             node={node}
             offsetX={offsetX}
             offsetY={offsetY}
+            backgroundPreset={backgroundPreset}
           />
         ))}
       </div>
@@ -195,7 +220,7 @@ export function PublishedFreeCanvas({
         getCanvasElement={() => stageRef.current}
         filenameBase={filenameBase}
         className="absolute right-4 top-4"
-        captureOptions={{ backgroundColor: "#f7f4eb", width, height }}
+        captureOptions={{ backgroundColor: backgroundPreset.baseColor, width, height }}
       />
       <div
         className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur"
@@ -279,6 +304,11 @@ export function PublishedFixedCanvas({
   const stride = page.height + gap;
   const stackHeight = page.height * pageCount + gap * Math.max(0, pageCount - 1);
   const pageIndexes = Array.from({ length: pageCount }, (_, index) => index);
+  const backgroundPreset = resolvePublishedBackgroundPreset(
+    manifest.canvas?.background_preset_id,
+    LEGACY_FIXED_PAGE_BACKGROUND
+  );
+  const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
   return (
     <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f]">
       <PublicCanvasActions
@@ -308,8 +338,8 @@ export function PublishedFixedCanvas({
               <div
                 key={pageIndex}
                 data-testid={`published-fixed-page-${pageIndex}`}
-                className="absolute overflow-hidden bg-white shadow-sm ring-1 ring-[#d8d1c1]"
-                style={{ left: 0, top: pageTop, width: page.width, height: page.height }}
+                className="absolute overflow-hidden shadow-sm ring-1 ring-[#d8d1c1]"
+                style={{ left: 0, top: pageTop, width: page.width, height: page.height, ...backgroundStyle }}
               >
                 {pageNodes.map((node) => (
                   <PublishedNode
@@ -318,6 +348,7 @@ export function PublishedFixedCanvas({
                     node={node}
                     offsetX={0}
                     offsetY={-pageTop}
+                    backgroundPreset={backgroundPreset}
                   />
                 ))}
               </div>
@@ -334,11 +365,13 @@ function PublishedNode({
   node,
   offsetX,
   offsetY,
+  backgroundPreset,
 }: {
   token: string;
   node: PublishedCanvasNode;
   offsetX: number;
   offsetY: number;
+  backgroundPreset: CanvasBackgroundPreset;
 }) {
   const width = Number(node.width ?? node.data.width ?? 240);
   const height = Number("height" in node.data ? node.height ?? node.data.height ?? 160 : node.height ?? 24);
@@ -354,7 +387,7 @@ function PublishedNode({
       }}
     >
       {isChartNode(node) && <PublishedChartNode token={token} node={node} height={height} />}
-      {isTextNode(node) && <PublishedTextNode node={node} />}
+      {isTextNode(node) && <PublishedTextNode node={node} backgroundPreset={backgroundPreset} />}
       {isStickyNode(node) && <PublishedStickyNode node={node} />}
       {isDividerNode(node) && <PublishedDividerNode node={node} />}
       {isSectionNode(node) && <PublishedSectionNode node={node} />}
@@ -409,13 +442,19 @@ function PublishedChartLoading() {
   );
 }
 
-function PublishedTextNode({ node }: { node: TextCanvasNode }) {
+function PublishedTextNode({
+  node,
+  backgroundPreset,
+}: {
+  node: TextCanvasNode;
+  backgroundPreset: CanvasBackgroundPreset;
+}) {
   return (
     <div
       className="w-full bg-transparent"
       data-testid={`published-text-node-${node.id}`}
       style={{
-        color: node.data.color || "#3f3d39",
+        color: resolveCanvasTextColor(node.data.color, backgroundPreset),
         fontSize: node.data.fontSize || 18,
         fontWeight: node.data.fontWeight || "normal",
         lineHeight: 1.45,
@@ -501,6 +540,13 @@ function clampFreeCanvasZoom(zoom: number): number {
 
 function roundFreeCanvasTransformValue(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+function resolvePublishedBackgroundPreset(
+  backgroundPresetId: string | undefined,
+  fallback: CanvasBackgroundPreset
+): CanvasBackgroundPreset {
+  return backgroundPresetId ? getCanvasBackgroundPreset(backgroundPresetId) : fallback;
 }
 
 function isChartNode(node: PublishedCanvasNode): node is ChartCanvasNode {

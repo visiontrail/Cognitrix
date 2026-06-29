@@ -2,6 +2,7 @@ import { getAuthorizationHeader } from "@/lib/auth/session";
 import { API_BASE_URL } from "@/lib/api-base";
 import { extractChartRows } from "@/lib/workspace/chart-rows";
 import { MAX_CANVAS_PAGES, normalizeCanvasFormat } from "@/lib/workspace/canvas-formats";
+import { resolveCanvasBackgroundPreset } from "@/lib/workspace/canvas-backgrounds";
 import { isRecord } from "@/lib/utils";
 import type { PublishedCanvasNode, PublishedManifest } from "@/lib/public/api";
 import type { ChartSpec } from "@/types/chart";
@@ -109,6 +110,7 @@ export type PublishedVersionSnapshot = {
 
 export type CanvasPublishSnapshot = {
   canvas_format: WorkspaceCanvasFormat;
+  background_preset_id: string;
   page_count: number;
   viewport: { x: number; y: number; zoom: number };
   nodes: WorkspaceNode[];
@@ -138,6 +140,7 @@ export function buildActiveCanvasPublishPayload({
   nodes,
   edges,
   webDesign,
+  canvasBackgrounds,
 }: {
   canvasFormat: WorkspaceCanvasFormat;
   pageCount?: number;
@@ -145,6 +148,7 @@ export function buildActiveCanvasPublishPayload({
   nodes: WorkspaceNode[];
   edges: WorkspaceEdge[];
   webDesign: WebDesignLayout;
+  canvasBackgrounds?: Partial<Record<WorkspaceCanvasFormatId, string>>;
 }): CanvasPublishSnapshot {
   const chartNodes = nodes.filter((node): node is WorkspaceNode & { data: ChartNodeData } =>
     node.data.type === "chart"
@@ -175,9 +179,11 @@ export function buildActiveCanvasPublishPayload({
       rows: extractChartRows(node.data),
     }));
   const publishNodes = canvasFormat.id === "web-design" ? nodes : flattenGroupedCanvasNodes(nodes);
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
 
   const payload: CanvasPublishSnapshot = {
     canvas_format: canvasFormat,
+    background_preset_id: backgroundPreset.id,
     page_count: Math.min(
       MAX_CANVAS_PAGES,
       Math.max(1, Math.trunc(Number.isFinite(pageCount) ? pageCount : 1))
@@ -417,6 +423,13 @@ export function buildWorkspaceSnapshotFromPublishedVersion({
   const canvasPages: Partial<Record<WorkspaceCanvasFormatId, number>> = {
     ...(baseSnapshot?.canvasPages ?? {}),
   };
+  const canvasBackgrounds: Partial<Record<WorkspaceCanvasFormatId, string>> = {
+    ...(baseSnapshot?.canvasBackgrounds ?? {}),
+  };
+  const backgroundPresetId = asString(manifest.canvas?.background_preset_id);
+  if (backgroundPresetId) {
+    canvasBackgrounds[canvasFormat.id] = backgroundPresetId;
+  }
   const restoredPageCount = Number(manifest.canvas?.page?.count ?? 1);
   if (manifest.canvas?.kind === "fixed_size") {
     canvasPages[canvasFormat.id] = Math.min(
@@ -432,6 +445,7 @@ export function buildWorkspaceSnapshotFromPublishedVersion({
     nodesByFormat,
     edgesByFormat,
     canvasPages,
+    canvasBackgrounds,
     viewport: normalizeViewport(manifest.canvas?.viewport),
     canvasFormat,
     webDesign:

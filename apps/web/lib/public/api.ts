@@ -53,6 +53,7 @@ export type PublishedManifest = {
   canvas?: {
     format_id: string;
     kind: "free_layout" | "fixed_size" | "web_page";
+    background_preset_id?: string;
     viewport?: { x: number; y: number; zoom: number };
     bounds?: { x: number; y: number; width: number; height: number };
     page?: { preset_id: string; width: number; height: number; count?: number; gap?: number };

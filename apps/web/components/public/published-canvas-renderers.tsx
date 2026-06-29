@@ -12,7 +12,7 @@ import {
 } from "@/lib/public/api";
 import {
   composeCanvasBackgroundStyle,
-  getCanvasBackgroundPreset,
+  resolveThemedCanvasBackgroundPreset,
   resolveCanvasTextColor,
   type CanvasBackgroundPreset,
 } from "@/lib/workspace/canvas-backgrounds";
@@ -69,6 +69,7 @@ export function PublishedFreeCanvas({
   filenameBase?: string;
 }) {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -86,7 +87,9 @@ export function PublishedFreeCanvas({
   const height = Math.max(bounds.height + Math.abs(top) + 96, 640);
   const backgroundPreset = resolvePublishedBackgroundPreset(
     manifest.canvas?.background_preset_id,
-    LEGACY_FREE_CANVAS_BACKGROUND
+    LEGACY_FREE_CANVAS_BACKGROUND,
+    resolvedTheme,
+    "graphite"
   );
   const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
   const offsetX = left < 0 ? Math.abs(left) + FREE_CANVAS_PADDING : FREE_CANVAS_PADDING;
@@ -277,6 +280,7 @@ export function PublishedFixedCanvas({
   manifest: PublishedManifest;
   filenameBase?: string;
 }) {
+  const { resolvedTheme } = useTheme();
   const page = manifest.canvas?.page;
   const stackRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
@@ -307,9 +311,12 @@ export function PublishedFixedCanvas({
   const pageIndexes = Array.from({ length: pageCount }, (_, index) => index);
   const backgroundPreset = resolvePublishedBackgroundPreset(
     manifest.canvas?.background_preset_id,
-    LEGACY_FIXED_PAGE_BACKGROUND
+    LEGACY_FIXED_PAGE_BACKGROUND,
+    resolvedTheme,
+    "midnight"
   );
   const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
+  const pageChromeBackground = resolvedTheme === "dark" ? "#111115" : "#ebe7dc";
   return (
     <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <PublicCanvasActions
@@ -317,7 +324,7 @@ export function PublishedFixedCanvas({
         filenameBase={filenameBase}
         allowPdf
         className="fixed right-4 top-4"
-        captureOptions={{ backgroundColor: "#ebe7dc", width: page.width, height: stackHeight }}
+        captureOptions={{ backgroundColor: pageChromeBackground, width: page.width, height: stackHeight }}
       />
       <div className="mx-auto" style={{ width: page.width * scale, height: stackHeight * scale }}>
         <div
@@ -546,9 +553,16 @@ function roundFreeCanvasTransformValue(value: number): number {
 
 function resolvePublishedBackgroundPreset(
   backgroundPresetId: string | undefined,
-  fallback: CanvasBackgroundPreset
+  fallback: CanvasBackgroundPreset,
+  theme: "light" | "dark",
+  darkFallbackId: string
 ): CanvasBackgroundPreset {
-  return backgroundPresetId ? getCanvasBackgroundPreset(backgroundPresetId) : fallback;
+  return resolveThemedCanvasBackgroundPreset({
+    backgroundPresetId,
+    theme,
+    fallback,
+    darkFallbackId,
+  });
 }
 
 function isChartNode(node: PublishedCanvasNode): node is ChartCanvasNode {

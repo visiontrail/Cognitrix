@@ -275,6 +275,48 @@ export function resolveCanvasBackgroundPreset(
   return getCanvasBackgroundPreset(getDefaultCanvasBackgroundId(formatId, theme));
 }
 
+const THEMED_BACKGROUND_PRESET_BY_ID: Record<string, Record<CanvasTheme, string>> = {
+  ivory: { light: "ivory", dark: "midnight" },
+  "pure-white": { light: "pure-white", dark: "midnight" },
+  parchment: { light: "parchment", dark: "graphite" },
+  sand: { light: "sand", dark: "graphite" },
+  graphite: { light: "parchment", dark: "graphite" },
+  midnight: { light: "ivory", dark: "midnight" },
+  dots: { light: "dots", dark: "graphite" },
+  "paper-grid": { light: "paper-grid", dark: "blueprint" },
+  "graph-paper": { light: "graph-paper", dark: "blueprint" },
+  blueprint: { light: "paper-grid", dark: "blueprint" },
+  ruled: { light: "ruled", dark: "midnight" },
+  "legal-pad": { light: "legal-pad", dark: "midnight" },
+  dawn: { light: "dawn", dark: "dusk" },
+  "terracotta-wash": { light: "terracotta-wash", dark: "dusk" },
+  dusk: { light: "dawn", dark: "dusk" },
+  grain: { light: "grain", dark: "graphite" },
+};
+
+/**
+ * Published pages are viewer-themed: a public dark-mode toggle should flip the
+ * page surface even when the immutable publish manifest stored a light preset.
+ */
+export function resolveThemedCanvasBackgroundPreset({
+  backgroundPresetId,
+  theme,
+  fallback,
+  darkFallbackId = "midnight",
+}: {
+  backgroundPresetId?: string;
+  theme: CanvasTheme;
+  fallback: CanvasBackgroundPreset;
+  darkFallbackId?: string;
+}): CanvasBackgroundPreset {
+  const source = backgroundPresetId ? getCanvasBackgroundPreset(backgroundPresetId) : fallback;
+  const themedPresetId = THEMED_BACKGROUND_PRESET_BY_ID[source.id]?.[theme];
+  if (themedPresetId) return getCanvasBackgroundPreset(themedPresetId);
+  if (theme === "dark" && !source.dark) return getCanvasBackgroundPreset(darkFallbackId);
+  if (theme === "light" && source.dark) return fallback.dark ? getCanvasBackgroundPreset("ivory") : fallback;
+  return source;
+}
+
 /** Compose a preset into a paint-anywhere CSS declaration. */
 export function composeCanvasBackgroundStyle(preset: CanvasBackgroundPreset): CSSProperties {
   if (!preset.layers || preset.layers.length === 0) {

@@ -11,11 +11,22 @@ import {
   PublicPageError,
   type PublicManifestResponse,
 } from "@/lib/public/api";
+import {
+  resolveThemedCanvasBackgroundPreset,
+  type CanvasBackgroundPreset,
+} from "@/lib/workspace/canvas-backgrounds";
 import { useI18n } from "@/lib/i18n/context";
 import { useTheme } from "@/lib/theme/context";
 import { Button } from "@/components/ui/button";
 
 type LoadState = "loading" | "ready" | "invalid" | "auth_required" | "forbidden";
+
+const LEGACY_WEB_PAGE_BACKGROUND: CanvasBackgroundPreset = {
+  id: "legacy-public-web-page",
+  labelKey: "",
+  group: "surface",
+  baseColor: "#ffffff",
+};
 
 export function PublicPageClient({ token }: { token: string }) {
   const { t } = useI18n();
@@ -118,6 +129,13 @@ export function PublicPageClient({ token }: { token: string }) {
     return <PublishedFixedCanvas token={token} manifest={page.manifest} filenameBase={filenameBase} />;
   }
 
+  const webPageBackgroundPreset = resolveThemedCanvasBackgroundPreset({
+    backgroundPresetId: page.manifest.canvas?.background_preset_id,
+    theme: resolvedTheme,
+    fallback: LEGACY_WEB_PAGE_BACKGROUND,
+    darkFallbackId: "midnight",
+  });
+
   return (
     <div className="flex h-screen min-h-0 overflow-hidden bg-[#f7f4eb] text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <PublicPageSidebar
@@ -130,13 +148,14 @@ export function PublicPageClient({ token }: { token: string }) {
           getCanvasElement={() => webPageCanvasRef.current}
           filenameBase={filenameBase}
           className="absolute right-5 top-5"
-          captureOptions={{ backgroundColor: resolvedTheme === "dark" ? "#111115" : "#ffffff" }}
+          captureOptions={{ backgroundColor: webPageBackgroundPreset.baseColor }}
         />
         <PublicPageGrid
           token={token}
           manifest={page.manifest}
           activePageId={activePageId}
           captureRef={webPageCanvasRef}
+          backgroundPreset={webPageBackgroundPreset}
         />
       </main>
     </div>

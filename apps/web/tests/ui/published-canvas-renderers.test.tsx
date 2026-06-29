@@ -1,8 +1,10 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublishedFixedCanvas, PublishedFreeCanvas } from "../../components/public/published-canvas-renderers";
+import { ThemeProvider } from "../../lib/theme/context";
+import { THEME_STORAGE_KEY } from "../../lib/theme/script";
 import type { PublishedManifest } from "../../lib/public/api";
 
 const publicApiMock = vi.hoisted(() => ({
@@ -32,12 +34,23 @@ const baseManifest = {
 
 describe("published canvas renderers", () => {
   beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.classList.remove("dark");
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-theme-mode");
     publicApiMock.fetchPublicChartData.mockResolvedValue({
       chart_id: "chart-1",
       spec: { chartType: "bar", title: "Published Headcount" },
       rows: [{ department: "HR", headcount: 4 }],
       data_truncated: false,
     });
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.classList.remove("dark");
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-theme-mode");
   });
 
   it("renders free-layout text and chart nodes without editor chrome", async () => {
@@ -127,13 +140,14 @@ describe("published canvas renderers", () => {
     expect(stage).toHaveStyle({ transform: "matrix(1, 0, 0, 1, 40, 25)" });
   });
 
-  it("renders dark published free-layout backgrounds with readable text", () => {
+  it("themes light published free-layout backgrounds in dark mode", async () => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
     const manifest: PublishedManifest = {
       ...baseManifest,
       canvas: {
         format_id: "infinite",
         kind: "free_layout",
-        background_preset_id: "graphite",
+        background_preset_id: "ivory",
         bounds: { x: 0, y: 0, width: 640, height: 420 },
       },
       content: {
@@ -150,10 +164,16 @@ describe("published canvas renderers", () => {
       },
     };
 
-    render(<PublishedFreeCanvas token="pub-token" manifest={manifest} />);
+    render(
+      <ThemeProvider>
+        <PublishedFreeCanvas token="pub-token" manifest={manifest} />
+      </ThemeProvider>
+    );
 
-    expect(screen.getByTestId("published-free-canvas-viewport")).toHaveStyle({
-      backgroundColor: "#1f1e1c",
+    await waitFor(() => {
+      expect(screen.getByTestId("published-free-canvas-viewport")).toHaveStyle({
+        backgroundColor: "#13151d",
+      });
     });
     expect(screen.getByTestId("published-text-node-text-1")).toHaveStyle({
       color: "#fffef9",

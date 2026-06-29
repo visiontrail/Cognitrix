@@ -9,6 +9,10 @@ import {
   type PublishedTextZone,
   type PublishedZone,
 } from "@/lib/public/api";
+import {
+  composeCanvasBackgroundStyle,
+  type CanvasBackgroundPreset,
+} from "@/lib/workspace/canvas-backgrounds";
 import { getWebDesignGridTemplateColumns, getWebDesignGridWidth } from "@/lib/workspace/web-design-grid";
 import type { ChartSpec } from "@/types/chart";
 import { useI18n } from "@/lib/i18n/context";
@@ -19,13 +23,16 @@ export function PublicPageGrid({
   manifest,
   activePageId,
   captureRef,
+  backgroundPreset,
 }: {
   token: string;
   manifest: PublishedManifest;
   activePageId?: string;
   captureRef?: RefObject<HTMLDivElement>;
+  backgroundPreset: CanvasBackgroundPreset;
 }) {
   const { resolvedTheme } = useTheme();
+  const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
   const pageLayout =
     manifest.layout.pages?.find((page) => page.id === activePageId) ??
     manifest.layout.pages?.[0] ?? {
@@ -39,9 +46,10 @@ export function PublicPageGrid({
     <div className="min-w-0 flex-1 overflow-auto p-5">
       <div
         ref={captureRef}
-        className="grid bg-white dark:bg-[#111115]"
+        className="grid"
         data-testid="public-page-grid-canvas"
         style={{
+          ...backgroundStyle,
           gridTemplateColumns: getWebDesignGridTemplateColumns(grid),
           gridTemplateRows: grid.rows.map((row) => `${row.height}px`).join(" "),
           minWidth: "100%",

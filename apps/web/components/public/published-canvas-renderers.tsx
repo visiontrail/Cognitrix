@@ -204,7 +204,12 @@ export function PublishedFreeCanvas({
         style={{
           width,
           height,
-          ...backgroundStyle,
+          // The full-screen viewport already paints the backdrop. Painting it
+          // again on the content-sized, pan/zoom-transformed stage produced a
+          // visible second grid layer whose edges and alignment diverged from
+          // the static viewport grid — the "background behind a background" the
+          // designer never sees. Keep the stage transparent so the backdrop
+          // reads as one continuous, truly-infinite surface.
           transform: `matrix(${transform.zoom}, 0, 0, ${transform.zoom}, ${transform.x}, ${transform.y})`,
           transformOrigin: "top left",
         }}

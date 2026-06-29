@@ -14,7 +14,7 @@ from threading import Lock
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from .config import get_settings
 from .data_policy import forbidden_sensitive_columns, redact_rows
@@ -84,6 +84,14 @@ class PublishedChartSnapshot(BaseModel):
     chart_id: str = Field(min_length=1)
     spec: dict[str, Any] = Field(default_factory=dict)
     rows: list[dict[str, Any]] = Field(default_factory=list)
+    assistant_rows: list[dict[str, Any]] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("assistant_rows", "assistantRows"),
+    )
+    assistant_rows_complete: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("assistant_rows_complete", "assistantRowsComplete"),
+    )
     title: str | None = None
     chart_type: str | None = None
 
@@ -358,6 +366,7 @@ class SnapshotWriter:
         charts_dir.mkdir(parents=True, exist_ok=True)
 
         chart_entries: list[dict[str, Any]] = []
+        assistant_total_rows = 0
         for chart in charts:
             chart_dir = charts_dir / _safe_path_segment(chart.chart_id)
             chart_dir.mkdir(parents=True, exist_ok=True)
@@ -366,6 +375,13 @@ class SnapshotWriter:
             capped_rows = rows[: self.max_rows]
             data_truncated = len(rows) > self.max_rows
             safe_rows = self._sanitize_rows(capped_rows, role=actor_role)
+            assistant_source_rows = list(chart.assistant_rows or [])
+            assistant_data_available = bool(chart.assistant_rows_complete and assistant_source_rows)
+            assistant_safe_rows = (
+                self._sanitize_rows(assistant_source_rows, role=actor_role)
+                if assistant_data_available
+                else []
+            )
 
             spec_payload = dict(chart.spec)
             spec_payload.setdefault("chart_id", chart.chart_id)
@@ -376,21 +392,30 @@ class SnapshotWriter:
 
             spec_path = chart_dir / "spec.json"
             data_path = chart_dir / "data.json"
+            assistant_data_path = chart_dir / "assistant-data.jsonl"
             _write_json(spec_path, spec_payload)
             _write_json(data_path, safe_rows)
+            if assistant_data_available:
+                _write_jsonl(assistant_data_path, assistant_safe_rows)
+                assistant_total_rows += len(assistant_safe_rows)
 
-            chart_entries.append(
-                {
-                    "chart_id": chart.chart_id,
-                    "title": chart.title or spec_payload.get("title") or chart.chart_id,
-                    "chart_type": chart.chart_type or spec_payload.get("chart_type"),
-                    "spec_path": _relative_posix(spec_path, target_dir),
-                    "data_path": _relative_posix(data_path, target_dir),
-                    "row_count": len(safe_rows),
-                    "source_row_count": len(rows),
-                    "data_truncated": data_truncated,
-                }
-            )
+            chart_entry = {
+                "chart_id": chart.chart_id,
+                "title": chart.title or spec_payload.get("title") or chart.chart_id,
+                "chart_type": chart.chart_type or spec_payload.get("chart_type"),
+                "spec_path": _relative_posix(spec_path, target_dir),
+                "data_path": _relative_posix(data_path, target_dir),
+                "row_count": len(safe_rows),
+                "source_row_count": len(rows),
+                "data_truncated": data_truncated,
+                "assistant_row_count": len(assistant_safe_rows),
+                "assistant_source_row_count": len(assistant_source_rows),
+                "assistant_data_available": assistant_data_available,
+                "assistant_rows_complete": bool(chart.assistant_rows_complete),
+            }
+            if assistant_data_available:
+                chart_entry["assistant_data_path"] = _relative_posix(assistant_data_path, target_dir)
+            chart_entries.append(chart_entry)
 
         if canvas_kind == CANVAS_KIND_WEB_PAGE:
             web_payload = dict(web_design or {})
@@ -415,6 +440,13 @@ class SnapshotWriter:
             "published_at": published_at,
             "canvas": canvas,
             "content": content,
+            "assistant": {
+                "available": bool(chart_entries) and all(
+                    bool(entry.get("assistant_data_available")) for entry in chart_entries
+                ),
+                "chart_count": len(chart_entries),
+                "row_count": assistant_total_rows,
+            },
             "charts": chart_entries,
         }
         if canvas_kind == CANVAS_KIND_WEB_PAGE:
@@ -1269,6 +1301,10 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, include_internal_paths: 
             **({"web_design": content["web_design"]} if isinstance(content.get("web_design"), dict) else {}),
         }
         manifest["charts"] = _normalize_chart_entries(manifest.get("charts"), include_internal_paths=include_internal_paths)
+        manifest["assistant"] = _normalize_assistant_metadata(
+            manifest.get("assistant"),
+            charts=manifest["charts"],
+        )
         return manifest
 
     layout = raw_manifest.get("layout") if isinstance(raw_manifest.get("layout"), dict) else {}
@@ -1286,6 +1322,7 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, include_internal_paths: 
         },
         "layout": layout,
         "sidebar": sidebar,
+        "assistant": _normalize_assistant_metadata(None, charts=[]),
         "charts": _normalize_chart_entries(raw_manifest.get("charts"), include_internal_paths=include_internal_paths),
     }
 
@@ -1308,7 +1345,12 @@ def manifest_canvas_kind(page: PublishedPage) -> str:
         return CANVAS_KIND_WEB_PAGE
 
 
-def read_chart_data(page: PublishedPage, *, chart_id: str) -> dict[str, Any]:
+def read_chart_data(
+    page: PublishedPage,
+    *,
+    chart_id: str,
+    include_assistant_rows: bool = False,
+) -> dict[str, Any]:
     manifest = read_manifest(page, include_internal_paths=True)
     chart_entries = manifest.get("charts")
     if not isinstance(chart_entries, list):
@@ -1331,13 +1373,19 @@ def read_chart_data(page: PublishedPage, *, chart_id: str) -> dict[str, Any]:
     manifest_dir = Path(page.manifest_path).parent
     spec = _read_json_file(manifest_dir / str(chart_entry.get("spec_path") or ""))
     rows = _read_json_file(manifest_dir / str(chart_entry.get("data_path") or ""))
-    return {
+    payload = {
         "page_id": page.id,
         "chart_id": chart_id,
         "spec": spec if isinstance(spec, dict) else {},
         "rows": rows if isinstance(rows, list) else [],
         "data_truncated": bool(chart_entry.get("data_truncated")),
     }
+    if include_assistant_rows and chart_entry.get("assistant_data_path"):
+        payload["assistant_rows"] = _read_jsonl_file(
+            manifest_dir / str(chart_entry.get("assistant_data_path") or "")
+        )
+        payload["assistant_rows_complete"] = bool(chart_entry.get("assistant_data_available"))
+    return payload
 
 
 def _sqlite_db_path_from_url(database_url: str) -> Path:
@@ -1358,6 +1406,14 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
 
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    payload = "".join(
+        f"{json.dumps(row, ensure_ascii=False, separators=(',', ':'))}\n"
+        for row in rows
+    )
+    path.write_text(payload, encoding="utf-8")
+
+
 def _read_json_file(path: Path) -> Any:
     if not path.exists():
         raise PublishedPageError(
@@ -1366,6 +1422,23 @@ def _read_json_file(path: Path) -> Any:
             status_code=404,
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_jsonl_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise PublishedPageError(
+            code="PUBLISHED_SNAPSHOT_FILE_NOT_FOUND",
+            message="Published snapshot file not found",
+            status_code=404,
+        )
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        decoded = json.loads(line)
+        if isinstance(decoded, dict):
+            rows.append(decoded)
+    return rows
 
 
 def _normalize_chart_entries(value: Any, *, include_internal_paths: bool) -> list[dict[str, Any]]:
@@ -1384,12 +1457,34 @@ def _normalize_chart_entries(value: Any, *, include_internal_paths: bool) -> lis
             "row_count": int(item.get("row_count") or 0),
             "source_row_count": int(item.get("source_row_count") or 0),
             "data_truncated": bool(item.get("data_truncated")),
+            "assistant_row_count": int(item.get("assistant_row_count") or 0),
+            "assistant_data_available": bool(item.get("assistant_data_available")),
         }
         if include_internal_paths:
             entry["spec_path"] = str(item.get("spec_path") or "")
             entry["data_path"] = str(item.get("data_path") or "")
+            if item.get("assistant_data_path"):
+                entry["assistant_data_path"] = str(item.get("assistant_data_path") or "")
         normalized.append(entry)
     return normalized
+
+
+def _normalize_assistant_metadata(value: Any, *, charts: list[dict[str, Any]]) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    all_chart_data_available = bool(charts) and all(
+        bool(chart.get("assistant_data_available")) for chart in charts
+    )
+    available = bool(raw.get("available")) and all_chart_data_available
+    raw_chart_count = raw.get("chart_count")
+    raw_row_count = raw.get("row_count")
+    return {
+        "available": available,
+        "chart_count": _non_negative_int(raw_chart_count, len(charts)),
+        "row_count": _non_negative_int(
+            raw_row_count,
+            sum(int(chart.get("assistant_row_count") or 0) for chart in charts),
+        ),
+    }
 
 
 def _normalize_viewport(value: PublishedViewport | dict[str, Any] | None) -> dict[str, float]:
@@ -1428,6 +1523,14 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _non_negative_int(value: Any, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return max(0, default)
+    return max(0, number)
 
 
 def _is_json_safe_scalar_or_container(value: Any) -> bool:

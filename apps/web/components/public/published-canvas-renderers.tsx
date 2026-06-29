@@ -63,10 +63,18 @@ export function PublishedFreeCanvas({
   token,
   manifest,
   filenameBase = "published-canvas",
+  assistantAvailable = false,
+  onOpenAssistant,
+  selectedChartId,
+  onSelectChart,
 }: {
   token: string;
   manifest: PublishedManifest;
   filenameBase?: string;
+  assistantAvailable?: boolean;
+  onOpenAssistant?: () => void;
+  selectedChartId?: string;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const { t } = useI18n();
   const { resolvedTheme } = useTheme();
@@ -222,6 +230,8 @@ export function PublishedFreeCanvas({
             offsetX={offsetX}
             offsetY={offsetY}
             backgroundPreset={backgroundPreset}
+            selectedChartId={selectedChartId}
+            onSelectChart={onSelectChart}
           />
         ))}
       </div>
@@ -230,6 +240,8 @@ export function PublishedFreeCanvas({
         filenameBase={filenameBase}
         className="absolute right-4 top-4"
         captureOptions={{ backgroundColor: backgroundPreset.baseColor, width, height }}
+        assistantAvailable={assistantAvailable}
+        onOpenAssistant={onOpenAssistant}
       />
       <div
         className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/15 dark:bg-[#1c1c38]/90"
@@ -280,10 +292,18 @@ export function PublishedFixedCanvas({
   token,
   manifest,
   filenameBase = "published-canvas",
+  assistantAvailable = false,
+  onOpenAssistant,
+  selectedChartId,
+  onSelectChart,
 }: {
   token: string;
   manifest: PublishedManifest;
   filenameBase?: string;
+  assistantAvailable?: boolean;
+  onOpenAssistant?: () => void;
+  selectedChartId?: string;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const page = manifest.canvas?.page;
@@ -330,6 +350,8 @@ export function PublishedFixedCanvas({
         allowPdf
         className="fixed right-4 top-4"
         captureOptions={{ backgroundColor: pageChromeBackground, width: page.width, height: stackHeight }}
+        assistantAvailable={assistantAvailable}
+        onOpenAssistant={onOpenAssistant}
       />
       <div className="mx-auto" style={{ width: page.width * scale, height: stackHeight * scale }}>
         <div
@@ -362,6 +384,8 @@ export function PublishedFixedCanvas({
                     offsetX={0}
                     offsetY={-pageTop}
                     backgroundPreset={backgroundPreset}
+                    selectedChartId={selectedChartId}
+                    onSelectChart={onSelectChart}
                   />
                 ))}
               </div>
@@ -379,12 +403,16 @@ function PublishedNode({
   offsetX,
   offsetY,
   backgroundPreset,
+  selectedChartId,
+  onSelectChart,
 }: {
   token: string;
   node: PublishedCanvasNode;
   offsetX: number;
   offsetY: number;
   backgroundPreset: CanvasBackgroundPreset;
+  selectedChartId?: string;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const width = Number(node.width ?? node.data.width ?? 240);
   const height = Number("height" in node.data ? node.height ?? node.data.height ?? 160 : node.height ?? 24);
@@ -399,7 +427,15 @@ function PublishedNode({
         zIndex: node.zIndex ?? 1,
       }}
     >
-      {isChartNode(node) && <PublishedChartNode token={token} node={node} height={height} />}
+      {isChartNode(node) && (
+        <PublishedChartNode
+          token={token}
+          node={node}
+          height={height}
+          selected={selectedChartId === node.data.assetId}
+          onSelectChart={onSelectChart}
+        />
+      )}
       {isTextNode(node) && <PublishedTextNode node={node} backgroundPreset={backgroundPreset} />}
       {isStickyNode(node) && <PublishedStickyNode node={node} />}
       {isDividerNode(node) && <PublishedDividerNode node={node} />}
@@ -412,10 +448,14 @@ function PublishedChartNode({
   token,
   node,
   height,
+  selected,
+  onSelectChart,
 }: {
   token: string;
   node: ChartCanvasNode;
   height: number;
+  selected?: boolean;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const chartId = node.data.assetId;
@@ -434,7 +474,21 @@ function PublishedChartNode({
   }, [chartId, token]);
 
   return (
-    <section className="h-full overflow-hidden rounded-md border border-[#d8d1c1] bg-white dark:border-white/10 dark:bg-[#1c1c38]/80">
+    <section
+      className={`h-full overflow-hidden rounded-md border bg-white dark:bg-[#1c1c38]/80 ${
+        selected ? "border-[#4b7f8c] ring-2 ring-[#4b7f8c]/30" : "border-[#d8d1c1] dark:border-white/10"
+      }`}
+      role={onSelectChart ? "button" : undefined}
+      tabIndex={onSelectChart ? 0 : undefined}
+      onClick={() => onSelectChart?.(chartId)}
+      onKeyDown={(event) => {
+        if (!onSelectChart) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelectChart(chartId);
+        }
+      }}
+    >
       <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10 dark:text-white">
         {title || chartId}
       </div>

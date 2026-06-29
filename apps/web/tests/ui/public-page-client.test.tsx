@@ -1,9 +1,10 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublicPageClient } from "../../components/public/public-page-client";
-import { fetchPublicManifest, PublicPageError } from "../../lib/public/api";
+import { fetchPublicManifest, PublicPageError, streamPublicAssistant } from "../../lib/public/api";
 
 vi.mock("@/lib/public/api", async () => {
   const actual = await vi.importActual<typeof import("../../lib/public/api")>("../../lib/public/api");
@@ -11,6 +12,7 @@ vi.mock("@/lib/public/api", async () => {
     ...actual,
     fetchPublicManifest: vi.fn(),
     fetchPublicChartData: vi.fn(),
+    streamPublicAssistant: vi.fn(),
   };
 });
 
@@ -20,6 +22,7 @@ vi.mock("@/components/public/published-canvas-renderers", () => ({
 }));
 
 const fetchPublicManifestMock = vi.mocked(fetchPublicManifest);
+const streamPublicAssistantMock = vi.mocked(streamPublicAssistant);
 
 function manifestBase(kind: "free_layout" | "fixed_size" | "web_page") {
   return {
@@ -52,6 +55,7 @@ function manifestBase(kind: "free_layout" | "fixed_size" | "web_page") {
 describe("PublicPageClient", () => {
   beforeEach(() => {
     fetchPublicManifestMock.mockReset();
+    streamPublicAssistantMock.mockReset();
   });
 
   it("routes free-layout manifests to the free canvas renderer", async () => {
@@ -86,6 +90,37 @@ describe("PublicPageClient", () => {
       expect(screen.getByText("Section 1")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("published-free-canvas")).not.toBeInTheDocument();
+  });
+
+  it("opens the public assistant drawer and renders streamed events", async () => {
+    const user = userEvent.setup();
+    const payload = manifestBase("web_page");
+    payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+    fetchPublicManifestMock.mockResolvedValue(payload);
+    streamPublicAssistantMock.mockImplementation(async function* (_token, request) {
+      expect(request.message).toBe("Summarize the page");
+      yield { event: "planning", data: { text: "Inspecting snapshot." } };
+      yield {
+        event: "tool_use",
+        data: { step_id: "step-1", tool_name: "list_snapshot_tables", started_at: 1 },
+      };
+      yield {
+        event: "tool_result",
+        data: { step_id: "step-1", status: "success", result: { row_count: 2 }, started_at: 1, completed_at: 2 },
+      };
+      yield { event: "final", data: { text: "Published answer" } };
+    });
+
+    render(<PublicPageClient token="tok" />);
+
+    await user.click(await screen.findByRole("button", { name: "Open AI Assistant" }));
+    expect(screen.getByTestId("public-assistant-drawer")).toBeInTheDocument();
+
+    await user.type(screen.getByTestId("public-assistant-input"), "Summarize the page");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Published answer")).toBeInTheDocument();
+    expect(screen.getByText("list_snapshot_tables")).toBeInTheDocument();
   });
 
   it("renders the neutral unavailable state for invalid canvas metadata", async () => {

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
 from apps.api.audit import clear_audit_logger_cache
 from apps.api.auth import clear_auth_cache
 from apps.api.chat import clear_chat_stream_service_cache
+from apps.api.chart_query_agent import clear_chart_query_agent_cache
 from apps.api.config import get_settings
 from apps.api.datasets import clear_dataset_service_cache
 from apps.api.main import app
@@ -31,6 +33,7 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     clear_auth_cache()
     clear_audit_logger_cache()
     clear_chat_stream_service_cache()
+    clear_chart_query_agent_cache()
     clear_dataset_service_cache()
     clear_semantic_cache()
     clear_tool_calling_service_cache()
@@ -55,6 +58,24 @@ _PUBLISH_BODY = {
             "chart_type": "bar",
             "spec": {"chart_type": "bar", "title": "Headcount"},
             "rows": [{"department": "HR", "headcount": 4, "salary": 100}],
+        }
+    ],
+}
+
+_PUBLISH_BODY_WITH_ASSISTANT = {
+    **_PUBLISH_BODY,
+    "charts": [
+        {
+            **_PUBLISH_BODY["charts"][0],
+            "rows": [
+                {"department": "HR", "headcount": 4, "salary": 100},
+                {"department": "Finance", "headcount": 6, "salary": 200},
+            ],
+            "assistant_rows": [
+                {"department": "HR", "headcount": 4, "salary": 100},
+                {"department": "Finance", "headcount": 6, "salary": 200},
+            ],
+            "assistant_rows_complete": True,
         }
     ],
 }
@@ -89,6 +110,23 @@ def _register_user(client: TestClient, *, email: str, display_name: str) -> tupl
     resp.raise_for_status()
     payload = resp.json()
     return payload["user"]["id"], {"Authorization": f"Bearer {payload['access_token']}"}
+
+
+def _parse_sse(raw: str) -> list[dict]:
+    events: list[dict] = []
+    for frame in raw.strip().split("\n\n"):
+        if not frame.strip():
+            continue
+        event_type = "message"
+        data = None
+        for line in frame.splitlines():
+            if line.startswith("event:"):
+                event_type = line.split(":", 1)[1].strip()
+            if line.startswith("data:"):
+                data = json.loads(line.split(":", 1)[1].strip())
+        if data is not None:
+            events.append({"event": event_type, "data": data})
+    return events
 
 
 def test_publish_returns_public_link_and_status_and_revoke(monkeypatch, tmp_path: Path) -> None:
@@ -238,6 +276,80 @@ def test_unknown_token_returns_404(monkeypatch, tmp_path: Path) -> None:
     with TestClient(app) as client:
         assert client.get("/public/pages/never-existed/manifest").status_code == 404
         assert client.get("/public/pages/never-existed/charts/x/data").status_code == 404
+        assert client.post("/public/pages/never-existed/chat", json={"message": "hi"}).status_code == 404
+
+
+def test_public_assistant_chat_streams_for_assistant_enabled_snapshot(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    class FakePublicAgent:
+        async def run_turn_stream(self, **kwargs):
+            assert kwargs["message"] == "Summarize headcount"
+            assert kwargs["conversation_id"] == "conv-public"
+            yield (
+                "planning",
+                {
+                    "conversation_id": kwargs["conversation_id"],
+                    "request_id": kwargs["request_id"],
+                    "text": "Inspecting published snapshot.",
+                },
+            )
+            yield (
+                "final",
+                {
+                    "conversation_id": kwargs["conversation_id"],
+                    "request_id": kwargs["request_id"],
+                    "status": "completed",
+                    "text": "HR has 4 people and Finance has 6.",
+                },
+            )
+
+    monkeypatch.setattr("apps.api.public_pages.get_chart_query_agent", lambda: FakePublicAgent())
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_id = _make_workspace(client, headers)
+        token = _publish_body(client, headers, workspace_id, _PUBLISH_BODY_WITH_ASSISTANT)["token"]
+
+        response = client.post(
+            f"/public/pages/{token}/chat",
+            json={"message": "Summarize headcount", "conversation_id": "conv-public"},
+        )
+        assert response.status_code == 200
+        assert response.headers.get("cache-control", "").startswith("no-store")
+        events = _parse_sse(response.text)
+        assert [event["event"] for event in events] == ["planning", "final"]
+        assert events[-1]["data"]["text"] == "HR has 4 people and Finance has 6."
+        serialized = response.text
+        for leaked in ("workspace_members", "agent_session_id", "database_path", "manifest_path", "uploads"):
+            assert leaked not in serialized
+
+
+def test_public_assistant_chat_revoked_token_returns_404(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_id = _make_workspace(client, headers)
+        token = _publish_body(client, headers, workspace_id, _PUBLISH_BODY_WITH_ASSISTANT)["token"]
+
+        client.delete(f"/workspaces/{workspace_id}/publish", headers=headers).raise_for_status()
+
+        response = client.post(f"/public/pages/{token}/chat", json={"message": "hi"})
+        assert response.status_code == 404
+
+
+def test_public_assistant_chat_missing_assistant_data_returns_404(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_id = _make_workspace(client, headers)
+        token = _publish(client, headers, workspace_id)["token"]
+
+        manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
+        assert manifest["assistant"]["available"] is False
+
+        response = client.post(f"/public/pages/{token}/chat", json={"message": "hi"})
+        assert response.status_code == 404
 
 
 def test_publish_history_includes_visibility_summary(monkeypatch, tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ from apps.api.chat import clear_chat_stream_service_cache
 from apps.api.config import get_settings
 from apps.api.datasets import clear_dataset_service_cache
 from apps.api.main import app
-from apps.api.published_pages import clear_published_page_store_cache
+from apps.api.published_pages import clear_published_page_store_cache, get_published_page_store, read_manifest
 from apps.api.semantic import clear_semantic_cache
 from apps.api.tool_calling import clear_tool_calling_service_cache
 from apps.api.views import clear_view_storage_service_cache
@@ -89,6 +90,72 @@ def test_publish_flow_writes_snapshot_files_and_redacts_sensitive_columns(monkey
         data_response.raise_for_status()
         rows = data_response.json()["rows"]
         assert rows == [{"department": "HR", "headcount": 4}]
+
+
+def test_publish_flow_writes_uncapped_redacted_assistant_rows(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    source_rows = [
+        {"department": f"Dept {index}", "headcount": index, "salary": 1000 + index}
+        for index in range(7)
+    ]
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_response = client.post("/workspaces", json={"name": "Assistant Publish"}, headers=headers)
+        workspace_response.raise_for_status()
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        publish_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "layout": {
+                    "grid": {"columns": 1, "rows": [{"id": "row-1", "height": 320}]},
+                    "zones": [{"id": "zone-1", "chart_id": "chart-1", "column": 0, "row": 0}],
+                },
+                "sidebar": [],
+                "charts": [
+                    {
+                        "chart_id": "chart-1",
+                        "title": "Assistant Headcount",
+                        "chart_type": "bar",
+                        "spec": {"chart_type": "bar", "title": "Assistant Headcount"},
+                        "rows": source_rows,
+                        "assistant_rows": source_rows,
+                        "assistant_rows_complete": True,
+                    }
+                ],
+            },
+        )
+        publish_response.raise_for_status()
+        body = publish_response.json()
+        token = body["token"]
+
+        public_manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
+        assert public_manifest["assistant"] == {
+            "available": True,
+            "chart_count": 1,
+            "row_count": 7,
+        }
+        public_chart = public_manifest["charts"][0]
+        assert public_chart["assistant_data_available"] is True
+        assert public_chart["assistant_row_count"] == 7
+        assert "assistant_data_path" not in public_chart
+
+        data_response = client.get(f"/public/pages/{token}/charts/chart-1/data")
+        data_response.raise_for_status()
+        render_rows = data_response.json()["rows"]
+        assert len(render_rows) == 5
+        assert all("salary" not in row for row in render_rows)
+
+        page = get_published_page_store().get(page_id=body["published_page_id"])
+        internal_manifest = read_manifest(page, include_internal_paths=True)
+        internal_chart = internal_manifest["charts"][0]
+        assistant_path = Path(page.manifest_path).parent / internal_chart["assistant_data_path"]
+        assistant_rows = [json.loads(line) for line in assistant_path.read_text(encoding="utf-8").splitlines()]
+        assert len(assistant_rows) == 7
+        assert all("salary" not in row for row in assistant_rows)
 
 
 def test_workspace_published_snapshot_reads_non_active_version(monkeypatch, tmp_path: Path) -> None:

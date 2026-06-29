@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     agent_max_sql_rows: int = Field(default=200, alias="AGENT_MAX_SQL_ROWS")
     agent_max_sql_scan_rows: int = Field(default=10000, alias="AGENT_MAX_SQL_SCAN_ROWS")
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
+    public_assistant_cache_ttl_seconds: int = Field(default=30 * 60, alias="PUBLIC_ASSISTANT_CACHE_TTL_SECONDS")
+    public_assistant_cache_max_entries: int = Field(default=10, alias="PUBLIC_ASSISTANT_CACHE_MAX_ENTRIES")
+    public_assistant_max_query_rows: int = Field(default=200, alias="PUBLIC_ASSISTANT_MAX_QUERY_ROWS")
     multi_chart_generation_enabled: bool = Field(default=True, alias="MULTI_CHART_GENERATION_ENABLED")
     agent_max_multi_charts: int = Field(default=8, alias="AGENT_MAX_MULTI_CHARTS")
     multi_chart_confirmation_ttl_seconds: int = Field(default=900, alias="MULTI_CHART_CONFIRMATION_TTL_SECONDS")
@@ -105,6 +108,9 @@ class Settings(BaseSettings):
         "agent_max_tool_steps",
         "agent_max_sql_rows",
         "agent_max_sql_scan_rows",
+        "public_assistant_cache_ttl_seconds",
+        "public_assistant_cache_max_entries",
+        "public_assistant_max_query_rows",
         "agent_max_multi_charts",
         "multi_chart_confirmation_ttl_seconds",
     )

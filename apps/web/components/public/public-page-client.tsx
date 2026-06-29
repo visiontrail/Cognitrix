@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { PublicAssistantDrawer } from "@/components/public/public-assistant-drawer";
 import { PublicCanvasActions } from "@/components/public/public-canvas-actions";
 import { PublicPageGrid } from "@/components/public/public-page-grid";
 import { PublicPageSidebar } from "@/components/public/public-page-sidebar";
@@ -35,6 +36,8 @@ export function PublicPageClient({ token }: { token: string }) {
   const [state, setState] = useState<LoadState>("loading");
   const [page, setPage] = useState<PublicManifestResponse | null>(null);
   const [activePageId, setActivePageId] = useState<string | undefined>();
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [selectedChartId, setSelectedChartId] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -122,11 +125,50 @@ export function PublicPageClient({ token }: { token: string }) {
 
   const canvasKind = page.manifest.canvas?.kind ?? "web_page";
   const filenameBase = `published-canvas-v${page.version}`;
+  const assistantAvailable = page.manifest.assistant?.available === true;
   if (canvasKind === "free_layout") {
-    return <PublishedFreeCanvas token={token} manifest={page.manifest} filenameBase={filenameBase} />;
+    return (
+      <>
+        <PublishedFreeCanvas
+          token={token}
+          manifest={page.manifest}
+          filenameBase={filenameBase}
+          assistantAvailable={assistantAvailable}
+          onOpenAssistant={() => setAssistantOpen(true)}
+          selectedChartId={selectedChartId}
+          onSelectChart={setSelectedChartId}
+        />
+        <PublicAssistantDrawer
+          token={token}
+          manifest={page.manifest}
+          open={assistantOpen}
+          selectedChartId={selectedChartId}
+          onClose={() => setAssistantOpen(false)}
+        />
+      </>
+    );
   }
   if (canvasKind === "fixed_size") {
-    return <PublishedFixedCanvas token={token} manifest={page.manifest} filenameBase={filenameBase} />;
+    return (
+      <>
+        <PublishedFixedCanvas
+          token={token}
+          manifest={page.manifest}
+          filenameBase={filenameBase}
+          assistantAvailable={assistantAvailable}
+          onOpenAssistant={() => setAssistantOpen(true)}
+          selectedChartId={selectedChartId}
+          onSelectChart={setSelectedChartId}
+        />
+        <PublicAssistantDrawer
+          token={token}
+          manifest={page.manifest}
+          open={assistantOpen}
+          selectedChartId={selectedChartId}
+          onClose={() => setAssistantOpen(false)}
+        />
+      </>
+    );
   }
 
   const webPageBackgroundPreset = resolveThemedCanvasBackgroundPreset({
@@ -149,6 +191,8 @@ export function PublicPageClient({ token }: { token: string }) {
           filenameBase={filenameBase}
           className="absolute right-5 top-5"
           captureOptions={{ backgroundColor: webPageBackgroundPreset.baseColor }}
+          assistantAvailable={assistantAvailable}
+          onOpenAssistant={() => setAssistantOpen(true)}
         />
         <PublicPageGrid
           token={token}
@@ -156,6 +200,15 @@ export function PublicPageClient({ token }: { token: string }) {
           activePageId={activePageId}
           captureRef={webPageCanvasRef}
           backgroundPreset={webPageBackgroundPreset}
+          selectedChartId={selectedChartId}
+          onSelectChart={setSelectedChartId}
+        />
+        <PublicAssistantDrawer
+          token={token}
+          manifest={page.manifest}
+          open={assistantOpen}
+          selectedChartId={selectedChartId}
+          onClose={() => setAssistantOpen(false)}
         />
       </main>
     </div>

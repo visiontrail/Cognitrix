@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Download, FileImage, FileText, Loader2, Moon, Printer, Sun } from "lucide-react";
+import { Bot, Download, FileImage, FileText, Loader2, Moon, Printer, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +30,8 @@ type PublicCanvasActionsProps = {
     height?: number;
     style?: Partial<CSSStyleDeclaration>;
   };
+  assistantAvailable?: boolean;
+  onOpenAssistant?: () => void;
   className?: string;
 };
 
@@ -38,6 +40,8 @@ export function PublicCanvasActions({
   filenameBase,
   allowPdf = false,
   captureOptions,
+  assistantAvailable = false,
+  onOpenAssistant,
   className,
 }: PublicCanvasActionsProps) {
   const { t } = useI18n();
@@ -148,6 +152,24 @@ export function PublicCanvasActions({
             <TooltipContent>{t("public.canvas.exportPng")}</TooltipContent>
           </Tooltip>
         )}
+        {assistantAvailable ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onOpenAssistant}
+                aria-label={t("public.assistant.open")}
+                className="h-8 px-2 text-[#3f3d39] hover:bg-[#f3eadc] dark:text-white dark:hover:bg-white/10"
+              >
+                <Bot className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">{t("public.assistant.button")}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("public.assistant.open")}</TooltipContent>
+          </Tooltip>
+        ) : null}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

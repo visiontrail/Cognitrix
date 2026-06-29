@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "@/lib/api-base";
 import { getInMemoryToken } from "@/lib/auth/session";
+import { parseSSEStream, type SSEEvent } from "@/lib/chat/sse";
 
 // Public published-page types. These mirror the snapshot manifest written at
 // publish time and are fetched by public token without any auth headers.
@@ -38,6 +39,8 @@ export type PublishedChartEntry = {
   title: string;
   chart_type?: string;
   data_truncated?: boolean;
+  assistant_row_count?: number;
+  assistant_data_available?: boolean;
 };
 
 export type PublishedSidebarItem = {
@@ -73,6 +76,11 @@ export type PublishedManifest = {
     activePageId?: string;
   };
   sidebar: PublishedSidebarItem[];
+  assistant?: {
+    available: boolean;
+    chart_count?: number;
+    row_count?: number;
+  };
   charts: PublishedChartEntry[];
 };
 
@@ -152,6 +160,14 @@ export type PublicChartData = {
   data_truncated: boolean;
 };
 
+export type PublicAssistantRequest = {
+  message: string;
+  conversation_id: string;
+  chart_id?: string;
+};
+
+export type PublicAssistantEvent = SSEEvent;
+
 export class PublicPageError extends Error {
   status: number;
   code: "not_found" | "authentication_required" | "forbidden" | "error";
@@ -208,6 +224,37 @@ export async function fetchPublicChartData(
     throw new PublicPageError("error", response.status, "error");
   }
   return response.json();
+}
+
+export async function* streamPublicAssistant(
+  token: string,
+  request: PublicAssistantRequest
+): AsyncGenerator<PublicAssistantEvent> {
+  const response = await fetch(`${API_BASE_URL}/public/pages/${encodeURIComponent(token)}/chat`, {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(publicAuthHeaders() ?? {}),
+    },
+    body: JSON.stringify(request),
+  });
+  if (response.status === 404) {
+    throw new PublicPageError("not_found", 404, "not_found");
+  }
+  if (response.status === 401) {
+    throw new PublicPageError("authentication_required", 401, "authentication_required");
+  }
+  if (response.status === 403) {
+    throw new PublicPageError("forbidden", 403, "forbidden");
+  }
+  if (!response.ok || !response.body) {
+    throw new PublicPageError("error", response.status, "error");
+  }
+  for await (const event of parseSSEStream(response.body)) {
+    yield event;
+  }
 }
 
 function publicAuthHeaders(): Record<string, string> | undefined {

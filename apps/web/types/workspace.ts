@@ -19,6 +19,8 @@ export type ChartNodeData = {
   title: string;
   chartType: string;
   spec: import("./chart").ChartSpec;
+  assistantRows?: Record<string, unknown>[];
+  assistantRowsComplete?: boolean;
   width: number;
   height: number;
 };

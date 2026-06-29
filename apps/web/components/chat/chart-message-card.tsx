@@ -86,6 +86,8 @@ export function ChartMessageCard({ assetId, title, chartType }: ChartMessageCard
       title: asset.title,
       chartType: asset.chartType,
       spec: asset.spec,
+      assistantRows: asset.assistantRows,
+      assistantRowsComplete: asset.assistantRowsComplete,
       width: DEFAULT_CHART_NODE_WIDTH,
       height: DEFAULT_CHART_NODE_HEIGHT,
     };
@@ -276,6 +278,8 @@ export function MultiChartMessageGroup({ assets }: { assets: ChartAssetReference
         title: asset.title,
         chartType: asset.chartType,
         spec: asset.spec,
+        assistantRows: asset.assistantRows,
+        assistantRowsComplete: asset.assistantRowsComplete,
         width: DEFAULT_CHART_NODE_WIDTH,
         height: DEFAULT_CHART_NODE_HEIGHT,
       };

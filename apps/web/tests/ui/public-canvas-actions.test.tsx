@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PublicCanvasActions } from "../../components/public/public-canvas-actions";
 import { ThemeProvider } from "../../lib/theme/context";
@@ -42,5 +42,34 @@ describe("PublicCanvasActions", () => {
       expect(document.documentElement.dataset.theme).toBe("dark");
       expect(window.localStorage.getItem("cognitrix.theme")).toBe("dark");
     });
+  });
+
+  it("shows the AI Assistant action only when assistant data is available", async () => {
+    const user = userEvent.setup();
+    const onOpenAssistant = vi.fn();
+    const { rerender } = render(
+      <ThemeProvider>
+        <PublicCanvasActions
+          getCanvasElement={() => document.createElement("div")}
+          filenameBase="published-canvas"
+        />
+      </ThemeProvider>
+    );
+
+    expect(screen.queryByRole("button", { name: "Open AI Assistant" })).not.toBeInTheDocument();
+
+    rerender(
+      <ThemeProvider>
+        <PublicCanvasActions
+          getCanvasElement={() => document.createElement("div")}
+          filenameBase="published-canvas"
+          assistantAvailable
+          onOpenAssistant={onOpenAssistant}
+        />
+      </ThemeProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open AI Assistant" }));
+    expect(onOpenAssistant).toHaveBeenCalledTimes(1);
   });
 });

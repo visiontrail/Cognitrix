@@ -1566,7 +1566,11 @@ async def get_workspace_published_page_snapshot(
     try:
         manifest = read_manifest(page)
         charts = [
-            read_chart_data(page, chart_id=str(chart.get("chart_id") or ""))
+            read_chart_data(
+                page,
+                chart_id=str(chart.get("chart_id") or ""),
+                include_assistant_rows=True,
+            )
             for chart in manifest.get("charts", [])
             if isinstance(chart, dict) and str(chart.get("chart_id") or "").strip()
         ]

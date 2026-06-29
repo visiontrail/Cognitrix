@@ -1904,6 +1904,7 @@ function toChartAsset(
     return null;
   }
   const echartsOption = source.showDataLabels ? applyDataLabels(resolvedOption) : resolvedOption;
+  const assistantRows = extractAssistantRows(rawSpec);
 
   const spec: ChartSpec = {
     chartType,
@@ -1918,6 +1919,8 @@ function toChartAsset(
     description: spec.subtitle,
     chartType,
     spec,
+    assistantRows,
+    assistantRowsComplete: assistantRows.length > 0,
     sourceMeta: {
       sessionId: source.sessionId,
       messageId: source.messageId,
@@ -1927,6 +1930,19 @@ function toChartAsset(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function extractAssistantRows(rawSpec: Record<string, unknown>): Record<string, unknown>[] {
+  for (const candidate of [rawSpec.assistant_rows, rawSpec.assistantRows, rawSpec.data]) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+    const rows = candidate.filter(isRecord);
+    if (rows.length) {
+      return rows;
+    }
+  }
+  return [];
 }
 
 function resolveEchartsOption(rawSpec: Record<string, unknown>): Record<string, unknown> | null {

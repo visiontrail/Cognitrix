@@ -24,12 +24,16 @@ export function PublicPageGrid({
   activePageId,
   captureRef,
   backgroundPreset,
+  selectedChartId,
+  onSelectChart,
 }: {
   token: string;
   manifest: PublishedManifest;
   activePageId?: string;
   captureRef?: RefObject<HTMLDivElement>;
   backgroundPreset: CanvasBackgroundPreset;
+  selectedChartId?: string;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
@@ -66,6 +70,8 @@ export function PublicPageGrid({
             zone={zone}
             title={manifest.charts.find((chart) => chart.chart_id === chartIdFromZone(zone))?.title}
             theme={resolvedTheme}
+            selected={selectedChartId === chartIdFromZone(zone)}
+            onSelectChart={onSelectChart}
           />
         ))}
         {(pageLayout.textZones ?? []).map((zone) => (
@@ -81,11 +87,15 @@ function PublicChartZone({
   zone,
   title,
   theme,
+  selected,
+  onSelectChart,
 }: {
   token: string;
   zone: PublishedZone;
   title?: string;
   theme: "light" | "dark";
+  selected?: boolean;
+  onSelectChart?: (chartId: string) => void;
 }) {
   const { t } = useI18n();
   const chartId = chartIdFromZone(zone);
@@ -111,10 +121,24 @@ function PublicChartZone({
 
   return (
     <div
-      className="relative overflow-hidden rounded-md border border-[#d8d1c1] bg-white text-left dark:border-white/10 dark:bg-[#1c1c38]/80"
+      className={`relative overflow-hidden rounded-md border bg-white text-left dark:bg-[#1c1c38]/80 ${
+        selected ? "border-[#4b7f8c] ring-2 ring-[#4b7f8c]/30" : "border-[#d8d1c1] dark:border-white/10"
+      }`}
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
         gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,
+      }}
+      role={onSelectChart ? "button" : undefined}
+      tabIndex={onSelectChart ? 0 : undefined}
+      onClick={() => {
+        if (chartId) onSelectChart?.(chartId);
+      }}
+      onKeyDown={(event) => {
+        if (!chartId || !onSelectChart) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelectChart(chartId);
+        }
       }}
     >
       <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10 dark:text-white">

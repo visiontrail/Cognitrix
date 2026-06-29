@@ -94,6 +94,8 @@ export type PublishedVersionChartData = {
   chart_id: string;
   spec: Record<string, unknown>;
   rows: Record<string, unknown>[];
+  assistant_rows?: Record<string, unknown>[];
+  assistant_rows_complete?: boolean;
   data_truncated?: boolean;
 };
 
@@ -130,6 +132,8 @@ export type CanvasPublishSnapshot = {
     chart_type: string;
     spec: ChartNodeData["spec"];
     rows: Record<string, unknown>[];
+    assistant_rows: Record<string, unknown>[];
+    assistant_rows_complete: boolean;
   }[];
 };
 
@@ -179,6 +183,8 @@ export function buildActiveCanvasPublishPayload({
       chart_type: node.data.chartType,
       spec: node.data.spec,
       rows: extractChartRows(node.data),
+      assistant_rows: Array.isArray(node.data.assistantRows) ? node.data.assistantRows : [],
+      assistant_rows_complete: node.data.assistantRowsComplete === true,
     }));
   const publishNodes = canvasFormat.id === "web-design" ? nodes : flattenGroupedCanvasNodes(nodes);
   const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds, theme);
@@ -511,6 +517,8 @@ function restorePublishedNodeData(
       title,
       chartType,
       spec: normalizeRestoredChartSpec(chart, { chartId: assetId, title, chartType }),
+      assistantRows: Array.isArray(chart?.assistant_rows) ? chart.assistant_rows.filter(isRecord) : undefined,
+      assistantRowsComplete: chart?.assistant_rows_complete === true,
       width,
       height,
     };

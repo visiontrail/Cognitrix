@@ -9,13 +9,17 @@ missing-snapshot tokens all return an undifferentiated HTTP 404.
 from __future__ import annotations
 
 import time
+import uuid
 from collections import defaultdict
 from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field, field_validator
+from starlette.responses import StreamingResponse
 
 from .auth import AuthIdentity, get_optional_identity
+from .chart_query_agent import ChartQueryAgentError, format_sse, get_chart_query_agent
 from .published_pages import (
     PublishedPageError,
     VISIBILITY_ALLOWLIST,
@@ -36,6 +40,7 @@ _rate_buckets: dict[str, list[float]] = defaultdict(list)
 
 # Avoid serving revoked content from caches after a publish is cancelled.
 _NO_STORE_HEADERS = {"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"}
+_SSE_HEADERS = {**_NO_STORE_HEADERS, "X-Accel-Buffering": "no"}
 
 _NOT_FOUND = HTTPException(
     status_code=404,
@@ -51,6 +56,28 @@ _FORBIDDEN = HTTPException(
     headers=_NO_STORE_HEADERS,
     detail={"code": "published_page_forbidden", "message": "You do not have access to this page"},
 )
+
+
+class PublicAssistantChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = None
+    chart_id: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message is required")
+        return normalized
+
+    @field_validator("conversation_id", "chart_id")
+    @classmethod
+    def normalize_optional_ids(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 def _client_key(request: Request) -> str:
@@ -147,6 +174,15 @@ def _authorize_page(page: Any, identity: AuthIdentity | None) -> None:
     raise _FORBIDDEN
 
 
+def _assistant_available(page: Any) -> bool:
+    try:
+        manifest = read_manifest(page)
+    except PublishedPageError as exc:
+        raise _NOT_FOUND from exc
+    assistant = manifest.get("assistant") if isinstance(manifest.get("assistant"), dict) else {}
+    return bool(assistant.get("available"))
+
+
 @router.get("/pages/{token}/manifest")
 async def get_public_manifest(
     token: str,
@@ -192,3 +228,73 @@ async def get_public_chart_data(
         "rows": payload.get("rows", []),
         "data_truncated": bool(payload.get("data_truncated")),
     }
+
+
+@router.post("/pages/{token}/chat")
+async def post_public_assistant_chat(
+    token: str,
+    body: PublicAssistantChatRequest,
+    request: Request,
+    identity: AuthIdentity | None = Depends(get_optional_identity),
+) -> StreamingResponse:
+    _enforce_rate_limit(request)
+    page = _resolve_page(token)
+    _authorize_page(page, identity)
+    if not _assistant_available(page):
+        raise _NOT_FOUND
+
+    request_id = uuid.uuid4().hex
+    conversation_id = body.conversation_id or uuid.uuid4().hex
+    agent = get_chart_query_agent()
+
+    async def event_stream():
+        try:
+            async for event_type, payload in agent.run_turn_stream(
+                page=page,
+                message=body.message,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                chart_id=body.chart_id,
+            ):
+                yield format_sse(event_type, payload)
+        except ChartQueryAgentError as exc:
+            error_payload = {
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+                "status": "failed",
+                "code": exc.code,
+                "message": exc.message,
+            }
+            yield format_sse("error", error_payload)
+            yield format_sse(
+                "final",
+                {
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "status": "failed",
+                    "text": exc.message,
+                },
+            )
+        except Exception:
+            message = "Public assistant failed. Please retry."
+            yield format_sse(
+                "error",
+                {
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "status": "failed",
+                    "code": "PUBLIC_ASSISTANT_FAILED",
+                    "message": message,
+                },
+            )
+            yield format_sse(
+                "final",
+                {
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "status": "failed",
+                    "text": message,
+                },
+            )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)

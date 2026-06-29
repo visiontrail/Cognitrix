@@ -58,6 +58,8 @@ export type ChartAsset = {
   description?: string;
   chartType: ChartType;
   spec: ChartSpec;
+  assistantRows?: Record<string, unknown>[];
+  assistantRowsComplete?: boolean;
   sourceMeta: ChartSourceMeta;
   createdAt: string;
   updatedAt: string;

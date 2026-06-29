@@ -24,6 +24,11 @@ const chartNode: WorkspaceNode = {
       title: "Headcount",
       echartsOption: { __rows__: [{ department: "HR", headcount: 4 }] },
     },
+    assistantRows: [
+      { department: "HR", headcount: 4, employee_id: "E-1" },
+      { department: "HR", headcount: 4, employee_id: "E-2" },
+    ],
+    assistantRowsComplete: true,
   },
 };
 
@@ -39,6 +44,8 @@ const otherChartNode: WorkspaceNode = {
       title: "Turnover",
       echartsOption: { dataset: { source: [{ month: "Jan", rate: 0.1 }] } },
     },
+    assistantRows: [{ month: "Jan", rate: 0.1, cohort: "all" }],
+    assistantRowsComplete: true,
   },
 };
 
@@ -73,6 +80,11 @@ describe("buildActiveCanvasPublishPayload", () => {
     expect(payload.web_design?.layout.pages[0].textZones?.[0].content).toBe("Notes");
     expect(payload.charts.map((chart) => chart.chart_id)).toEqual(["chart-1"]);
     expect(payload.charts[0].rows).toEqual([{ department: "HR", headcount: 4 }]);
+    expect(payload.charts[0].assistant_rows).toEqual([
+      { department: "HR", headcount: 4, employee_id: "E-1" },
+      { department: "HR", headcount: 4, employee_id: "E-2" },
+    ]);
+    expect(payload.charts[0].assistant_rows_complete).toBe(true);
   });
 
   it("serializes chart nodes from the active free-layout canvas", () => {

@@ -12,12 +12,14 @@ import {
   type PublicManifestResponse,
 } from "@/lib/public/api";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import { Button } from "@/components/ui/button";
 
 type LoadState = "loading" | "ready" | "invalid" | "auth_required" | "forbidden";
 
 export function PublicPageClient({ token }: { token: string }) {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const webPageCanvasRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [page, setPage] = useState<PublicManifestResponse | null>(null);
@@ -67,7 +69,7 @@ export function PublicPageClient({ token }: { token: string }) {
 
   if (state === "loading") {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#f7f4eb] text-sm text-[#777166]">
+      <div className="flex h-screen items-center justify-center bg-[#f7f4eb] text-sm text-[#777166] dark:bg-[#111115] dark:text-gray-300">
         {t("public.loading")}
       </div>
     );
@@ -77,9 +79,9 @@ export function PublicPageClient({ token }: { token: string }) {
     if (state === "auth_required") {
       const next = encodeURIComponent(`/p/${token}`);
       return (
-        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center">
-          <p className="font-medium text-[#2f332f]">{t("public.loginRequiredTitle")}</p>
-          <p className="max-w-sm text-sm text-[#777166]">{t("public.loginRequiredDesc")}</p>
+        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center dark:bg-[#111115]">
+          <p className="font-medium text-[#2f332f] dark:text-white">{t("public.loginRequiredTitle")}</p>
+          <p className="max-w-sm text-sm text-[#777166] dark:text-gray-300">{t("public.loginRequiredDesc")}</p>
           <Button asChild>
             <Link href={`/login?next=${next}`}>{t("public.loginAction")}</Link>
           </Button>
@@ -89,9 +91,9 @@ export function PublicPageClient({ token }: { token: string }) {
 
     if (state === "forbidden") {
       return (
-        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center">
-          <p className="font-medium text-[#2f332f]">{t("public.forbiddenTitle")}</p>
-          <p className="max-w-sm text-sm text-[#777166]">{t("public.forbiddenDesc")}</p>
+        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center dark:bg-[#111115]">
+          <p className="font-medium text-[#2f332f] dark:text-white">{t("public.forbiddenTitle")}</p>
+          <p className="max-w-sm text-sm text-[#777166] dark:text-gray-300">{t("public.forbiddenDesc")}</p>
           <Button asChild>
             <Link href="/">{t("public.backToWorkspace")}</Link>
           </Button>
@@ -100,9 +102,9 @@ export function PublicPageClient({ token }: { token: string }) {
     }
 
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#f7f4eb] text-center">
-        <p className="font-medium text-[#2f332f]">{t("public.invalidTitle")}</p>
-        <p className="text-sm text-[#777166]">{t("public.invalidDesc")}</p>
+      <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#f7f4eb] text-center dark:bg-[#111115]">
+        <p className="font-medium text-[#2f332f] dark:text-white">{t("public.invalidTitle")}</p>
+        <p className="text-sm text-[#777166] dark:text-gray-300">{t("public.invalidDesc")}</p>
       </div>
     );
   }
@@ -117,7 +119,7 @@ export function PublicPageClient({ token }: { token: string }) {
   }
 
   return (
-    <div className="flex h-screen min-h-0 overflow-hidden bg-[#f7f4eb] text-[#2f332f]">
+    <div className="flex h-screen min-h-0 overflow-hidden bg-[#f7f4eb] text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <PublicPageSidebar
         items={page.manifest.sidebar || []}
         activePageId={activePageId}
@@ -128,7 +130,7 @@ export function PublicPageClient({ token }: { token: string }) {
           getCanvasElement={() => webPageCanvasRef.current}
           filenameBase={filenameBase}
           className="absolute right-5 top-5"
-          captureOptions={{ backgroundColor: "#ffffff" }}
+          captureOptions={{ backgroundColor: resolvedTheme === "dark" ? "#111115" : "#ffffff" }}
         />
         <PublicPageGrid
           token={token}

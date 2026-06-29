@@ -17,6 +17,7 @@ import {
   type CanvasBackgroundPreset,
 } from "@/lib/workspace/canvas-backgrounds";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import type { ChartSpec } from "@/types/chart";
 
 const FREE_CANVAS_PADDING = 32;
@@ -223,12 +224,12 @@ export function PublishedFreeCanvas({
         captureOptions={{ backgroundColor: backgroundPreset.baseColor, width, height }}
       />
       <div
-        className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur"
+        className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/15 dark:bg-[#1c1c38]/90"
         data-public-canvas-control
       >
         <button
           type="button"
-          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40 dark:text-white dark:hover:bg-white/10"
           aria-label={t("public.canvas.zoomOut")}
           title={t("public.canvas.zoomOut")}
           onClick={() => zoomAtPoint(transform.zoom / FREE_CANVAS_ZOOM_STEP)}
@@ -236,14 +237,14 @@ export function PublishedFreeCanvas({
           <Minus className="h-4 w-4" aria-hidden="true" />
         </button>
         <output
-          className="min-w-12 px-1 text-center text-xs tabular-nums text-[#555250]"
+          className="min-w-12 px-1 text-center text-xs tabular-nums text-[#555250] dark:text-gray-200"
           aria-label={t("public.canvas.zoomLevel")}
         >
           {Math.round(transform.zoom * 100)}%
         </output>
         <button
           type="button"
-          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40 dark:text-white dark:hover:bg-white/10"
           aria-label={t("public.canvas.zoomIn")}
           title={t("public.canvas.zoomIn")}
           onClick={() => zoomAtPoint(transform.zoom * FREE_CANVAS_ZOOM_STEP)}
@@ -252,7 +253,7 @@ export function PublishedFreeCanvas({
         </button>
         <button
           type="button"
-          className="ml-1 flex h-8 w-8 items-center justify-center rounded border-l border-[#e8dfcf] pl-1 hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40"
+          className="ml-1 flex h-8 w-8 items-center justify-center rounded border-l border-[#e8dfcf] pl-1 hover:bg-[#f3eadc] focus:outline-none focus:ring-2 focus:ring-[#c96442]/40 dark:border-white/10 dark:text-white dark:hover:bg-white/10"
           aria-label={t("public.canvas.resetView")}
           title={t("public.canvas.resetView")}
           onClick={resetView}
@@ -310,7 +311,7 @@ export function PublishedFixedCanvas({
   );
   const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
   return (
-    <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f]">
+    <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <PublicCanvasActions
         getCanvasElement={() => stackRef.current}
         filenameBase={filenameBase}
@@ -404,6 +405,7 @@ function PublishedChartNode({
   node: ChartCanvasNode;
   height: number;
 }) {
+  const { resolvedTheme } = useTheme();
   const chartId = node.data.assetId;
   const title = node.data.title;
   const [spec, setSpec] = useState<ChartSpec | null>(null);
@@ -420,12 +422,12 @@ function PublishedChartNode({
   }, [chartId, token]);
 
   return (
-    <section className="h-full overflow-hidden rounded-md border border-[#d8d1c1] bg-white">
-      <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold">
+    <section className="h-full overflow-hidden rounded-md border border-[#d8d1c1] bg-white dark:border-white/10 dark:bg-[#1c1c38]/80">
+      <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10 dark:text-white">
         {title || chartId}
       </div>
       {spec ? (
-        <ChartPreview spec={spec} height={Math.max(120, height - 40)} theme="light" />
+        <ChartPreview spec={spec} height={Math.max(120, height - 40)} theme={resolvedTheme} />
       ) : (
         <PublishedChartLoading />
       )}
@@ -436,7 +438,7 @@ function PublishedChartNode({
 function PublishedChartLoading() {
   const { t } = useI18n();
   return (
-    <div className="flex h-full items-center justify-center text-sm text-[#777166]">
+    <div className="flex h-full items-center justify-center text-sm text-[#777166] dark:text-gray-300">
       {t("public.loadingChart")}
     </div>
   );
@@ -502,8 +504,8 @@ function PublishedDividerNode({ node }: { node: DividerCanvasNode }) {
 
 function PublishedSectionNode({ node }: { node: SectionCanvasNode }) {
   return (
-    <section className="h-full rounded-md border border-dashed border-[#cfc5b2] bg-white/50 p-3">
-      <h2 className="text-sm font-semibold text-[#555250]">{node.data.title}</h2>
+    <section className="h-full rounded-md border border-dashed border-[#cfc5b2] bg-white/50 p-3 dark:border-white/20 dark:bg-white/[0.06]">
+      <h2 className="text-sm font-semibold text-[#555250] dark:text-gray-200">{node.data.title}</h2>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Download, FileImage, FileText, Loader2, Printer } from "lucide-react";
+import { Download, FileImage, FileText, Loader2, Moon, Printer, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import {
   printPublicCanvas,
 } from "@/lib/public/canvas-export";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import { cn } from "@/lib/utils";
 
 type PublicCanvasActionsProps = {
@@ -40,7 +41,11 @@ export function PublicCanvasActions({
   className,
 }: PublicCanvasActionsProps) {
   const { t } = useI18n();
+  const { mode, setMode } = useTheme();
   const [busyAction, setBusyAction] = useState<"png" | "pdf" | "print" | null>(null);
+  const nextThemeMode = mode === "dark" ? "light" : "dark";
+  const themeLabel =
+    mode === "dark" ? t("public.canvas.themeSwitchToLight") : t("public.canvas.themeSwitchToDark");
 
   const withCanvas = useCallback(
     async (action: "png" | "pdf" | "print", run: (element: HTMLElement) => Promise<void>) => {
@@ -88,7 +93,7 @@ export function PublicCanvasActions({
     <TooltipProvider delayDuration={300}>
       <div
         className={cn(
-          "z-20 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/95 p-1 shadow-sm backdrop-blur",
+          "z-20 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/95 p-1 shadow-sm backdrop-blur dark:border-white/15 dark:bg-[#1c1c38]/90",
           className
         )}
         data-public-canvas-control
@@ -103,7 +108,7 @@ export function PublicCanvasActions({
                 size="sm"
                 disabled={isBusy}
                 aria-label={t("public.canvas.export")}
-                className="h-8 px-2 text-[#3f3d39] hover:bg-[#f3eadc]"
+                className="h-8 px-2 text-[#3f3d39] hover:bg-[#f3eadc] dark:text-white dark:hover:bg-white/10"
               >
                 {triggerIcon}
                 <span className="hidden sm:inline">
@@ -132,7 +137,7 @@ export function PublicCanvasActions({
                 onClick={handleExportPng}
                 disabled={isBusy}
                 aria-label={t("public.canvas.exportPng")}
-                className="h-8 px-2 text-[#3f3d39] hover:bg-[#f3eadc]"
+                className="h-8 px-2 text-[#3f3d39] hover:bg-[#f3eadc] dark:text-white dark:hover:bg-white/10"
               >
                 {triggerIcon}
                 <span className="hidden sm:inline">
@@ -152,7 +157,7 @@ export function PublicCanvasActions({
               onClick={handlePrint}
               disabled={isBusy}
               aria-label={t("public.canvas.print")}
-              className="h-8 w-8 text-[#3f3d39] hover:bg-[#f3eadc]"
+              className="h-8 w-8 text-[#3f3d39] hover:bg-[#f3eadc] dark:text-white dark:hover:bg-white/10"
             >
               {busyAction === "print" ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -162,6 +167,26 @@ export function PublicCanvasActions({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{t("public.canvas.print")}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setMode(nextThemeMode)}
+              aria-label={themeLabel}
+              aria-pressed={mode === "dark"}
+              className="h-8 w-8 text-[#3f3d39] hover:bg-[#f3eadc] dark:text-white dark:hover:bg-white/10"
+            >
+              {mode === "dark" ? (
+                <Moon className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Sun className="h-4 w-4" aria-hidden="true" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{themeLabel}</TooltipContent>
         </Tooltip>
       </div>
     </TooltipProvider>

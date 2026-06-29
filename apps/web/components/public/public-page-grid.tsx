@@ -12,6 +12,7 @@ import {
 import { getWebDesignGridTemplateColumns, getWebDesignGridWidth } from "@/lib/workspace/web-design-grid";
 import type { ChartSpec } from "@/types/chart";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 
 export function PublicPageGrid({
   token,
@@ -24,6 +25,7 @@ export function PublicPageGrid({
   activePageId?: string;
   captureRef?: RefObject<HTMLDivElement>;
 }) {
+  const { resolvedTheme } = useTheme();
   const pageLayout =
     manifest.layout.pages?.find((page) => page.id === activePageId) ??
     manifest.layout.pages?.[0] ?? {
@@ -37,7 +39,7 @@ export function PublicPageGrid({
     <div className="min-w-0 flex-1 overflow-auto p-5">
       <div
         ref={captureRef}
-        className="grid bg-white"
+        className="grid bg-white dark:bg-[#111115]"
         data-testid="public-page-grid-canvas"
         style={{
           gridTemplateColumns: getWebDesignGridTemplateColumns(grid),
@@ -55,6 +57,7 @@ export function PublicPageGrid({
             token={token}
             zone={zone}
             title={manifest.charts.find((chart) => chart.chart_id === chartIdFromZone(zone))?.title}
+            theme={resolvedTheme}
           />
         ))}
         {(pageLayout.textZones ?? []).map((zone) => (
@@ -69,10 +72,12 @@ function PublicChartZone({
   token,
   zone,
   title,
+  theme,
 }: {
   token: string;
   zone: PublishedZone;
   title?: string;
+  theme: "light" | "dark";
 }) {
   const { t } = useI18n();
   const chartId = chartIdFromZone(zone);
@@ -98,19 +103,19 @@ function PublicChartZone({
 
   return (
     <div
-      className="relative overflow-hidden rounded-md border border-[#d8d1c1] bg-white text-left"
+      className="relative overflow-hidden rounded-md border border-[#d8d1c1] bg-white text-left dark:border-white/10 dark:bg-[#1c1c38]/80"
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
         gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,
       }}
     >
-      <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold">
+      <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10 dark:text-white">
         {title || chartId}
       </div>
       {spec ? (
-        <ChartPreview spec={spec} height={height} theme="light" />
+        <ChartPreview spec={spec} height={height} theme={theme} />
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-[#777166]">
+        <div className="flex h-full items-center justify-center text-sm text-[#777166] dark:text-gray-300">
           {t("public.loadingChart")}
         </div>
       )}
@@ -119,16 +124,16 @@ function PublicChartZone({
 }
 
 const PUBLISHED_TEXT_STYLE_MAP: Record<"title" | "subtitle" | "body", string> = {
-  title: "text-2xl font-bold leading-tight text-[#2f332f]",
-  subtitle: "text-lg font-semibold leading-snug text-[#4a4842]",
-  body: "text-sm leading-relaxed text-[#555250]",
+  title: "text-2xl font-bold leading-tight text-[#2f332f] dark:text-white",
+  subtitle: "text-lg font-semibold leading-snug text-[#4a4842] dark:text-gray-100",
+  body: "text-sm leading-relaxed text-[#555250] dark:text-gray-200",
 };
 
 function PublicTextZoneBlock({ zone }: { zone: PublishedTextZone }) {
   const className = PUBLISHED_TEXT_STYLE_MAP[zone.style] ?? PUBLISHED_TEXT_STYLE_MAP.body;
   return (
     <div
-      className="overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] p-4"
+      className="overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] p-4 dark:border-white/10 dark:bg-white/[0.06]"
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
         gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,

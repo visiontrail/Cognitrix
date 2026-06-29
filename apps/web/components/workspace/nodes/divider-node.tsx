@@ -6,6 +6,7 @@ import { MoveHorizontal, RotateCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import type { DividerNodeData } from "@/types/workspace";
 
 const DEFAULT_DIVIDER_WIDTH = 480;
@@ -20,6 +21,7 @@ function clampNumber(value: number, min: number, max: number) {
 
 function DividerNodeComponent({ id, data, selected, width }: NodeProps) {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const nodeData = data as unknown as DividerNodeData;
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const removeNode = useWorkspaceStore((s) => s.removeNode);
@@ -34,6 +36,7 @@ function DividerNodeComponent({ id, data, selected, width }: NodeProps) {
   const rotation = nodeData.rotation ?? 0;
   const lineStyle = nodeData.lineStyle ?? "solid";
   const hasLabel = !!nodeData.label;
+  const lineColor = resolvedTheme === "dark" ? "rgba(255, 255, 255, 0.38)" : "#c4c0b6";
 
   const handleLabelSave = useCallback(() => {
     updateNode(id, { data: { label: labelDraft.trim() || undefined } as any });
@@ -149,7 +152,7 @@ function DividerNodeComponent({ id, data, selected, width }: NodeProps) {
         style={{
           borderTopWidth: 1.5,
           borderTopStyle: lineStyle,
-          borderTopColor: "#c4c0b6",
+          borderTopColor: lineColor,
         }}
       />
 
@@ -188,7 +191,7 @@ function DividerNodeComponent({ id, data, selected, width }: NodeProps) {
         style={{
           borderTopWidth: 1.5,
           borderTopStyle: lineStyle,
-          borderTopColor: "#c4c0b6",
+          borderTopColor: lineColor,
         }}
       />
 

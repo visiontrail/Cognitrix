@@ -2,7 +2,7 @@ import { getAuthorizationHeader } from "@/lib/auth/session";
 import { API_BASE_URL } from "@/lib/api-base";
 import { extractChartRows } from "@/lib/workspace/chart-rows";
 import { MAX_CANVAS_PAGES, normalizeCanvasFormat } from "@/lib/workspace/canvas-formats";
-import { resolveCanvasBackgroundPreset } from "@/lib/workspace/canvas-backgrounds";
+import { resolveCanvasBackgroundPreset, type CanvasTheme } from "@/lib/workspace/canvas-backgrounds";
 import { isRecord } from "@/lib/utils";
 import type { PublishedCanvasNode, PublishedManifest } from "@/lib/public/api";
 import type { ChartSpec } from "@/types/chart";
@@ -141,6 +141,7 @@ export function buildActiveCanvasPublishPayload({
   edges,
   webDesign,
   canvasBackgrounds,
+  theme = "light",
 }: {
   canvasFormat: WorkspaceCanvasFormat;
   pageCount?: number;
@@ -149,6 +150,7 @@ export function buildActiveCanvasPublishPayload({
   edges: WorkspaceEdge[];
   webDesign: WebDesignLayout;
   canvasBackgrounds?: Partial<Record<WorkspaceCanvasFormatId, string>>;
+  theme?: CanvasTheme;
 }): CanvasPublishSnapshot {
   const chartNodes = nodes.filter((node): node is WorkspaceNode & { data: ChartNodeData } =>
     node.data.type === "chart"
@@ -179,7 +181,7 @@ export function buildActiveCanvasPublishPayload({
       rows: extractChartRows(node.data),
     }));
   const publishNodes = canvasFormat.id === "web-design" ? nodes : flattenGroupedCanvasNodes(nodes);
-  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds, theme);
 
   const payload: CanvasPublishSnapshot = {
     canvas_format: canvasFormat,

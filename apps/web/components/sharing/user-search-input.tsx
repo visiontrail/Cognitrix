@@ -115,11 +115,11 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
         aria-expanded={open}
       />
       {loading && (
-        <div className="absolute right-2 top-2 text-xs text-[#777166]">...</div>
+        <div className="absolute right-2 top-2 text-xs text-[#777166] dark:text-gray-300">...</div>
       )}
       {open && results.length > 0 && (
         <ul
-          className="absolute z-50 mt-1 w-full rounded-md border border-[#d8d1c1] bg-white shadow-md max-h-48 overflow-auto"
+          className="absolute z-[1000] mt-1 max-h-48 w-full overflow-auto rounded-md border border-[#d8d1c1] bg-[#ffffff] shadow-[0_18px_48px_rgba(38,35,28,0.18)] dark:border-white/15 dark:bg-[#1c1c38] dark:shadow-[0_24px_72px_rgba(0,0,0,0.48)]"
           role="listbox"
         >
           {results.map((user, idx) => (
@@ -128,7 +128,7 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
               role="option"
               aria-selected={idx === focusedIndex}
               className={`px-3 py-2 cursor-pointer text-sm transition-colors ${
-                idx === focusedIndex ? "bg-warm-sand" : "hover:bg-warm-sand"
+                idx === focusedIndex ? "bg-warm-sand dark:bg-[#25254d]" : "hover:bg-warm-sand dark:hover:bg-[#25254d]"
               }`}
               onMouseDown={() => {
                 onSelect(user);
@@ -137,10 +137,10 @@ export function UserSearchInput({ onSelect, excludeIds = [], placeholder }: Prop
                 setOpen(false);
               }}
             >
-              <span className="font-medium text-[#2f332f]">{user.display_name}</span>
-              <span className="ml-2 text-[#777166]">{user.email_masked}</span>
+              <span className="font-medium text-[#2f332f] dark:text-white">{user.display_name}</span>
+              <span className="ml-2 text-[#777166] dark:text-gray-300">{user.email_masked}</span>
               {user.job_label && (
-                <span className="ml-2 text-xs text-[#777166]">·{user.job_label}</span>
+                <span className="ml-2 text-xs text-[#777166] dark:text-gray-300">·{user.job_label}</span>
               )}
             </li>
           ))}

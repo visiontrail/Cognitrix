@@ -425,7 +425,7 @@ function PublishedChartNode({
         {title || chartId}
       </div>
       {spec ? (
-        <ChartPreview spec={spec} height={Math.max(120, height - 40)} />
+        <ChartPreview spec={spec} height={Math.max(120, height - 40)} theme="light" />
       ) : (
         <PublishedChartLoading />
       )}

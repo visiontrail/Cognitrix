@@ -14,7 +14,6 @@ import {
   Table2,
   LogOut,
   Globe,
-  Monitor,
   Moon,
   Sun,
   ChevronUp,
@@ -320,17 +319,10 @@ export function GlobalSidebar() {
             {/* Theme submenu */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
-                <Monitor className="w-4 h-4" />
+                {themeMode === "dark" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
                 {t("theme.label")}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-64">
-                <ThemeMenuItem
-                  mode="system"
-                  activeMode={themeMode}
-                  label={t("theme.system")}
-                  icon={<Monitor className="w-4 h-4" />}
-                  onSelect={setThemeMode}
-                />
                 <ThemeMenuItem
                   mode="light"
                   activeMode={themeMode}

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import {
   CANVAS_BACKGROUND_GROUP_ORDER,
@@ -29,12 +30,13 @@ const GROUP_LABEL_KEY: Record<CanvasBackgroundGroup, string> = {
 
 export function CanvasBackgroundPicker() {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const canvasFormat = useWorkspaceStore((s) => s.canvasFormat);
   const canvasBackgrounds = useWorkspaceStore((s) => s.canvasBackgrounds);
   const setCanvasBackground = useWorkspaceStore((s) => s.setCanvasBackground);
   const [open, setOpen] = useState(false);
 
-  const activePreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const activePreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds, resolvedTheme);
   const activeStyle = composeCanvasBackgroundStyle(activePreset);
 
   const grouped = useMemo(

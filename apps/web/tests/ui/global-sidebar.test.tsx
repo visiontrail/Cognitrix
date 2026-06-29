@@ -244,6 +244,7 @@ describe("GlobalSidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /AI-Native BI Platform/ }));
     await userEvent.hover(screen.getByText("Theme"));
+    expect(screen.queryByText("Follow System")).not.toBeInTheDocument();
     await userEvent.click(await screen.findByText("Dark"));
 
     await waitFor(() => {

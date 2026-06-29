@@ -10,6 +10,7 @@ import {
   resolveCanvasBackgroundPreset,
   resolveCanvasTextColor,
 } from "@/lib/workspace/canvas-backgrounds";
+import { useTheme } from "@/lib/theme/context";
 import type { TextNodeData } from "@/types/workspace";
 import { ResizableNode } from "./resizable-node";
 
@@ -29,6 +30,7 @@ function getMinimumEditorHeight(fontSize: number) {
 
 function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const nodeData = data as unknown as TextNodeData;
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const removeNode = useWorkspaceStore((s) => s.removeNode);
@@ -69,7 +71,7 @@ function TextNodeComponent({ id, data, selected, width }: NodeProps) {
   const fontSize = nodeData.fontSize ?? DEFAULT_TEXT_FONT_SIZE;
   const fontWeight = nodeData.fontWeight ?? "normal";
   const color = nodeData.color ?? DEFAULT_TEXT_COLOR;
-  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds, resolvedTheme);
   const displayColor = resolveCanvasTextColor(color, backgroundPreset);
   const editorHeight = Math.max(nodeHeight, MIN_TEXT_NODE_HEIGHT, getMinimumEditorHeight(fontSize));
   const textStyle = {

@@ -121,17 +121,21 @@ export function PublishPanel({
   return (
     <div
       data-testid="publish-panel"
-      className="absolute right-0 top-full z-50 mt-1.5 w-80 rounded-lg border border-[#d8d1c1] bg-white shadow-lg"
+      className="absolute right-0 top-full z-[1000] mt-1.5 w-80 rounded-lg border border-[#d8d1c1] bg-[#ffffff] shadow-[0_18px_48px_rgba(38,35,28,0.18)] dark:border-white/15 dark:bg-[#1c1c38] dark:shadow-[0_24px_72px_rgba(0,0,0,0.48)]"
     >
-      <div className="border-b border-[#d8d1c1] px-4 py-3">
-        <p className="flex items-center gap-2 text-sm font-semibold text-[#2f332f]">
-          <Globe className="h-4 w-4 text-[#996b35]" />
+      <div className="border-b border-[#d8d1c1] px-4 py-3 dark:border-white/15">
+        <p className="flex items-center gap-2 text-sm font-semibold text-[#2f332f] dark:text-white">
+          <Globe className="h-4 w-4 text-[#996b35] dark:text-amber-300" />
           {t("publish.title")}
         </p>
-        <p className="mt-0.5 text-xs text-[#777166]">
+        <p className="mt-0.5 text-xs text-[#777166] dark:text-gray-300">
           {t(visibilityDescriptionKey(visibilityMode))}
         </p>
-        {modeLabel && <p className="mt-1 text-xs font-medium text-[#996b35]">{modeLabel}</p>}
+        {modeLabel && (
+          <p className="mt-1 text-xs font-medium text-[#996b35] dark:text-amber-300">
+            {modeLabel}
+          </p>
+        )}
       </div>
 
       {!isActive ? (
@@ -148,9 +152,9 @@ export function PublishPanel({
               onRemoveUser={handleRemoveUser}
             />
           )}
-          <p className="text-xs text-[#777166]">{t("publish.snapshotNote")}</p>
+          <p className="text-xs text-[#777166] dark:text-gray-300">{t("publish.snapshotNote")}</p>
           {allowlistMissing && (
-            <p className="text-xs text-[#b5483b]">{t("publish.allowlistRequired")}</p>
+            <p className="text-xs text-[#b5483b] dark:text-red-300">{t("publish.allowlistRequired")}</p>
           )}
           <Button
             size="sm"
@@ -176,14 +180,14 @@ export function PublishPanel({
               onRemoveUser={handleRemoveUser}
             />
           )}
-          <div className="flex items-center gap-2 rounded-md border border-[#e2dccf] bg-[#fbf8f1] px-2 py-1.5">
-            <span className="flex-1 truncate text-xs text-[#2f332f]" data-testid="publish-link">
+          <div className="flex items-center gap-2 rounded-md border border-[#e2dccf] bg-[#fbf8f1] px-2 py-1.5 dark:border-white/15 dark:bg-[#25254d]">
+            <span className="flex-1 truncate text-xs text-[#2f332f] dark:text-white" data-testid="publish-link">
               {publicUrl}
             </span>
             <button
               type="button"
               onClick={handleCopy}
-              className="shrink-0 text-[#777166] hover:text-[#996b35]"
+              className="shrink-0 text-[#777166] hover:text-[#996b35] dark:text-gray-300 dark:hover:text-amber-300"
               aria-label={t("publish.copyLink")}
               data-testid="publish-copy"
             >
@@ -191,17 +195,17 @@ export function PublishPanel({
             </button>
           </div>
 
-          <p className="text-xs text-[#777166]">
+          <p className="text-xs text-[#777166] dark:text-gray-300">
             {t("publish.snapshotTakenAt", {
               time: new Date(active!.published_at).toLocaleString(),
             })}
           </p>
-          <p className="text-xs font-medium text-[#6d6258]">
+          <p className="text-xs font-medium text-[#6d6258] dark:text-gray-200">
             {t("publish.currentVisibility", { visibility: t(visibilityLabelKey(activeVisibilityMode)) })}
           </p>
-          <p className="text-xs text-[#b3792e]">{t("publish.sensitiveWarning")}</p>
+          <p className="text-xs text-[#b3792e] dark:text-amber-300">{t("publish.sensitiveWarning")}</p>
           {allowlistMissing && (
-            <p className="text-xs text-[#b5483b]">{t("publish.allowlistRequired")}</p>
+            <p className="text-xs text-[#b5483b] dark:text-red-300">{t("publish.allowlistRequired")}</p>
           )}
 
           <div className="flex flex-wrap gap-2">
@@ -209,7 +213,7 @@ export function PublishPanel({
               href={publicUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-[#d8d1c1] px-2.5 py-1 text-xs font-medium text-[#2f332f] hover:bg-[#f7f4eb]"
+              className="inline-flex items-center gap-1 rounded-md border border-[#d8d1c1] px-2.5 py-1 text-xs font-medium text-[#2f332f] hover:bg-[#f7f4eb] dark:border-white/15 dark:text-white dark:hover:bg-[#25254d]"
               data-testid="publish-preview"
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -256,7 +260,7 @@ function VisibilityControls({
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-1 rounded-md border border-[#e2dccf] bg-[#fbf8f1] p-1">
+    <div className="grid grid-cols-3 gap-1 rounded-md border border-[#e2dccf] bg-[#fbf8f1] p-1 dark:border-white/15 dark:bg-[#25254d]">
       {options.map(({ mode, icon: Icon }) => {
         const selected = value === mode;
         return (
@@ -268,8 +272,8 @@ function VisibilityControls({
             onClick={() => onChange(mode)}
             className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded px-1.5 text-center text-[11px] font-medium transition ${
               selected
-                ? "bg-white text-[#2f332f] shadow-sm"
-                : "text-[#777166] hover:bg-white/70 hover:text-[#2f332f]"
+                ? "bg-[#ffffff] text-[#2f332f] shadow-sm dark:bg-[#343465] dark:text-white"
+                : "text-[#777166] hover:bg-white/70 hover:text-[#2f332f] dark:text-gray-300 dark:hover:bg-[#343465] dark:hover:text-white"
             }`}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -306,17 +310,17 @@ function AllowlistControls({
             <span
               key={user.id}
               data-testid="publish-user-chip"
-              className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#d8d1c1] bg-white px-2 py-1 text-xs text-[#2f332f]"
+              className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#d8d1c1] bg-[#ffffff] px-2 py-1 text-xs text-[#2f332f] dark:border-white/15 dark:bg-[#25254d] dark:text-white"
             >
               <span className="max-w-[9rem] truncate">{user.display_name}</span>
               {user.email_masked && (
-                <span className="max-w-[8rem] truncate text-[#777166]">{user.email_masked}</span>
+                <span className="max-w-[8rem] truncate text-[#777166] dark:text-gray-300">{user.email_masked}</span>
               )}
               <button
                 type="button"
                 aria-label={t("publish.removeUser", { name: user.display_name })}
                 onClick={() => onRemoveUser(user.id)}
-                className="ml-0.5 text-[#777166] hover:text-[#b5483b]"
+                className="ml-0.5 text-[#777166] hover:text-[#b5483b] dark:text-gray-300 dark:hover:text-red-300"
               >
                 <X className="h-3 w-3" />
               </button>

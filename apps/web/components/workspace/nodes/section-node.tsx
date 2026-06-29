@@ -23,8 +23,8 @@ function SectionNodeComponent({ id, data, selected, width, height }: NodeProps) 
 
   return (
     <section
-      className={`section-node-drag-handle relative h-full rounded-md border bg-[#fffdf7]/45 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] ${
-        selected ? "border-terracotta" : "border-dashed border-[#cfc5b2]"
+      className={`section-node-drag-handle relative h-full rounded-md border bg-[#fffdf7]/45 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)] dark:bg-white/[0.06] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] ${
+        selected ? "border-terracotta" : "border-dashed border-[#cfc5b2] dark:border-white/25"
       }`}
       style={{
         width: nodeWidth,
@@ -37,7 +37,7 @@ function SectionNodeComponent({ id, data, selected, width, height }: NodeProps) 
         minWidth={MIN_SECTION_WIDTH}
         minHeight={MIN_SECTION_HEIGHT}
       />
-      <div className="canvas-export-ignore pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded border border-[#d8d1c1] bg-ivory/95 px-2 py-1 text-[11px] font-medium text-stone-gray shadow-whisper backdrop-blur">
+      <div className="canvas-export-ignore pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded border border-[#d8d1c1] bg-ivory/95 px-2 py-1 text-[11px] font-medium text-stone-gray shadow-whisper backdrop-blur dark:border-white/10">
         <Layers className="h-3.5 w-3.5 text-terracotta" aria-hidden="true" />
         <span className="max-w-32 truncate">{nodeData.title || t("workspace.selection.defaultGroupTitle")}</span>
       </div>

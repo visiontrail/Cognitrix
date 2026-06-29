@@ -16,7 +16,6 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "language.en": "English (United States)",
     "language.zh": "中文（简体）",
     "theme.label": "Theme",
-    "theme.system": "Follow System",
     "theme.light": "Light",
     "theme.dark": "Dark",
 
@@ -722,7 +721,6 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "language.en": "English (United States)",
     "language.zh": "中文（简体）",
     "theme.label": "主题",
-    "theme.system": "跟随系统",
     "theme.light": "浅色",
     "theme.dark": "深色",
 

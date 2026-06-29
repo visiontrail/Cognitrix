@@ -73,11 +73,11 @@ export function WebDesignCanvas() {
   const gridWidth = getWebDesignGridWidth(activePage.grid);
   const gridHeight = activePage.grid.rows.reduce((sum, row) => sum + row.height, 0);
   return (
-    <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f]">
+    <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8d1c1] bg-[#fffdf7] px-4 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8d1c1] bg-[#fffdf7] px-4 py-2 dark:border-white/10 dark:bg-[#1c1c38]/90">
           <div className="flex items-center gap-2">
-            <PanelLeft className="h-4 w-4 text-[#996b35]" />
+            <PanelLeft className="h-4 w-4 text-[#996b35] dark:text-[#d97757]" />
             <span className="text-sm font-semibold">{t("workspace.webDesign.title")}</span>
             {!layout.preview && (
               <>
@@ -157,7 +157,7 @@ export function WebDesignCanvas() {
             <div className="relative">
               <div
                 className={cn(
-                  "grid rounded-md border border-[#d8d1c1] bg-white shadow-sm",
+                  "grid rounded-md border border-[#d8d1c1] bg-white shadow-sm dark:border-white/10 dark:bg-[#181820]",
                   layout.preview && "border-transparent shadow-none"
                 )}
                 style={{
@@ -305,21 +305,21 @@ function AddTextZoneMenu({
         <TooltipContent>{t("workspace.webDesign.addTextZoneTooltip")}</TooltipContent>
       </Tooltip>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-md border border-[#d8d1c1] bg-white shadow-md">
+        <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-md border border-[#d8d1c1] bg-white shadow-md dark:border-white/10 dark:bg-[#1c1c38]">
           {options.map((opt) => (
             <button
               key={opt.style}
               type="button"
-              className="flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-[#f7f4eb]"
+              className="flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-[#f7f4eb] dark:hover:bg-white/10"
               onClick={() => {
                 onAdd(opt.style);
                 setOpen(false);
               }}
             >
-              <span className="mt-0.5 text-[#996b35]">{opt.icon}</span>
+              <span className="mt-0.5 text-[#996b35] dark:text-[#d97757]">{opt.icon}</span>
               <span>
-                <span className="block text-sm font-medium text-[#2f332f]">{opt.label}</span>
-                <span className="block text-xs text-[#777166]">{opt.desc}</span>
+                <span className="block text-sm font-medium text-[#2f332f] dark:text-white">{opt.label}</span>
+                <span className="block text-xs text-[#777166] dark:text-gray-400">{opt.desc}</span>
               </span>
             </button>
           ))}
@@ -334,15 +334,15 @@ const TEXT_ZONE_STYLE_MAP: Record<
   { className: string; placeholderKey: string }
 > = {
   title: {
-    className: "text-2xl font-bold leading-tight text-[#2f332f]",
+    className: "text-2xl font-bold leading-tight text-[#2f332f] dark:text-white",
     placeholderKey: "workspace.webDesign.textZone.titlePlaceholder",
   },
   subtitle: {
-    className: "text-lg font-semibold leading-snug text-[#4a4842]",
+    className: "text-lg font-semibold leading-snug text-[#4a4842] dark:text-gray-100",
     placeholderKey: "workspace.webDesign.textZone.subtitlePlaceholder",
   },
   body: {
-    className: "text-sm leading-relaxed text-[#555250]",
+    className: "text-sm leading-relaxed text-[#555250] dark:text-gray-300",
     placeholderKey: "workspace.webDesign.textZone.bodyPlaceholder",
   },
 };
@@ -381,8 +381,8 @@ function TextGridZone({
     <section
       aria-label={t("workspace.webDesign.aria.textZone")}
       className={cn(
-        "relative z-10 overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff]",
-        !preview && "ring-1 ring-[#c8d8f0]"
+        "relative z-10 overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] dark:border-[#365a7f] dark:bg-[#172233]",
+        !preview && "ring-1 ring-[#c8d8f0] dark:ring-[#365a7f]"
       )}
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
@@ -393,10 +393,10 @@ function TextGridZone({
         <div
           draggable
           onDragStart={handleDragStart}
-          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#d0e4f8] bg-[#eaf3ff] px-2 py-1 active:cursor-grabbing"
+          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#d0e4f8] bg-[#eaf3ff] px-2 py-1 active:cursor-grabbing dark:border-[#365a7f] dark:bg-[#1d3048]"
         >
           <div className="flex flex-wrap items-center gap-1">
-            <span className="rounded bg-[#d0e4f8] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3a6ea8]">
+            <span className="rounded bg-[#d0e4f8] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3a6ea8] dark:bg-[#284765] dark:text-[#b9dcff]">
               {t(`workspace.webDesign.textZone.${zone.style}`)}
             </span>
             <div className="flex items-center gap-0.5">
@@ -414,7 +414,7 @@ function TextGridZone({
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">
+              <span className="text-[10px] text-[#555] dark:text-gray-300">
                 {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
               </span>
               <Tooltip>
@@ -447,7 +447,7 @@ function TextGridZone({
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">
+              <span className="text-[10px] text-[#555] dark:text-gray-300">
                 {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
               </span>
               <Tooltip>
@@ -535,7 +535,7 @@ function GridCell({
     <div
       id={columnIndex === 0 ? rowId : undefined}
       aria-label={t("workspace.webDesign.aria.gridCell", { row: rowIndex + 1, column: columnIndex + 1 })}
-      className={cn("border border-dashed border-[#e2dccf]", preview && "border-transparent")}
+      className={cn("border border-dashed border-[#e2dccf] dark:border-white/10", preview && "border-transparent")}
       style={{ gridColumn: columnIndex + 1, gridRow: rowIndex + 1 }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
@@ -598,7 +598,7 @@ function GridZone({
     <section
       aria-label={t("workspace.webDesign.aria.chartZone", { title: node.data.title })}
       className={cn(
-        "relative z-10 overflow-hidden rounded-md border border-[#cfc5b2] bg-white",
+        "relative z-10 overflow-hidden rounded-md border border-[#cfc5b2] bg-white dark:border-white/10 dark:bg-[#1c1c38]",
       )}
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
@@ -609,10 +609,10 @@ function GridZone({
         <div
           draggable
           onDragStart={handleDragStart}
-          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#eee8dc] bg-[#faf8f4] px-2 py-1 active:cursor-grabbing"
+          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#eee8dc] bg-[#faf8f4] px-2 py-1 active:cursor-grabbing dark:border-white/10 dark:bg-[#25254d]"
         >
           <div className="flex flex-wrap items-center gap-1">
-            <span className="rounded bg-[#ede8de] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#7a6a4f] truncate max-w-[120px]">
+            <span className="rounded bg-[#ede8de] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#7a6a4f] truncate max-w-[120px] dark:bg-white/10 dark:text-gray-200">
               {node.data.title}
             </span>
             <div className="flex items-center gap-0.5">
@@ -630,7 +630,7 @@ function GridZone({
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">
+              <span className="text-[10px] text-[#555] dark:text-gray-300">
                 {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
               </span>
               <Tooltip>
@@ -663,7 +663,7 @@ function GridZone({
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
               </Tooltip>
-              <span className="text-[10px] text-[#555]">
+              <span className="text-[10px] text-[#555] dark:text-gray-300">
                 {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
               </span>
               <Tooltip>
@@ -709,9 +709,11 @@ function GridZone({
           </div>
         </div>
       ) : (
-        <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold">{node.data.title}</div>
+        <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10">
+          {node.data.title}
+        </div>
       )}
-      <div ref={chartCaptureRef} className="bg-parchment">
+      <div ref={chartCaptureRef} className="bg-parchment dark:bg-[#111115]">
         <ChartPreview spec={node.data.spec} height={Math.max(180, zone.rowSpan * 260)} />
       </div>
     </section>
@@ -728,7 +730,7 @@ function SidebarEditor({ preview }: { preview: boolean }) {
 
   if (preview) {
     return (
-      <nav className="border-r border-[#e2dccf] bg-[#fbfaf5] p-4">
+      <nav className="border-r border-[#e2dccf] bg-[#fbfaf5] p-4 dark:border-white/10 dark:bg-[#15151b]">
         {layout.sidebar.map((item) => (
           <div key={item.id} className="py-1">
             <button
@@ -736,7 +738,9 @@ function SidebarEditor({ preview }: { preview: boolean }) {
               onClick={() => setActivePage(item.pageId ?? item.id)}
               className={cn(
                 "block w-full rounded-md px-2 py-1 text-left text-sm font-medium",
-                layout.activePageId === (item.pageId ?? item.id) && "bg-[#eadfca] text-[#6f4d24]"
+                layout.activePageId === (item.pageId ?? item.id)
+                  ? "bg-[#eadfca] text-[#6f4d24] dark:bg-[#3a2f23] dark:text-[#f4c98f]"
+                  : "dark:text-gray-200 dark:hover:bg-white/10"
               )}
             >
               {formatSidebarLabel(item.label, t)}
@@ -747,8 +751,10 @@ function SidebarEditor({ preview }: { preview: boolean }) {
                 type="button"
                 onClick={() => setActivePage(child.pageId ?? child.id)}
                 className={cn(
-                  "ml-4 block w-[calc(100%-1rem)] rounded-md px-2 py-1 text-left text-xs font-normal text-[#777166]",
-                  layout.activePageId === (child.pageId ?? child.id) && "bg-[#eadfca] text-[#6f4d24]"
+                  "ml-4 block w-[calc(100%-1rem)] rounded-md px-2 py-1 text-left text-xs font-normal text-[#777166] dark:text-gray-400",
+                  layout.activePageId === (child.pageId ?? child.id)
+                    ? "bg-[#eadfca] text-[#6f4d24] dark:bg-[#3a2f23] dark:text-[#f4c98f]"
+                    : "dark:hover:bg-white/10"
                 )}
               >
                 {formatSidebarLabel(child.label, t)}
@@ -761,7 +767,7 @@ function SidebarEditor({ preview }: { preview: boolean }) {
   }
 
   return (
-    <aside className="overflow-auto border-r border-[#d8d1c1] bg-[#fbfaf5] p-3">
+    <aside className="overflow-auto border-r border-[#d8d1c1] bg-[#fbfaf5] p-3 dark:border-white/10 dark:bg-[#15151b]">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-semibold">{t("workspace.webDesign.pageSidebar")}</span>
         <Button
@@ -851,7 +857,9 @@ function ColumnResizeHandle({
       <div
         className={cn(
           "h-full w-0.5 transition-colors",
-          dragging ? "bg-[#996b35]" : "bg-transparent group-hover:bg-[#d8d1c1]"
+          dragging
+            ? "bg-[#996b35] dark:bg-[#d97757]"
+            : "bg-transparent group-hover:bg-[#d8d1c1] dark:group-hover:bg-white/20"
         )}
       />
     </div>
@@ -907,7 +915,9 @@ function RowResizeHandle({
       <div
         className={cn(
           "h-0.5 w-full transition-colors",
-          dragging ? "bg-[#996b35]" : "bg-transparent group-hover:bg-[#d8d1c1]"
+          dragging
+            ? "bg-[#996b35] dark:bg-[#d97757]"
+            : "bg-transparent group-hover:bg-[#d8d1c1] dark:group-hover:bg-white/20"
         )}
       />
     </div>
@@ -934,13 +944,15 @@ function SidebarItemEditor({
   return (
     <div
       className={cn(
-        "space-y-2 rounded-md border bg-white p-2",
-        activePageId === pageId ? "border-[#ad7d3d] ring-2 ring-[#eadfca]" : "border-[#d8d1c1]"
+        "space-y-2 rounded-md border bg-white p-2 dark:bg-[#1c1c38]",
+        activePageId === pageId
+          ? "border-[#ad7d3d] ring-2 ring-[#eadfca] dark:border-[#d97757] dark:ring-[#d97757]/25"
+          : "border-[#d8d1c1] dark:border-white/10"
       )}
     >
       <button
         type="button"
-        className="w-full rounded-md bg-[#fbfaf5] px-2 py-1 text-left text-xs font-semibold text-[#6f4d24]"
+        className="w-full rounded-md bg-[#fbfaf5] px-2 py-1 text-left text-xs font-semibold text-[#6f4d24] dark:bg-white/10 dark:text-[#f4c98f]"
         onClick={() => onSelectPage(pageId)}
       >
         {t("workspace.webDesign.webPage")}
@@ -974,12 +986,14 @@ function SidebarItemEditor({
           key={child.id}
           className={cn(
             "ml-3 space-y-2 border-l pl-2",
-            activePageId === (child.pageId ?? child.id) ? "border-[#ad7d3d]" : "border-[#d8d1c1]"
+            activePageId === (child.pageId ?? child.id)
+              ? "border-[#ad7d3d] dark:border-[#d97757]"
+              : "border-[#d8d1c1] dark:border-white/10"
           )}
         >
           <button
             type="button"
-            className="w-full rounded-md bg-[#fbfaf5] px-2 py-1 text-left text-xs font-semibold text-[#6f4d24]"
+            className="w-full rounded-md bg-[#fbfaf5] px-2 py-1 text-left text-xs font-semibold text-[#6f4d24] dark:bg-white/10 dark:text-[#f4c98f]"
             onClick={() => onSelectPage(child.pageId ?? child.id)}
           >
             {t("workspace.webDesign.webPage")}

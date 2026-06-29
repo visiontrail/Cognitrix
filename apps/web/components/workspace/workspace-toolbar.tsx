@@ -39,6 +39,7 @@ import { useUIStore } from "@/stores/ui-store";
 import { useRenameWorkspace, useWorkspaceCatalog } from "@/hooks/use-workspace";
 import { generateId } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme } from "@/lib/theme/context";
 import { toast } from "sonner";
 import { saveWorkspaceSnapshot } from "@/lib/workspace/api";
 import {
@@ -129,6 +130,7 @@ const TEXT_LEVEL_PRESETS: Record<TextLevel, TextLevelPreset> = {
 
 export function WorkspaceToolbar() {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const addNode = useWorkspaceStore((s) => s.addNode);
@@ -185,8 +187,9 @@ export function WorkspaceToolbar() {
       edges,
       webDesign,
       canvasBackgrounds,
+      theme: resolvedTheme,
     }),
-    [canvasFormat, pageCount, viewport, nodes, edges, webDesign, canvasBackgrounds]
+    [canvasFormat, pageCount, viewport, nodes, edges, webDesign, canvasBackgrounds, resolvedTheme]
   );
   const publishValidation = useMemo(
     () => validatePublishSnapshot(activePublishSnapshot),
@@ -464,7 +467,7 @@ export function WorkspaceToolbar() {
   };
 
   return (
-    <header className="flex flex-col border-b border-border-cream bg-ivory shrink-0">
+    <header className="relative z-30 flex shrink-0 flex-col border-b border-border-cream bg-ivory">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
       <div className="flex min-w-[180px] flex-1 items-center gap-3">
         <div className="min-w-0">

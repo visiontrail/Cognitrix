@@ -36,6 +36,7 @@ import {
   composeCanvasBackgroundStyle,
   resolveCanvasBackgroundPreset,
 } from "@/lib/workspace/canvas-backgrounds";
+import { useTheme } from "@/lib/theme/context";
 import { ChartNode } from "./nodes/chart-node";
 import { TextNode } from "./nodes/text-node";
 import { StickyNoteNode } from "./nodes/sticky-note-node";
@@ -69,6 +70,7 @@ function normalizeWorkspaceNodes(nodes: WorkspaceNode[]): Node[] {
 
 export function WorkspaceCanvas() {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const storeNodes = useWorkspaceStore((s) => s.nodes);
   const storeEdges = useWorkspaceStore((s) => s.edges);
   const storeViewport = useWorkspaceStore((s) => s.viewport);
@@ -95,7 +97,7 @@ export function WorkspaceCanvas() {
   // The chosen backdrop paints the page surface on bounded canvases (paper /
   // slide) and the full-bleed pane on the infinite canvas. On bounded canvases
   // the surrounding "desk" keeps the neutral ReactFlow dot grid.
-  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds);
+  const backgroundPreset = resolveCanvasBackgroundPreset(canvasFormat.id, canvasBackgrounds, resolvedTheme);
   const backgroundStyle = composeCanvasBackgroundStyle(backgroundPreset);
 
   // Paper/slide canvases behave like a document: the wheel pans vertically and
@@ -261,7 +263,7 @@ export function WorkspaceCanvas() {
             variant={BackgroundVariant.Dots}
             gap={20}
             size={1}
-            color="#d1cfc5"
+            color={resolvedTheme === "dark" ? "rgba(255, 255, 255, 0.16)" : "#d1cfc5"}
           />
         )}
         {pageRects.length > 0 && (
@@ -311,8 +313,8 @@ export function WorkspaceCanvas() {
           showInteractive={false}
         />
         <MiniMap
-          nodeColor={() => "#c96442"}
-          maskColor="rgba(245, 244, 237, 0.8)"
+          nodeColor={() => (resolvedTheme === "dark" ? "#d97757" : "#c96442")}
+          maskColor={resolvedTheme === "dark" ? "rgba(17, 17, 21, 0.78)" : "rgba(245, 244, 237, 0.8)"}
         />
       </ReactFlow>
     </div>

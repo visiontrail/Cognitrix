@@ -46,6 +46,8 @@ export type CanvasBackgroundPreset = {
   layers?: BackgroundLayer[];
 };
 
+export type CanvasTheme = "light" | "dark";
+
 // Tuned once here so grid/line presets stay visually consistent.
 const TERRACOTTA_LINE = "rgba(201, 100, 66, 0.09)";
 const WARM_DOT = "#d3cdbf";
@@ -241,7 +243,17 @@ const DEFAULT_BACKGROUND_BY_FORMAT: Partial<Record<WorkspaceCanvasFormatId, stri
   "wide-16-9": "ivory",
 };
 
-export function getDefaultCanvasBackgroundId(formatId: WorkspaceCanvasFormatId): string {
+const DEFAULT_DARK_BACKGROUND_BY_FORMAT: Partial<Record<WorkspaceCanvasFormatId, string>> = {
+  infinite: "graphite",
+};
+
+export function getDefaultCanvasBackgroundId(
+  formatId: WorkspaceCanvasFormatId,
+  theme: CanvasTheme = "light"
+): string {
+  if (theme === "dark" && DEFAULT_DARK_BACKGROUND_BY_FORMAT[formatId]) {
+    return DEFAULT_DARK_BACKGROUND_BY_FORMAT[formatId]!;
+  }
   return DEFAULT_BACKGROUND_BY_FORMAT[formatId] ?? "ivory";
 }
 
@@ -255,11 +267,12 @@ export function getCanvasBackgroundPreset(id: string | undefined): CanvasBackgro
  */
 export function resolveCanvasBackgroundPreset(
   formatId: WorkspaceCanvasFormatId,
-  backgrounds: Partial<Record<WorkspaceCanvasFormatId, string>> | undefined
+  backgrounds: Partial<Record<WorkspaceCanvasFormatId, string>> | undefined,
+  theme: CanvasTheme = "light"
 ): CanvasBackgroundPreset {
   const chosen = backgrounds?.[formatId];
   if (chosen && PRESET_BY_ID.has(chosen)) return getCanvasBackgroundPreset(chosen);
-  return getCanvasBackgroundPreset(getDefaultCanvasBackgroundId(formatId));
+  return getCanvasBackgroundPreset(getDefaultCanvasBackgroundId(formatId, theme));
 }
 
 /** Compose a preset into a paint-anywhere CSS declaration. */

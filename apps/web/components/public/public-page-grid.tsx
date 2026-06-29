@@ -108,7 +108,7 @@ function PublicChartZone({
         {title || chartId}
       </div>
       {spec ? (
-        <ChartPreview spec={spec} height={height} />
+        <ChartPreview spec={spec} height={height} theme="light" />
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-[#777166]">
           {t("public.loadingChart")}

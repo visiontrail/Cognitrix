@@ -65,6 +65,7 @@ import {
   fetchPublishHistory,
   fetchPublishedVersionSnapshot,
   publishWorkspace,
+  PublishError,
   resolvePublicUrl,
   type CanvasPublishSnapshot,
   type PublicationState,
@@ -175,8 +176,8 @@ export function WorkspaceToolbar() {
   const isSlideCanvas = activeCanvasPreset.printStyle === "slide";
   const canPublish = workspace?.role === "owner" || workspace?.role === "editor";
   const activePublishSnapshot = useMemo(
-    () => buildActiveCanvasPublishPayload({ canvasFormat, viewport, nodes, edges, webDesign }),
-    [canvasFormat, viewport, nodes, edges, webDesign]
+    () => buildActiveCanvasPublishPayload({ canvasFormat, pageCount, viewport, nodes, edges, webDesign }),
+    [canvasFormat, pageCount, viewport, nodes, edges, webDesign]
   );
   const publishValidation = useMemo(
     () => validatePublishSnapshot(activePublishSnapshot),
@@ -318,10 +319,7 @@ export function WorkspaceToolbar() {
         },
       });
     } catch (error) {
-      const message = error instanceof Error && error.message !== "Publish failed"
-        ? error.message
-        : t("workspace.publish.toast.publishFailed");
-      toast.error(message);
+      toast.error(resolvePublishErrorMessage(error, t));
     } finally {
       setIsPublishing(false);
     }
@@ -882,6 +880,24 @@ export function WorkspaceToolbar() {
   );
 }
 
+/** Map a publish failure to a localized toast message. Known server error codes
+ * resolve to their i18n string; anything else falls back to a generic message so
+ * users never see a raw English server string. */
+function resolvePublishErrorMessage(
+  error: unknown,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string {
+  const codeToKey: Record<string, string> = {
+    PUBLISH_FIXED_NODE_OUT_OF_BOUNDS: "workspace.publish.outOfBounds",
+    PUBLISH_CHART_DATA_REQUIRED: "workspace.publish.emptyChartData",
+    PUBLISH_UNSUPPORTED_CANVAS_FORMAT: "workspace.publish.toast.publishFailed",
+  };
+  if (error instanceof PublishError && error.code && codeToKey[error.code]) {
+    return t(codeToKey[error.code]);
+  }
+  return t("workspace.publish.toast.publishFailed");
+}
+
 function validatePublishSnapshot(snapshot: CanvasPublishSnapshot): { reason?: string } {
   const emptyChart = snapshot.charts.some((chart) => chart.rows.length === 0);
   if (emptyChart) {
@@ -914,6 +930,10 @@ function validatePublishSnapshot(snapshot: CanvasPublishSnapshot): { reason?: st
     // page's rect instead of the first page, otherwise any multi-page report is
     // wrongly flagged as out-of-bounds.
     const stride = getCanvasPageStride(preset);
+    const rawPageCount = Number(snapshot.page_count);
+    const pageCount = Number.isFinite(rawPageCount)
+      ? Math.min(MAX_CANVAS_PAGES, Math.max(1, Math.trunc(rawPageCount)))
+      : 1;
     const outOfBounds = publishableNodes.some((node) => {
       const width = Number(node.width ?? node.data.width ?? 0);
       const dataHeight = "height" in node.data ? node.data.height : 24;
@@ -921,6 +941,7 @@ function validatePublishSnapshot(snapshot: CanvasPublishSnapshot): { reason?: st
       if (node.position.x < 0 || node.position.x + width > preset.width!) return true;
       if (node.position.y < 0) return true;
       const page = Math.floor(node.position.y / stride);
+      if (page >= pageCount) return true;
       const pageBottom = page * stride + preset.height!;
       return node.position.y + height > pageBottom;
     });

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildActiveCanvasPublishPayload } from "../../lib/workspace/publish";
+import {
+  buildActiveCanvasPublishPayload,
+  buildWorkspaceSnapshotFromPublishedVersion,
+} from "../../lib/workspace/publish";
 import type { WebDesignLayout, WorkspaceNode } from "../../types/workspace";
 
 const chartNode: WorkspaceNode = {
@@ -89,6 +92,20 @@ describe("buildActiveCanvasPublishPayload", () => {
     expect(payload.charts[1].rows).toEqual([{ month: "Jan", rate: 0.1 }]);
   });
 
+  it("carries the fixed canvas page count into the publish payload", () => {
+    const payload = buildActiveCanvasPublishPayload({
+      canvasFormat: { id: "a4-portrait" },
+      pageCount: 2,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [chartNode],
+      edges: [],
+      webDesign,
+    });
+
+    expect(payload.page_count).toBe(2);
+    expect(payload.nodes[0]?.position).toEqual({ x: 10, y: 20 });
+  });
+
   it("flattens grouped free-layout child nodes to absolute positions for publishing", () => {
     const groupNode: WorkspaceNode = {
       id: "group-1",
@@ -126,5 +143,59 @@ describe("buildActiveCanvasPublishPayload", () => {
       position: { x: 100, y: 120 },
     });
     expect(payload.nodes.find((node) => node.id === "group-1")?.position).toEqual({ x: 70, y: 80 });
+  });
+
+  it("restores fixed canvas page counts from a published version", () => {
+    const snapshot = buildWorkspaceSnapshotFromPublishedVersion({
+      workspaceId: "workspace-1",
+      published: {
+        page_id: "page-1",
+        version: 1,
+        published_at: "2026-06-26T00:00:00+00:00",
+        published_by: "alice",
+        canvas_format_id: "a4-portrait",
+        canvas_kind: "fixed_size",
+        manifest: {
+          schema_version: 2,
+          canvas: {
+            format_id: "a4-portrait",
+            kind: "fixed_size",
+            viewport: { x: 0, y: 0, zoom: 1 },
+            page: { preset_id: "a4-portrait", width: 794, height: 1123, count: 2, gap: 48 },
+          },
+          content: {
+            nodes: [
+              chartNode,
+              {
+                ...otherChartNode,
+                id: "page-2-chart",
+                position: { x: 20, y: 1200 },
+              },
+            ],
+            edges: [],
+          },
+          layout: { grid: { columns: 1, rows: [] }, zones: [] },
+          sidebar: [],
+          charts: [],
+        },
+        charts: [],
+      },
+      baseSnapshot: {
+        workspaceId: "workspace-1",
+        nodesByFormat: {},
+        edgesByFormat: {},
+        canvasPages: { "a4-portrait": 1 },
+        viewport: { x: 0, y: 0, zoom: 1 },
+        canvasFormat: { id: "a4-portrait" },
+        webDesign,
+      },
+    });
+
+    expect(snapshot.canvasFormat?.id).toBe("a4-portrait");
+    expect(snapshot.canvasPages?.["a4-portrait"]).toBe(2);
+    expect(snapshot.nodesByFormat?.["a4-portrait"]?.map((node) => node.id)).toEqual([
+      "node-chart",
+      "page-2-chart",
+    ]);
   });
 });

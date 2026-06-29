@@ -1,7 +1,7 @@
 import { getAuthorizationHeader } from "@/lib/auth/session";
 import { API_BASE_URL } from "@/lib/api-base";
 import { extractChartRows } from "@/lib/workspace/chart-rows";
-import { normalizeCanvasFormat } from "@/lib/workspace/canvas-formats";
+import { MAX_CANVAS_PAGES, normalizeCanvasFormat } from "@/lib/workspace/canvas-formats";
 import { isRecord } from "@/lib/utils";
 import type { PublishedCanvasNode, PublishedManifest } from "@/lib/public/api";
 import type { ChartSpec } from "@/types/chart";
@@ -109,6 +109,7 @@ export type PublishedVersionSnapshot = {
 
 export type CanvasPublishSnapshot = {
   canvas_format: WorkspaceCanvasFormat;
+  page_count: number;
   viewport: { x: number; y: number; zoom: number };
   nodes: WorkspaceNode[];
   edges: WorkspaceEdge[];
@@ -132,12 +133,14 @@ export type CanvasPublishSnapshot = {
 
 export function buildActiveCanvasPublishPayload({
   canvasFormat,
+  pageCount = 1,
   viewport,
   nodes,
   edges,
   webDesign,
 }: {
   canvasFormat: WorkspaceCanvasFormat;
+  pageCount?: number;
   viewport: { x: number; y: number; zoom: number };
   nodes: WorkspaceNode[];
   edges: WorkspaceEdge[];
@@ -175,6 +178,10 @@ export function buildActiveCanvasPublishPayload({
 
   const payload: CanvasPublishSnapshot = {
     canvas_format: canvasFormat,
+    page_count: Math.min(
+      MAX_CANVAS_PAGES,
+      Math.max(1, Math.trunc(Number.isFinite(pageCount) ? pageCount : 1))
+    ),
     viewport,
     nodes: publishNodes,
     edges,
@@ -236,6 +243,17 @@ function roundPosition(position: { x: number; y: number }): { x: number; y: numb
   };
 }
 
+/** Error thrown by {@link publishWorkspace}, carrying the server error `code`
+ * (e.g. `PUBLISH_FIXED_NODE_OUT_OF_BOUNDS`) so callers can localize the toast. */
+export class PublishError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "PublishError";
+    this.code = code;
+  }
+}
+
 export async function publishWorkspace(
   workspaceId: string,
   snapshot: CanvasPublishSnapshot,
@@ -254,9 +272,9 @@ export async function publishWorkspace(
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = typeof payload === "object" && payload && "detail" in payload
-      ? (payload.detail as { message?: string })
+      ? (payload.detail as { message?: string; code?: string })
       : null;
-    throw new Error(detail?.message || "Publish failed");
+    throw new PublishError(detail?.message || "Publish failed", detail?.code);
   }
   return payload as PublicationStatus;
 }
@@ -396,6 +414,16 @@ export function buildWorkspaceSnapshotFromPublishedVersion({
     ...(baseSnapshot?.edgesByFormat ?? {}),
     [canvasFormat.id]: restoredEdges,
   };
+  const canvasPages: Partial<Record<WorkspaceCanvasFormatId, number>> = {
+    ...(baseSnapshot?.canvasPages ?? {}),
+  };
+  const restoredPageCount = Number(manifest.canvas?.page?.count ?? 1);
+  if (manifest.canvas?.kind === "fixed_size") {
+    canvasPages[canvasFormat.id] = Math.min(
+      MAX_CANVAS_PAGES,
+      Math.max(1, Math.trunc(Number.isFinite(restoredPageCount) ? restoredPageCount : 1))
+    );
+  }
 
   return {
     workspaceId,
@@ -403,6 +431,7 @@ export function buildWorkspaceSnapshotFromPublishedVersion({
     edges: restoredEdges,
     nodesByFormat,
     edgesByFormat,
+    canvasPages,
     viewport: normalizeViewport(manifest.canvas?.viewport),
     canvasFormat,
     webDesign:

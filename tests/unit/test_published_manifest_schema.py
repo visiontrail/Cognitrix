@@ -80,6 +80,12 @@ def test_snapshot_writer_creates_schema_v2_manifest_for_canvas_modes(
         }
 
     if expected_kind == "fixed_size":
-        assert manifest["canvas"]["page"] == {"preset_id": "a4-portrait", "width": 794, "height": 1123}
+        assert manifest["canvas"]["page"] == {
+            "preset_id": "a4-portrait",
+            "width": 794,
+            "height": 1123,
+            "count": 1,
+            "gap": 48,
+        }
     if expected_kind == "free_layout":
         assert manifest["canvas"]["bounds"]["width"] == 320

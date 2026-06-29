@@ -1408,6 +1408,7 @@ async def publish_workspace(
             workspace_id=workspace_id,
             version=version,
             canvas_format_id=request.canvas_format_id(),
+            page_count=request.page_count,
             viewport=request.viewport,
             nodes=request.nodes,
             edges=request.edges,

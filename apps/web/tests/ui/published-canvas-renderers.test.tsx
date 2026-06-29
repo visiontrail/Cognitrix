@@ -155,4 +155,44 @@ describe("published canvas renderers", () => {
     expect(screen.getByText("Published note")).toBeInTheDocument();
     expect(page).toHaveStyle({ width: "794px", height: "1123px" });
   });
+
+  it("renders every page of a multi-page fixed-size canvas", () => {
+    const manifest: PublishedManifest = {
+      ...baseManifest,
+      canvas: {
+        format_id: "a4-portrait",
+        kind: "fixed_size",
+        page: { preset_id: "a4-portrait", width: 794, height: 1123, count: 2, gap: 48 },
+      },
+      content: {
+        nodes: [
+          {
+            id: "page-1-note",
+            position: { x: 48, y: 64 },
+            width: 180,
+            height: 120,
+            data: { type: "stickyNote", content: "First page note", color: "yellow" },
+          },
+          {
+            id: "page-2-note",
+            // Page 2 starts at stride = 1123 + 48 = 1171.
+            position: { x: 48, y: 1240 },
+            width: 180,
+            height: 120,
+            data: { type: "stickyNote", content: "Second page note", color: "blue" },
+          },
+        ],
+        edges: [],
+      },
+    };
+
+    const { container } = render(<PublishedFixedCanvas token="pub-token" manifest={manifest} />);
+    const stack = container.querySelector(".relative.origin-top");
+
+    // Stack height = 1123 * 2 + 48 = 2294.
+    expect(stack).toHaveStyle({ width: "794px", height: "2294px" });
+    expect(container.querySelectorAll("[data-testid^='published-fixed-page-']")).toHaveLength(2);
+    expect(screen.getByText("First page note")).toBeInTheDocument();
+    expect(screen.getByText("Second page note")).toBeInTheDocument();
+  });
 });

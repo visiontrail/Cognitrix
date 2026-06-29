@@ -239,6 +239,9 @@ export function PublishedFreeCanvas({
   );
 }
 
+const FIXED_CANVAS_PAGE_GAP = 48;
+const MAX_FIXED_CANVAS_PAGES = 50;
+
 export function PublishedFixedCanvas({
   token,
   manifest,
@@ -249,7 +252,7 @@ export function PublishedFixedCanvas({
   filenameBase?: string;
 }) {
   const page = manifest.canvas?.page;
-  const pageRef = useRef<HTMLDivElement | null>(null);
+  const stackRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
   useEffect(() => {
     if (!page?.width) return;
@@ -264,29 +267,62 @@ export function PublishedFixedCanvas({
     return null;
   }
   const nodes = (manifest.content?.nodes ?? []).filter((node) => !node.hidden);
+  // Fixed canvases paginate: pages stack vertically separated by `gap` canvas px.
+  // Render every page so multi-page reports show in full rather than clipping to
+  // page one. Each node is assigned to the page its top edge lands on.
+  const rawPageCount = Number(page.count ?? 1);
+  const pageCount = Number.isFinite(rawPageCount)
+    ? Math.min(MAX_FIXED_CANVAS_PAGES, Math.max(1, Math.trunc(rawPageCount)))
+    : 1;
+  const rawGap = Number(page.gap);
+  const gap = Number.isFinite(rawGap) && rawGap >= 0 ? rawGap : FIXED_CANVAS_PAGE_GAP;
+  const stride = page.height + gap;
+  const stackHeight = page.height * pageCount + gap * Math.max(0, pageCount - 1);
+  const pageIndexes = Array.from({ length: pageCount }, (_, index) => index);
   return (
     <div className="relative h-screen overflow-auto bg-[#ebe7dc] p-6 text-[#2f332f]">
       <PublicCanvasActions
-        getCanvasElement={() => pageRef.current}
+        getCanvasElement={() => stackRef.current}
         filenameBase={filenameBase}
         allowPdf
         className="fixed right-4 top-4"
-        captureOptions={{ backgroundColor: "#ffffff", width: page.width, height: page.height }}
+        captureOptions={{ backgroundColor: "#ebe7dc", width: page.width, height: stackHeight }}
       />
-      <div className="mx-auto" style={{ width: page.width * scale, height: page.height * scale }}>
+      <div className="mx-auto" style={{ width: page.width * scale, height: stackHeight * scale }}>
         <div
-          ref={pageRef}
-          className="relative origin-top overflow-hidden bg-white shadow-sm ring-1 ring-[#d8d1c1]"
+          ref={stackRef}
+          className="relative origin-top"
           style={{
             width: page.width,
-            height: page.height,
+            height: stackHeight,
             transform: `scale(${scale})`,
             transformOrigin: "top left",
           }}
         >
-          {nodes.map((node) => (
-            <PublishedNode key={node.id} token={token} node={node} offsetX={0} offsetY={0} />
-          ))}
+          {pageIndexes.map((pageIndex) => {
+            const pageTop = pageIndex * stride;
+            const pageNodes = nodes.filter(
+              (node) => Math.max(0, Math.floor(node.position.y / stride)) === pageIndex
+            );
+            return (
+              <div
+                key={pageIndex}
+                data-testid={`published-fixed-page-${pageIndex}`}
+                className="absolute overflow-hidden bg-white shadow-sm ring-1 ring-[#d8d1c1]"
+                style={{ left: 0, top: pageTop, width: page.width, height: page.height }}
+              >
+                {pageNodes.map((node) => (
+                  <PublishedNode
+                    key={node.id}
+                    token={token}
+                    node={node}
+                    offsetX={0}
+                    offsetY={-pageTop}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

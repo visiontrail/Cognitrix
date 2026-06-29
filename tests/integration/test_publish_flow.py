@@ -279,6 +279,8 @@ def test_publish_flow_supports_free_and_fixed_canvas_modes(monkeypatch, tmp_path
             "preset_id": "a4-portrait",
             "width": 794,
             "height": 1123,
+            "count": 1,
+            "gap": 48,
         }
         assert fixed_manifest["canvas"]["viewport"] == {"x": 999.0, "y": 999.0, "zoom": 9.0}
 
@@ -420,6 +422,105 @@ def test_publish_rejects_unsupported_format_and_fixed_out_of_bounds(monkeypatch,
         status = client.get(f"/workspaces/{workspace_id}/published", headers=headers)
         status.raise_for_status()
         assert status.json()["published_pages"] == []
+
+
+def test_publish_accepts_multi_page_fixed_canvas(monkeypatch, tmp_path: Path) -> None:
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="viewer", clearance=1)
+        workspace_response = client.post("/workspaces", json={"name": "Multi page"}, headers=headers)
+        workspace_response.raise_for_status()
+        workspace_id = workspace_response.json()["workspace_id"]
+
+        # A4 portrait is 1123 tall; pages stack with a 48px gap, so page 2 starts
+        # at y = 1171. A node at y=1200 legitimately lives on page 2 and must not
+        # be flagged as out-of-bounds.
+        publish_response = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "canvas_format": {"id": "a4-portrait"},
+                "page_count": 2,
+                "nodes": [
+                    {
+                        "id": "page-1-note",
+                        "type": "textNode",
+                        "position": {"x": 20, "y": 30},
+                        "width": 240,
+                        "height": 120,
+                        "data": {"type": "text", "content": "Page one", "width": 240, "height": 120},
+                    },
+                    {
+                        "id": "page-2-note",
+                        "type": "textNode",
+                        "position": {"x": 20, "y": 1200},
+                        "width": 240,
+                        "height": 120,
+                        "data": {"type": "text", "content": "Page two", "width": 240, "height": 120},
+                    },
+                ],
+                "edges": [],
+                "charts": [],
+            },
+        )
+        publish_response.raise_for_status()
+        token = publish_response.json()["token"]
+
+        manifest = client.get(f"/public/pages/{token}/manifest").json()["manifest"]
+        assert manifest["canvas"]["page"]["count"] == 2
+        assert manifest["canvas"]["page"]["gap"] == 48
+        node_ids = {node["id"] for node in manifest["content"]["nodes"]}
+        assert node_ids == {"page-1-note", "page-2-note"}
+
+        # A node beyond the last page's bottom (page 2 ends at 2294) is still rejected.
+        rejected = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "canvas_format": {"id": "a4-portrait"},
+                "page_count": 2,
+                "nodes": [
+                    {
+                        "id": "spills-past-page-2",
+                        "type": "textNode",
+                        "position": {"x": 20, "y": 2280},
+                        "width": 240,
+                        "height": 120,
+                        "data": {"type": "text", "content": "Overflow", "width": 240, "height": 120},
+                    }
+                ],
+                "edges": [],
+                "charts": [],
+            },
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"]["code"] == "PUBLISH_FIXED_NODE_OUT_OF_BOUNDS"
+
+        rejected_missing_page = client.post(
+            f"/workspaces/{workspace_id}/publish",
+            headers=headers,
+            json={
+                "canvas_format": {"id": "a4-portrait"},
+                "page_count": 2,
+                "nodes": [
+                    {
+                        "id": "starts-on-page-3",
+                        "type": "textNode",
+                        "position": {"x": 20, "y": 2342},
+                        "width": 240,
+                        "height": 120,
+                        "data": {"type": "text", "content": "Missing page", "width": 240, "height": 120},
+                    }
+                ],
+                "edges": [],
+                "charts": [],
+            },
+        )
+        assert rejected_missing_page.status_code == 422
+        detail = rejected_missing_page.json()["detail"]
+        assert detail["code"] == "PUBLISH_FIXED_NODE_OUT_OF_BOUNDS"
+        assert detail["node_ids"] == ["starts-on-page-3"]
 
 
 def test_legacy_web_design_manifest_normalizes_to_schema_v2(monkeypatch, tmp_path: Path) -> None:

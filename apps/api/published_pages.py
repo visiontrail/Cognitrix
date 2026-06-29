@@ -40,6 +40,12 @@ CANVAS_FORMAT_KINDS: dict[str, str] = {
     CANVAS_FORMAT_WEB_DESIGN: CANVAS_KIND_WEB_PAGE,
     **{preset_id: CANVAS_KIND_FIXED_SIZE for preset_id in FIXED_CANVAS_PRESETS},
 }
+# Vertical gap (canvas px) rendered between stacked pages of a fixed canvas.
+# Must match the frontend `CANVAS_PAGE_GAP` in lib/workspace/canvas-formats.ts.
+CANVAS_PAGE_GAP = 48
+# Upper bound on how many pages a single fixed canvas may hold (mirrors the
+# frontend `MAX_CANVAS_PAGES`).
+MAX_CANVAS_PAGES = 50
 PUBLIC_NODE_TYPES = {"chart", "text", "stickyNote", "divider", "section"}
 PUBLIC_NODE_DATA_FIELDS: dict[str, set[str]] = {
     "chart": {"type", "assetId", "title", "chartType", "width", "height"},
@@ -133,6 +139,7 @@ class PublishWorkspaceRequest(BaseModel):
     model_config = {"extra": "ignore"}
 
     canvas_format: PublishedCanvasFormat | None = None
+    page_count: int = 1
     viewport: PublishedViewport = Field(default_factory=PublishedViewport)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
@@ -142,6 +149,11 @@ class PublishWorkspaceRequest(BaseModel):
     charts: list[PublishedChartSnapshot] = Field(default_factory=list)
     visibility_mode: str = VISIBILITY_PUBLIC
     visibility_user_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("page_count", mode="before")
+    @classmethod
+    def validate_page_count(cls, value: int) -> int:
+        return _clamp_page_count(value)
 
     @field_validator("visibility_mode")
     @classmethod
@@ -299,6 +311,7 @@ class SnapshotWriter:
         charts: list[PublishedChartSnapshot],
         actor_role: str,
         published_at: str,
+        page_count: int = 1,
     ) -> SnapshotWriteResult:
         normalized_workspace_id = workspace_id.strip()
         if not normalized_workspace_id:
@@ -307,7 +320,9 @@ class SnapshotWriter:
                 message="workspace_id is required",
                 status_code=422,
             )
-        canvas = build_canvas_metadata(canvas_format_id=canvas_format_id, viewport=viewport)
+        canvas = build_canvas_metadata(
+            canvas_format_id=canvas_format_id, viewport=viewport, page_count=page_count
+        )
         canvas_kind = canvas["kind"]
         safe_nodes = normalize_public_nodes(nodes or [])
         safe_edges = normalize_public_edges(edges or [])
@@ -1019,10 +1034,19 @@ def canvas_kind_for_format(canvas_format_id: str | None) -> str:
     return kind
 
 
+def _clamp_page_count(value: Any) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(MAX_CANVAS_PAGES, count))
+
+
 def build_canvas_metadata(
     *,
     canvas_format_id: str,
     viewport: PublishedViewport | dict[str, Any] | None = None,
+    page_count: int = 1,
 ) -> dict[str, Any]:
     normalized_format_id = canvas_format_id.strip()
     canvas_kind = CANVAS_FORMAT_KINDS.get(normalized_format_id)
@@ -1045,6 +1069,11 @@ def build_canvas_metadata(
             "preset_id": normalized_format_id,
             "width": preset["width"],
             "height": preset["height"],
+            # Fixed canvases paginate vertically; the public renderer stacks
+            # `count` pages separated by `gap`. `width`/`height` describe a
+            # single page.
+            "count": _clamp_page_count(page_count),
+            "gap": CANVAS_PAGE_GAP,
         }
     return canvas
 
@@ -1113,11 +1142,24 @@ def normalize_public_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def validate_fixed_size_node_bounds(nodes: list[dict[str, Any]], *, canvas: dict[str, Any]) -> list[str]:
+    """Flag nodes that fall outside their page on a fixed-size canvas.
+
+    Fixed canvases paginate: pages stack vertically with ``gap`` canvas px
+    between them, so a node on page 2+ legitimately sits at ``y > page_height``.
+    Resolve each node to the page it starts on (via the page stride) and check
+    it against that page's rect, mirroring the frontend
+    ``validatePublishSnapshot`` check. Otherwise any multi-page report is
+    wrongly rejected as out-of-bounds.
+    """
+
     page = canvas.get("page") if isinstance(canvas.get("page"), dict) else {}
     page_width = _positive_float(page.get("width"), 0)
     page_height = _positive_float(page.get("height"), 0)
     if page_width <= 0 or page_height <= 0:
         return [str(node.get("id") or "") for node in nodes if node.get("id")]
+    page_count = _clamp_page_count(page.get("count"))
+    gap = _positive_float(page.get("gap"), CANVAS_PAGE_GAP)
+    stride = page_height + gap
     offending: list[str] = []
     for node in nodes:
         if node.get("hidden"):
@@ -1127,7 +1169,12 @@ def validate_fixed_size_node_bounds(nodes: list[dict[str, Any]], *, canvas: dict
         y = _finite_float(position.get("y"), 0)
         width = _positive_float(node.get("width"), 0)
         height = _positive_float(node.get("height"), 0)
-        if x < 0 or y < 0 or x + width > page_width or y + height > page_height:
+        page_index = max(0, int(y // stride)) if stride > 0 else 0
+        if page_index >= page_count:
+            offending.append(str(node.get("id") or "unknown"))
+            continue
+        page_bottom = page_index * stride + page_height
+        if x < 0 or y < 0 or x + width > page_width or y + height > page_bottom:
             offending.append(str(node.get("id") or "unknown"))
     return offending
 
@@ -1176,10 +1223,12 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, include_internal_paths: 
         manifest = dict(raw_manifest)
         canvas = manifest.get("canvas") if isinstance(manifest.get("canvas"), dict) else {}
         canvas_format_id = str(canvas.get("format_id") or CANVAS_FORMAT_WEB_DESIGN)
+        stored_page = canvas.get("page") if isinstance(canvas.get("page"), dict) else {}
         try:
             normalized_canvas = build_canvas_metadata(
                 canvas_format_id=canvas_format_id,
                 viewport=canvas.get("viewport") if isinstance(canvas, dict) else None,
+                page_count=_clamp_page_count(stored_page.get("count")),
             )
         except PublishedPageError:
             normalized_canvas = {

@@ -88,9 +88,12 @@ export function PublicPageClient({ token }: { token: string }) {
 
     if (state === "forbidden") {
       return (
-        <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#f7f4eb] text-center">
+        <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#f7f4eb] text-center">
           <p className="font-medium text-[#2f332f]">{t("public.forbiddenTitle")}</p>
           <p className="max-w-sm text-sm text-[#777166]">{t("public.forbiddenDesc")}</p>
+          <Button asChild>
+            <a href="/">{t("public.backToWorkspace")}</a>
+          </Button>
         </div>
       );
     }

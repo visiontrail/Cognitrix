@@ -14,6 +14,9 @@ import {
   Table2,
   LogOut,
   Globe,
+  Monitor,
+  Moon,
+  Sun,
   ChevronUp,
   Check,
   X,
@@ -47,6 +50,7 @@ import { chatSessionsQueryKey, useCreateSession, useDeleteSession } from "@/hook
 import { syncSessionToServer } from "@/lib/chat/server-sync";
 import { useCreateWorkspace, useDeleteWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n/context";
+import { useTheme, type ThemeMode } from "@/lib/theme/context";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime } from "@/lib/utils";
 import { useSession } from "@/lib/auth/use-session";
@@ -55,6 +59,7 @@ import { clearInMemoryToken } from "@/lib/auth/session";
 
 export function GlobalSidebar() {
   const { t, locale, setLocale } = useI18n();
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const queryClient = useQueryClient();
   const { user } = useSession();
 
@@ -312,6 +317,37 @@ export function GlobalSidebar() {
             </div>
             <DropdownMenuSeparator />
 
+            {/* Theme submenu */}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Monitor className="w-4 h-4" />
+                {t("theme.label")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-64">
+                <ThemeMenuItem
+                  mode="system"
+                  activeMode={themeMode}
+                  label={t("theme.system")}
+                  icon={<Monitor className="w-4 h-4" />}
+                  onSelect={setThemeMode}
+                />
+                <ThemeMenuItem
+                  mode="light"
+                  activeMode={themeMode}
+                  label={t("theme.light")}
+                  icon={<Sun className="w-4 h-4" />}
+                  onSelect={setThemeMode}
+                />
+                <ThemeMenuItem
+                  mode="dark"
+                  activeMode={themeMode}
+                  label={t("theme.dark")}
+                  icon={<Moon className="w-4 h-4" />}
+                  onSelect={setThemeMode}
+                />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+
             {/* Language submenu */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
@@ -418,6 +454,28 @@ export function GlobalSidebar() {
       </DialogContent>
     </Dialog>
     </>
+  );
+}
+
+function ThemeMenuItem({
+  mode,
+  activeMode,
+  label,
+  icon,
+  onSelect,
+}: {
+  mode: ThemeMode;
+  activeMode: ThemeMode;
+  label: string;
+  icon: React.ReactNode;
+  onSelect: (mode: ThemeMode) => void;
+}) {
+  return (
+    <DropdownMenuItem onSelect={() => onSelect(mode)}>
+      {icon}
+      {label}
+      {activeMode === mode && <Check className="ml-auto w-4 h-4" />}
+    </DropdownMenuItem>
   );
 }
 

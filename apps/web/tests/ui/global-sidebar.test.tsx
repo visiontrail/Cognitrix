@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { GlobalSidebar } from "../../components/shared/global-sidebar";
+import { ThemeProvider } from "../../lib/theme/context";
 import * as workspaceApi from "../../lib/workspace/api";
 import { useChatStore } from "../../stores/chat-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -21,10 +22,12 @@ function renderWithProviders(ui: React.ReactElement) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        {/* Sidebar uses flex/grid fill; give a viewport height like AppShell */}
-        <div className="h-[720px]">{ui}</div>
-      </TooltipProvider>
+      <ThemeProvider>
+        <TooltipProvider>
+          {/* Sidebar uses flex/grid fill; give a viewport height like AppShell */}
+          <div className="h-[720px]">{ui}</div>
+        </TooltipProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
@@ -205,6 +208,11 @@ describe("GlobalSidebar", () => {
         name: "Delete workspace: Q1 2026 HR2 Report",
       })
     );
+    await userEvent.type(
+      screen.getByLabelText("Type the workspace name to confirm:"),
+      "Q1 2026 HR2 Report"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Delete forever" }));
 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().workspaces).toEqual([]);
@@ -229,5 +237,18 @@ describe("GlobalSidebar", () => {
     renderWithProviders(<GlobalSidebar />);
 
     expect(screen.queryByRole("button", { name: "Delete workspace: Shared Workspace" })).toBeNull();
+  });
+
+  it("stores theme preference from the user menu", async () => {
+    renderWithProviders(<GlobalSidebar />);
+
+    await userEvent.click(screen.getByRole("button", { name: /AI-Native BI Platform/ }));
+    await userEvent.hover(screen.getByText("Theme"));
+    await userEvent.click(await screen.findByText("Dark"));
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveClass("dark");
+      expect(window.localStorage.getItem("cognitrix.theme")).toBe("dark");
+    });
   });
 });

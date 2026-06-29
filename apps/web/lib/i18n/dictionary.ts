@@ -15,6 +15,10 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "language.label": "Language",
     "language.en": "English (United States)",
     "language.zh": "中文（简体）",
+    "theme.label": "Theme",
+    "theme.system": "Follow System",
+    "theme.light": "Light",
+    "theme.dark": "Dark",
 
     "sidebar.hideSidebar": "Hide sidebar (⌘B)",
     "sidebar.panel.chat": "Chat",
@@ -650,6 +654,7 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "public.loginAction": "Login to view",
     "public.forbiddenTitle": "No access",
     "public.forbiddenDesc": "Your account is not on the access list for this published page.",
+    "public.backToWorkspace": "Back to workspace",
 
     "collab.collaborators": "Collaborators",
     "collab.invite": "Invite",
@@ -716,6 +721,10 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "language.label": "语言",
     "language.en": "English (United States)",
     "language.zh": "中文（简体）",
+    "theme.label": "主题",
+    "theme.system": "跟随系统",
+    "theme.light": "浅色",
+    "theme.dark": "深色",
 
     "sidebar.hideSidebar": "隐藏侧边栏 (⌘B)",
     "sidebar.panel.chat": "对话",
@@ -1339,6 +1348,7 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "public.loginAction": "登录查看",
     "public.forbiddenTitle": "无访问权限",
     "public.forbiddenDesc": "你的账号不在该发布页的访问名单中。",
+    "public.backToWorkspace": "返回设计主界面",
 
     "collab.collaborators": "协作者",
     "collab.invite": "邀请",

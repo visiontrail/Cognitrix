@@ -132,6 +132,7 @@ describe("PublicPageClient", () => {
     render(<PublicPageClient token="restricted-token" />);
 
     expect(await screen.findByText("No access")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to workspace" })).toHaveAttribute("href", "/");
     expect(screen.queryByText("Link unavailable")).not.toBeInTheDocument();
   });
 });

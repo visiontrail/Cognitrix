@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { PublicCanvasActions } from "@/components/public/public-canvas-actions";
 import { PublicPageGrid } from "@/components/public/public-page-grid";
@@ -80,7 +81,7 @@ export function PublicPageClient({ token }: { token: string }) {
           <p className="font-medium text-[#2f332f]">{t("public.loginRequiredTitle")}</p>
           <p className="max-w-sm text-sm text-[#777166]">{t("public.loginRequiredDesc")}</p>
           <Button asChild>
-            <a href={`/login?next=${next}`}>{t("public.loginAction")}</a>
+            <Link href={`/login?next=${next}`}>{t("public.loginAction")}</Link>
           </Button>
         </div>
       );
@@ -92,7 +93,7 @@ export function PublicPageClient({ token }: { token: string }) {
           <p className="font-medium text-[#2f332f]">{t("public.forbiddenTitle")}</p>
           <p className="max-w-sm text-sm text-[#777166]">{t("public.forbiddenDesc")}</p>
           <Button asChild>
-            <a href="/">{t("public.backToWorkspace")}</a>
+            <Link href="/">{t("public.backToWorkspace")}</Link>
           </Button>
         </div>
       );

@@ -1,7 +1,17 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, ChevronDown, ChevronRight, Loader2, Send, Wrench, X } from "lucide-react";
+import {
+  FormEvent,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { AlertCircle, Bot, Brain, ChevronDown, ChevronRight, Loader2, MessageSquarePlus, Send, Wrench, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { streamPublicAssistant, type PublishedManifest } from "@/lib/public/api";
@@ -33,6 +43,16 @@ type TraceRow = {
 type TraceState = "live" | "collapsed" | "expanded";
 type TranslateFn = (key: string, params?: Record<string, string | number | null | undefined>) => string;
 
+const MIN_DRAWER_WIDTH = 360;
+const MAX_DRAWER_WIDTH = 820;
+
+function clampDrawerWidth(value: number): number {
+  const viewportCap =
+    typeof window !== "undefined" ? Math.max(MIN_DRAWER_WIDTH, window.innerWidth - 64) : MAX_DRAWER_WIDTH;
+  const upper = Math.min(MAX_DRAWER_WIDTH, viewportCap);
+  return Math.min(Math.max(value, MIN_DRAWER_WIDTH), upper);
+}
+
 export function PublicAssistantDrawer({
   token,
   manifest,
@@ -46,11 +66,22 @@ export function PublicAssistantDrawer({
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [drawerWidth, setDrawerWidth] = useState<number | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizingRef = useRef(false);
   const assistantAvailable = manifest.assistant?.available === true;
   const selectedChart = useMemo(
     () => manifest.charts.find((chart) => chart.chart_id === selectedChartId),
     [manifest.charts, selectedChartId]
   );
+
+  function handleNewChat() {
+    if (isRunning) return;
+    conversationIdRef.current = `public-${createId()}`;
+    setMessages([]);
+    setInput("");
+    setError(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,15 +207,79 @@ export function PublicAssistantDrawer({
     updateAssistantMessage(messageId, (assistant) => ({ ...assistant, traceState }));
   }
 
+  function handleResizePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    resizingRef.current = true;
+    setIsResizing(true);
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    if (drawerWidth === null) {
+      setDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
+    }
+  }
+
+  function handleResizePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!resizingRef.current) return;
+    setDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
+  }
+
+  function handleResizePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!resizingRef.current) return;
+    resizingRef.current = false;
+    setIsResizing(false);
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function" &&
+      event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 48 : 16;
+    const base = drawerWidth ?? 420;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setDrawerWidth(clampDrawerWidth(base + step));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setDrawerWidth(clampDrawerWidth(base - step));
+    }
+  }
+
   if (!open) return null;
 
   return (
     <aside
-      className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-[#d8d1c1] bg-[#fffdf8] text-[#2f332f] shadow-xl dark:border-white/15 dark:bg-[#141426] dark:text-white sm:w-[420px]"
+      className={cn(
+        "fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-[#d8d1c1] bg-[#fffdf8] text-[#2f332f] shadow-xl dark:border-white/15 dark:bg-[#141426] dark:text-white sm:w-[420px] sm:max-w-[95vw]",
+        isResizing && "select-none"
+      )}
+      style={drawerWidth !== null ? { width: drawerWidth } : undefined}
       data-public-canvas-control
       data-public-canvas-export-ignore
       data-testid="public-assistant-drawer"
     >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("public.assistant.resize")}
+        tabIndex={0}
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerUp}
+        onPointerCancel={handleResizePointerUp}
+        onKeyDown={handleResizeKeyDown}
+        className={cn(
+          "absolute inset-y-0 left-0 z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize touch-none select-none sm:block",
+          "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors hover:after:bg-[#4b7f8c]/60",
+          isResizing && "after:bg-[#4b7f8c]"
+        )}
+        data-public-canvas-control
+        data-public-canvas-export-ignore
+        data-testid="public-assistant-resize-handle"
+      />
       <header className="flex h-14 items-center justify-between border-b border-[#e8dfcf] px-4 dark:border-white/10">
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="h-4 w-4 text-[#4b7f8c]" aria-hidden="true" />
@@ -195,16 +290,31 @@ export function PublicAssistantDrawer({
             ) : null}
           </div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          aria-label={t("public.assistant.close")}
-          className="h-8 w-8"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleNewChat}
+            disabled={isRunning || messages.length === 0}
+            aria-label={t("public.assistant.newChat")}
+            title={t("public.assistant.newChat")}
+            className="h-8 w-8"
+            data-testid="public-assistant-new-chat"
+          >
+            <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label={t("public.assistant.close")}
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -247,7 +357,11 @@ export function PublicAssistantDrawer({
                       : "border border-[#e8dfcf] bg-white text-[#2f332f] dark:border-white/10 dark:bg-white/[0.06] dark:text-white"
                   )}
                 >
-                  <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                  {message.role === "user" ? (
+                    <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                  ) : (
+                    <PublicAssistantMarkdown text={message.text} />
+                  )}
                 </div>
               ) : null}
             </div>
@@ -287,6 +401,75 @@ export function PublicAssistantDrawer({
         </div>
       </form>
     </aside>
+  );
+}
+
+function PublicAssistantMarkdown({ text }: { text: string }) {
+  return (
+    <div className="break-words text-sm leading-relaxed">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          h1: ({ children }) => <h1 className="mb-2 mt-3 text-base font-semibold first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 mt-3 text-sm font-semibold first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold first:mt-0">{children}</h3>,
+          ul: ({ children }) => <ul className="mb-2 list-outside list-disc space-y-0.5 pl-4">{children}</ul>,
+          ol: ({ children }) => <ol className="mb-2 list-outside list-decimal space-y-0.5 pl-4">{children}</ol>,
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          a: ({ children, href }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#335f69] underline underline-offset-2 dark:text-[#7fb8c4]"
+            >
+              {children}
+            </a>
+          ),
+          code: ({ inline, children, ...props }: { inline?: boolean; children?: ReactNode }) =>
+            inline ? (
+              <code
+                className="rounded bg-[#f1ece0] px-1 py-0.5 font-mono text-[0.8em] text-[#8a3a22] dark:bg-white/10 dark:text-[#ffd4c6]"
+                {...props}
+              >
+                {children}
+              </code>
+            ) : (
+              <code
+                className="my-2 block overflow-x-auto rounded-md bg-[#2f332f] px-3 py-2 font-mono text-[0.8em] text-[#fffdf8] dark:bg-black/40"
+                {...props}
+              >
+                {children}
+              </code>
+            ),
+          pre: ({ children }) => <>{children}</>,
+          blockquote: ({ children }) => (
+            <blockquote className="my-2 border-l-2 border-[#4b7f8c]/40 pl-3 italic text-[#777166] dark:text-gray-300">
+              {children}
+            </blockquote>
+          ),
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+          em: ({ children }) => <em className="italic">{children}</em>,
+          hr: () => <hr className="my-3 border-[#e8dfcf] dark:border-white/10" />,
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto">
+              <table className="w-full border-collapse text-xs">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border border-[#e8dfcf] bg-[#f1ece0]/60 px-2 py-1 text-left font-semibold dark:border-white/10 dark:bg-white/10">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border border-[#e8dfcf] px-2 py-1 dark:border-white/10">{children}</td>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 }
 

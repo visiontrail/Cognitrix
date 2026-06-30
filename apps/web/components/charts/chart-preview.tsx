@@ -25,7 +25,6 @@ const CHART_THEME_BY_MODE: Record<ResolvedTheme, Record<string, unknown>> = {
   dark: {
     backgroundColor: "transparent",
     textStyle: { fontFamily: "Inter, system-ui, sans-serif", color: "#f5f4ed" },
-    legend: { textStyle: { color: "#e5e7eb" } },
   },
 };
 
@@ -92,9 +91,11 @@ function EchartsChartPreview({ spec, height = 320, className, theme }: ChartPrev
       ? normaliseMapOption(spec.echartsOption)
       : spec.echartsOption;
     const enhancedOption = enhanceRichTreemapOption(baseOption, locale);
+    const themedLegend = applyLegendTheme(enhancedOption.legend, chartTheme);
     return {
       ...CHART_THEME_BY_MODE[chartTheme],
       ...enhancedOption,
+      ...(themedLegend === undefined ? {} : { legend: themedLegend }),
       xAxis: applyAxisTheme(enhancedOption.xAxis, chartTheme),
       yAxis: applyAxisTheme(enhancedOption.yAxis, chartTheme),
       animation: true,
@@ -274,6 +275,25 @@ function TableView({
       </table>
     </div>
   );
+}
+
+function applyLegendTheme(legend: unknown, theme: ResolvedTheme): unknown {
+  if (theme === "light" || legend === undefined || legend === null) return legend;
+  if (Array.isArray(legend)) {
+    return legend.map((entry) => mergeLegendTheme(entry));
+  }
+  return mergeLegendTheme(legend);
+}
+
+function mergeLegendTheme(legend: unknown): unknown {
+  if (!isRecord(legend)) return legend;
+  return {
+    ...legend,
+    textStyle: {
+      color: "#e5e7eb",
+      ...asRecord(legend.textStyle),
+    },
+  };
 }
 
 function applyAxisTheme(axis: unknown, theme: ResolvedTheme): unknown {

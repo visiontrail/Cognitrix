@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -123,6 +123,88 @@ describe("PublicPageClient", () => {
     expect(screen.queryByText("list_snapshot_tables")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Thought complete/ }));
     expect(screen.getByText("list_snapshot_tables")).toBeInTheDocument();
+  });
+
+  it("resizes the assistant drawer by dragging its handle", async () => {
+    const user = userEvent.setup();
+    const payload = manifestBase("web_page");
+    payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+    fetchPublicManifestMock.mockResolvedValue(payload);
+
+    render(<PublicPageClient token="tok" />);
+
+    await user.click(await screen.findByRole("button", { name: "Open AI Assistant" }));
+    const drawer = screen.getByTestId("public-assistant-drawer");
+    expect(drawer.style.width).toBe("");
+
+    const handle = screen.getByTestId("public-assistant-resize-handle");
+    // Dragging the left-edge handle leftward (smaller clientX) widens the drawer.
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: window.innerWidth - 420 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: window.innerWidth - 600 });
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: window.innerWidth - 600 });
+
+    expect(drawer.style.width).toBe("600px");
+
+    // Moves after release are ignored.
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: window.innerWidth - 700 });
+    expect(drawer.style.width).toBe("600px");
+  });
+
+  it("renders the assistant final answer as markdown", async () => {
+    const user = userEvent.setup();
+    const payload = manifestBase("web_page");
+    payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+    fetchPublicManifestMock.mockResolvedValue(payload);
+    streamPublicAssistantMock.mockImplementation(async function* () {
+      yield {
+        event: "final",
+        data: { text: "Here is a **bold** insight:\n\n- first point\n- second point" },
+      };
+    });
+
+    render(<PublicPageClient token="tok" />);
+
+    await user.click(await screen.findByRole("button", { name: "Open AI Assistant" }));
+    await user.type(screen.getByTestId("public-assistant-input"), "Summarize the page");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const bold = await screen.findByText("bold");
+    expect(bold.tagName).toBe("STRONG");
+    expect(screen.getByText("first point").closest("li")).not.toBeNull();
+    expect(screen.getByText("second point").closest("li")).not.toBeNull();
+    // The raw markdown syntax must not leak into the rendered output.
+    expect(screen.queryByText(/\*\*bold\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("starts a fresh session when the new chat button is clicked", async () => {
+    const user = userEvent.setup();
+    const payload = manifestBase("web_page");
+    payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+    fetchPublicManifestMock.mockResolvedValue(payload);
+    const conversationIds: Array<string | undefined> = [];
+    streamPublicAssistantMock.mockImplementation(async function* (_token, request) {
+      conversationIds.push(request.conversation_id);
+      yield { event: "final", data: { text: `Answer to ${request.message}` } };
+    });
+
+    render(<PublicPageClient token="tok" />);
+
+    await user.click(await screen.findByRole("button", { name: "Open AI Assistant" }));
+    await user.type(screen.getByTestId("public-assistant-input"), "First question");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Answer to First question")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("public-assistant-new-chat"));
+    expect(screen.queryByText("Answer to First question")).not.toBeInTheDocument();
+
+    await user.type(screen.getByTestId("public-assistant-input"), "Second question");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Answer to Second question")).toBeInTheDocument();
+
+    expect(conversationIds).toHaveLength(2);
+    expect(conversationIds[0]).toBeTruthy();
+    expect(conversationIds[1]).toBeTruthy();
+    expect(conversationIds[0]).not.toBe(conversationIds[1]);
   });
 
   it("renders the neutral unavailable state for invalid canvas metadata", async () => {

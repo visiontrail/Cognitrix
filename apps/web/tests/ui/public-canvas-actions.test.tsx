@@ -128,7 +128,41 @@ describe("PublicCanvasActions", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Open account menu" }));
-    await user.click(screen.getByRole("menuitem", { name: "中文（简体）" }));
+    await user.click(screen.getByRole("menuitem", { name: "Language" }));
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cognitrix.locale")).toBe("zh-CN");
+      expect(document.documentElement.lang).toBe("zh-CN");
+    });
+  });
+
+  it("switches language after opening the signed-in public user menu", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("cognitrix.locale", "en-US");
+    setInMemoryToken("header.payload.signature", Math.floor(Date.now() / 1000) + 3600);
+    apiGetMeMock.mockResolvedValue({
+      id: "u1",
+      email: "ada@example.com",
+      display_name: "Ada Lovelace",
+      job_id: 1,
+      last_login_at: null,
+      available_workspaces: [],
+    });
+
+    render(
+      <ThemeProvider>
+        <I18nProvider>
+          <PublicCanvasActions
+            getCanvasElement={() => document.createElement("div")}
+            filenameBase="published-canvas"
+          />
+        </I18nProvider>
+      </ThemeProvider>
+    );
+
+    expect(await screen.findByRole("button", { name: "Open account menu" })).toHaveTextContent("Ada Lovelace");
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Language" }));
 
     await waitFor(() => {
       expect(window.localStorage.getItem("cognitrix.locale")).toBe("zh-CN");

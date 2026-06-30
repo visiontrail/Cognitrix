@@ -268,6 +268,7 @@ function PublishedUserMenu() {
   const displayName = user?.display_name?.trim() || user?.email || t("public.account.guest");
   const avatarLabel = user?.display_name?.trim() || user?.email || "?";
   const initial = avatarLabel.charAt(0).toUpperCase();
+  const nextLocale = locale === "en-US" ? "zh-CN" : "en-US";
 
   useEffect(() => {
     let cancelled = false;
@@ -335,7 +336,7 @@ function PublishedUserMenu() {
           </div>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={(event) => event.preventDefault()}>
+        <DropdownMenuItem onSelect={() => setLocale(nextLocale)}>
           <Globe className="h-4 w-4" aria-hidden="true" />
           {t("language.label")}
         </DropdownMenuItem>

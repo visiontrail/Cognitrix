@@ -17,6 +17,7 @@ vi.mock("@/lib/auth/auth-client", async () => {
 import { PublicCanvasActions } from "../../components/public/public-canvas-actions";
 import { apiGetMe } from "../../lib/auth/auth-client";
 import { clearInMemoryToken, setInMemoryToken } from "../../lib/auth/session";
+import { I18nProvider } from "../../lib/i18n/context";
 import { ThemeProvider } from "../../lib/theme/context";
 
 const apiGetMeMock = vi.mocked(apiGetMe);
@@ -109,6 +110,30 @@ describe("PublicCanvasActions", () => {
     expect(screen.getByText("Viewing as guest")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Language" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Login" })).toBeInTheDocument();
+  });
+
+  it("switches language from the public account menu", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("cognitrix.locale", "en-US");
+
+    render(
+      <ThemeProvider>
+        <I18nProvider>
+          <PublicCanvasActions
+            getCanvasElement={() => document.createElement("div")}
+            filenameBase="published-canvas"
+          />
+        </I18nProvider>
+      </ThemeProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    await user.click(screen.getByRole("menuitem", { name: "中文（简体）" }));
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cognitrix.locale")).toBe("zh-CN");
+      expect(document.documentElement.lang).toBe("zh-CN");
+    });
   });
 
   it("shows the signed-in user with language and logout actions", async () => {

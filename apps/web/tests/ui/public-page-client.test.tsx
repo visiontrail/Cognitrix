@@ -115,6 +115,9 @@ describe("PublicPageClient", () => {
 
     await user.click(await screen.findByRole("button", { name: "Open AI Assistant" }));
     expect(screen.getByTestId("public-assistant-drawer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open AI Assistant" }).closest("[data-public-canvas-control]")).toHaveStyle({
+      transform: "translateX(-420px)",
+    });
 
     await user.type(screen.getByTestId("public-assistant-input"), "Summarize the page");
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -144,6 +147,9 @@ describe("PublicPageClient", () => {
     fireEvent.pointerUp(handle, { pointerId: 1, clientX: window.innerWidth - 600 });
 
     expect(drawer.style.width).toBe("600px");
+    expect(screen.getByRole("button", { name: "Open AI Assistant" }).closest("[data-public-canvas-control]")).toHaveStyle({
+      transform: "translateX(-600px)",
+    });
 
     // Moves after release are ignored.
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: window.innerWidth - 700 });

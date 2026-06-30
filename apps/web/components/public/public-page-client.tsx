@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { PublicAssistantDrawer } from "@/components/public/public-assistant-drawer";
+import {
+  getDefaultPublicAssistantDrawerWidth,
+  PublicAssistantDrawer,
+} from "@/components/public/public-assistant-drawer";
 import { PublicCanvasActions } from "@/components/public/public-canvas-actions";
 import { PublicPageGrid } from "@/components/public/public-page-grid";
 import { PublicPageSidebar } from "@/components/public/public-page-sidebar";
@@ -37,6 +40,7 @@ export function PublicPageClient({ token }: { token: string }) {
   const [page, setPage] = useState<PublicManifestResponse | null>(null);
   const [activePageId, setActivePageId] = useState<string | undefined>();
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantDrawerWidth, setAssistantDrawerWidth] = useState<number | null>(null);
   const [selectedChartId, setSelectedChartId] = useState<string | undefined>();
 
   useEffect(() => {
@@ -126,6 +130,10 @@ export function PublicPageClient({ token }: { token: string }) {
   const canvasKind = page.manifest.canvas?.kind ?? "web_page";
   const filenameBase = `published-canvas-v${page.version}`;
   const assistantAvailable = page.manifest.assistant?.available === true;
+  const assistantOffsetRight =
+    assistantOpen && assistantAvailable
+      ? assistantDrawerWidth ?? getDefaultPublicAssistantDrawerWidth()
+      : 0;
   if (canvasKind === "free_layout") {
     return (
       <>
@@ -135,6 +143,7 @@ export function PublicPageClient({ token }: { token: string }) {
           filenameBase={filenameBase}
           assistantAvailable={assistantAvailable}
           onOpenAssistant={() => setAssistantOpen(true)}
+          assistantOffsetRight={assistantOffsetRight}
           selectedChartId={selectedChartId}
           onSelectChart={setSelectedChartId}
         />
@@ -143,6 +152,8 @@ export function PublicPageClient({ token }: { token: string }) {
           manifest={page.manifest}
           open={assistantOpen}
           selectedChartId={selectedChartId}
+          drawerWidth={assistantDrawerWidth}
+          onDrawerWidthChange={setAssistantDrawerWidth}
           onClose={() => setAssistantOpen(false)}
         />
       </>
@@ -157,6 +168,7 @@ export function PublicPageClient({ token }: { token: string }) {
           filenameBase={filenameBase}
           assistantAvailable={assistantAvailable}
           onOpenAssistant={() => setAssistantOpen(true)}
+          assistantOffsetRight={assistantOffsetRight}
           selectedChartId={selectedChartId}
           onSelectChart={setSelectedChartId}
         />
@@ -165,6 +177,8 @@ export function PublicPageClient({ token }: { token: string }) {
           manifest={page.manifest}
           open={assistantOpen}
           selectedChartId={selectedChartId}
+          drawerWidth={assistantDrawerWidth}
+          onDrawerWidthChange={setAssistantDrawerWidth}
           onClose={() => setAssistantOpen(false)}
         />
       </>
@@ -193,6 +207,7 @@ export function PublicPageClient({ token }: { token: string }) {
           captureOptions={{ backgroundColor: webPageBackgroundPreset.baseColor }}
           assistantAvailable={assistantAvailable}
           onOpenAssistant={() => setAssistantOpen(true)}
+          assistantOffsetRight={assistantOffsetRight}
         />
         <PublicPageGrid
           token={token}
@@ -208,6 +223,8 @@ export function PublicPageClient({ token }: { token: string }) {
           manifest={page.manifest}
           open={assistantOpen}
           selectedChartId={selectedChartId}
+          drawerWidth={assistantDrawerWidth}
+          onDrawerWidthChange={setAssistantDrawerWidth}
           onClose={() => setAssistantOpen(false)}
         />
       </main>

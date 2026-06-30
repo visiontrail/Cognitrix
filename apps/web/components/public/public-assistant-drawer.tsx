@@ -23,6 +23,8 @@ type PublicAssistantDrawerProps = {
   manifest: PublishedManifest;
   open: boolean;
   selectedChartId?: string;
+  drawerWidth?: number | null;
+  onDrawerWidthChange?: (width: number) => void;
   onClose: () => void;
 };
 
@@ -44,7 +46,15 @@ type TraceState = "live" | "collapsed" | "expanded";
 type TranslateFn = (key: string, params?: Record<string, string | number | null | undefined>) => string;
 
 const MIN_DRAWER_WIDTH = 360;
+const DEFAULT_DRAWER_WIDTH = 420;
+const MOBILE_DRAWER_MAX_WIDTH = 448;
 const MAX_DRAWER_WIDTH = 820;
+
+export function getDefaultPublicAssistantDrawerWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_DRAWER_WIDTH;
+  if (window.innerWidth < 640) return Math.min(window.innerWidth, MOBILE_DRAWER_MAX_WIDTH);
+  return DEFAULT_DRAWER_WIDTH;
+}
 
 function clampDrawerWidth(value: number): number {
   const viewportCap =
@@ -58,6 +68,8 @@ export function PublicAssistantDrawer({
   manifest,
   open,
   selectedChartId,
+  drawerWidth: controlledDrawerWidth,
+  onDrawerWidthChange,
   onClose,
 }: PublicAssistantDrawerProps) {
   const { t } = useI18n();
@@ -66,7 +78,7 @@ export function PublicAssistantDrawer({
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [drawerWidth, setDrawerWidth] = useState<number | null>(null);
+  const [uncontrolledDrawerWidth, setUncontrolledDrawerWidth] = useState<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const resizingRef = useRef(false);
   const assistantAvailable = manifest.assistant?.available === true;
@@ -74,6 +86,12 @@ export function PublicAssistantDrawer({
     () => manifest.charts.find((chart) => chart.chart_id === selectedChartId),
     [manifest.charts, selectedChartId]
   );
+  const drawerWidth = controlledDrawerWidth ?? uncontrolledDrawerWidth;
+
+  function updateDrawerWidth(nextWidth: number) {
+    setUncontrolledDrawerWidth(nextWidth);
+    onDrawerWidthChange?.(nextWidth);
+  }
 
   function handleNewChat() {
     if (isRunning) return;
@@ -215,13 +233,13 @@ export function PublicAssistantDrawer({
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     if (drawerWidth === null) {
-      setDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
+      updateDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
     }
   }
 
   function handleResizePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (!resizingRef.current) return;
-    setDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
+    updateDrawerWidth(clampDrawerWidth(window.innerWidth - event.clientX));
   }
 
   function handleResizePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
@@ -238,13 +256,13 @@ export function PublicAssistantDrawer({
 
   function handleResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const step = event.shiftKey ? 48 : 16;
-    const base = drawerWidth ?? 420;
+    const base = drawerWidth ?? DEFAULT_DRAWER_WIDTH;
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      setDrawerWidth(clampDrawerWidth(base + step));
+      updateDrawerWidth(clampDrawerWidth(base + step));
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      setDrawerWidth(clampDrawerWidth(base - step));
+      updateDrawerWidth(clampDrawerWidth(base - step));
     }
   }
 

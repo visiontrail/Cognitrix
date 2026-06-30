@@ -26,9 +26,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -57,6 +54,7 @@ type PublicCanvasActionsProps = {
   };
   assistantAvailable?: boolean;
   onOpenAssistant?: () => void;
+  assistantOffsetRight?: number;
   className?: string;
 };
 
@@ -67,6 +65,7 @@ export function PublicCanvasActions({
   captureOptions,
   assistantAvailable = false,
   onOpenAssistant,
+  assistantOffsetRight = 0,
   className,
 }: PublicCanvasActionsProps) {
   const { t } = useI18n();
@@ -125,6 +124,9 @@ export function PublicCanvasActions({
           "z-20 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/95 p-1 shadow-sm backdrop-blur dark:border-white/15 dark:bg-[#1c1c38]/90",
           className
         )}
+        style={
+          assistantOffsetRight > 0 ? { transform: `translateX(-${assistantOffsetRight}px)` } : undefined
+        }
         data-public-canvas-control
         data-public-canvas-export-ignore
       >
@@ -333,22 +335,18 @@ function PublishedUserMenu() {
           </div>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Globe className="h-4 w-4" aria-hidden="true" />
-            {t("language.label")}
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-64">
-            <DropdownMenuItem onSelect={() => setLocale("en-US")}>
-              {t("language.en")}
-              {locale === "en-US" && <Check className="ml-auto h-4 w-4" aria-hidden="true" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setLocale("zh-CN")}>
-              {t("language.zh")}
-              {locale === "zh-CN" && <Check className="ml-auto h-4 w-4" aria-hidden="true" />}
-            </DropdownMenuItem>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        <DropdownMenuItem onSelect={(event) => event.preventDefault()}>
+          <Globe className="h-4 w-4" aria-hidden="true" />
+          {t("language.label")}
+        </DropdownMenuItem>
+        <DropdownMenuItem inset onSelect={() => setLocale("en-US")}>
+          {t("language.en")}
+          {locale === "en-US" && <Check className="ml-auto h-4 w-4" aria-hidden="true" />}
+        </DropdownMenuItem>
+        <DropdownMenuItem inset onSelect={() => setLocale("zh-CN")}>
+          {t("language.zh")}
+          {locale === "zh-CN" && <Check className="ml-auto h-4 w-4" aria-hidden="true" />}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         {user ? (
           <DropdownMenuItem

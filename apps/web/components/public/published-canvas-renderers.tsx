@@ -65,6 +65,7 @@ export function PublishedFreeCanvas({
   filenameBase = "published-canvas",
   assistantAvailable = false,
   onOpenAssistant,
+  assistantOffsetRight = 0,
   selectedChartId,
   onSelectChart,
 }: {
@@ -73,6 +74,7 @@ export function PublishedFreeCanvas({
   filenameBase?: string;
   assistantAvailable?: boolean;
   onOpenAssistant?: () => void;
+  assistantOffsetRight?: number;
   selectedChartId?: string;
   onSelectChart?: (chartId: string) => void;
 }) {
@@ -242,6 +244,7 @@ export function PublishedFreeCanvas({
         captureOptions={{ backgroundColor: backgroundPreset.baseColor, width, height }}
         assistantAvailable={assistantAvailable}
         onOpenAssistant={onOpenAssistant}
+        assistantOffsetRight={assistantOffsetRight}
       />
       <div
         className="absolute bottom-4 left-4 flex items-center gap-1 rounded-md border border-[#d8d1c1] bg-white/90 p-1 shadow-sm backdrop-blur dark:border-white/15 dark:bg-[#1c1c38]/90"
@@ -294,6 +297,7 @@ export function PublishedFixedCanvas({
   filenameBase = "published-canvas",
   assistantAvailable = false,
   onOpenAssistant,
+  assistantOffsetRight = 0,
   selectedChartId,
   onSelectChart,
 }: {
@@ -302,6 +306,7 @@ export function PublishedFixedCanvas({
   filenameBase?: string;
   assistantAvailable?: boolean;
   onOpenAssistant?: () => void;
+  assistantOffsetRight?: number;
   selectedChartId?: string;
   onSelectChart?: (chartId: string) => void;
 }) {
@@ -352,6 +357,7 @@ export function PublishedFixedCanvas({
         captureOptions={{ backgroundColor: pageChromeBackground, width: page.width, height: stackHeight }}
         assistantAvailable={assistantAvailable}
         onOpenAssistant={onOpenAssistant}
+        assistantOffsetRight={assistantOffsetRight}
       />
       <div className="mx-auto" style={{ width: page.width * scale, height: stackHeight * scale }}>
         <div

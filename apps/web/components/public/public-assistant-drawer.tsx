@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Loader2, Send, Wrench, X } from "lucide-react";
+import { AlertCircle, Bot, Brain, ChevronDown, ChevronRight, Loader2, Send, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { streamPublicAssistant, type PublishedManifest } from "@/lib/public/api";
@@ -20,6 +20,8 @@ type DrawerMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  traceRows?: TraceRow[];
+  traceState?: TraceState;
 };
 
 type TraceRow = {
@@ -28,6 +30,7 @@ type TraceRow = {
   detail?: string;
   status: "running" | "success" | "error";
 };
+type TraceState = "live" | "collapsed" | "expanded";
 type TranslateFn = (key: string, params?: Record<string, string | number | null | undefined>) => string;
 
 export function PublicAssistantDrawer({
@@ -40,7 +43,6 @@ export function PublicAssistantDrawer({
   const { t } = useI18n();
   const conversationIdRef = useRef(`public-${createId()}`);
   const [messages, setMessages] = useState<DrawerMessage[]>([]);
-  const [traceRows, setTraceRows] = useState<TraceRow[]>([]);
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,11 +58,12 @@ export function PublicAssistantDrawer({
     if (!message || isRunning || !assistantAvailable) return;
     setInput("");
     setError(null);
-    setTraceRows([]);
     setIsRunning(true);
+    const assistantMessageId = createId();
     setMessages((current) => [
       ...current,
       { id: createId(), role: "user", text: message },
+      { id: assistantMessageId, role: "assistant", text: "", traceRows: [], traceState: "live" },
     ]);
 
     try {
@@ -72,59 +75,105 @@ export function PublicAssistantDrawer({
         const payload = isRecord(event.data) ? event.data : {};
         if (event.event === "planning") {
           const text = String(payload.text ?? t("public.assistant.planning"));
-          setTraceRows((current) => [
-            ...current,
-            { id: `planning-${createId()}`, label: t("public.assistant.planning"), detail: text, status: "running" },
-          ]);
+          appendTraceRow(assistantMessageId, {
+            id: `planning-${createId()}`,
+            label: t("public.assistant.planning"),
+            detail: text,
+            status: "running",
+          });
           continue;
         }
         if (event.event === "tool_use") {
           const stepId = String(payload.step_id ?? createId());
           const toolName = String(payload.tool_name ?? t("public.assistant.tool"));
-          setTraceRows((current) => [
-            ...current.filter((row) => row.id !== stepId),
-            { id: stepId, label: toolName, detail: t("public.assistant.toolRunning"), status: "running" },
-          ]);
+          updateAssistantMessage(assistantMessageId, (assistant) => ({
+            ...assistant,
+            traceRows: [
+              ...(assistant.traceRows ?? []).filter((row) => row.id !== stepId),
+              { id: stepId, label: toolName, detail: t("public.assistant.toolRunning"), status: "running" },
+            ],
+          }));
           continue;
         }
         if (event.event === "tool_result") {
           const stepId = String(payload.step_id ?? createId());
-          const status = payload.status === "error" ? "error" : "success";
-          setTraceRows((current) =>
-            current.map((row) =>
-              row.id === stepId
-                ? { ...row, status, detail: resultPreview(payload.result, t) }
-                : row
-            )
-          );
+          const status: TraceRow["status"] = payload.status === "error" ? "error" : "success";
+          updateAssistantMessage(assistantMessageId, (assistant) => {
+            const rows = assistant.traceRows ?? [];
+            const nextRow: TraceRow = {
+              id: stepId,
+              label: t("public.assistant.tool"),
+              detail: resultPreview(payload.result, t),
+              status,
+            };
+            return {
+              ...assistant,
+              traceRows: rows.some((row) => row.id === stepId)
+                ? rows.map((row) => (row.id === stepId ? { ...row, status, detail: nextRow.detail } : row))
+                : [...rows, nextRow],
+            };
+          });
           continue;
         }
         if (event.event === "final") {
           const text = String(payload.text ?? "").trim();
-          if (text) {
-            setMessages((current) => [
-              ...current,
-              { id: createId(), role: "assistant", text },
-            ]);
-          }
+          updateAssistantMessage(assistantMessageId, (assistant) => ({
+            ...assistant,
+            text,
+            traceRows: markTraceRowsComplete(assistant.traceRows ?? []),
+            traceState: "collapsed",
+          }));
           setIsRunning(false);
           continue;
         }
         if (event.event === "error") {
           const text = String(payload.message ?? t("public.assistant.error"));
           setError(text);
-          setTraceRows((current) => [
-            ...current,
-            { id: `error-${createId()}`, label: t("public.assistant.errorTitle"), detail: text, status: "error" },
-          ]);
+          appendTraceRow(assistantMessageId, {
+            id: `error-${createId()}`,
+            label: t("public.assistant.errorTitle"),
+            detail: text,
+            status: "error",
+          });
+          updateAssistantMessage(assistantMessageId, (assistant) => ({
+            ...assistant,
+            traceState: "expanded",
+          }));
           setIsRunning(false);
         }
       }
     } catch {
       setError(t("public.assistant.error"));
+      appendTraceRow(assistantMessageId, {
+        id: `error-${createId()}`,
+        label: t("public.assistant.errorTitle"),
+        detail: t("public.assistant.error"),
+        status: "error",
+      });
+      updateAssistantMessage(assistantMessageId, (assistant) => ({ ...assistant, traceState: "expanded" }));
     } finally {
       setIsRunning(false);
     }
+  }
+
+  function updateAssistantMessage(
+    messageId: string,
+    updater: (message: DrawerMessage) => DrawerMessage
+  ) {
+    setMessages((current) =>
+      current.map((message) => (message.id === messageId ? updater(message) : message))
+    );
+  }
+
+  function appendTraceRow(messageId: string, row: TraceRow) {
+    updateAssistantMessage(messageId, (assistant) => ({
+      ...assistant,
+      traceRows: [...(assistant.traceRows ?? []), row],
+    }));
+  }
+
+  function setAssistantTraceState(messageId: string, traceState: TraceState) {
+    updateAssistantMessage(messageId, (assistant) => ({ ...assistant, traceState }));
   }
 
   if (!open) return null;
@@ -170,36 +219,40 @@ export function PublicAssistantDrawer({
             <div
               key={message.id}
               className={cn(
-                "max-w-[88%] rounded-md px-3 py-2 text-sm leading-relaxed",
+                "max-w-[88%] text-sm leading-relaxed",
                 message.role === "user"
-                  ? "ml-auto bg-[#335f69] text-white"
-                  : "mr-auto border border-[#e8dfcf] bg-white text-[#2f332f] dark:border-white/10 dark:bg-white/[0.06] dark:text-white"
+                  ? "ml-auto"
+                  : "mr-auto"
               )}
             >
-              <p className="whitespace-pre-wrap break-words">{message.text}</p>
+              {message.role === "assistant" ? (
+                <PublicAssistantTrace
+                  rows={message.traceRows ?? []}
+                  state={message.traceState ?? "collapsed"}
+                  onToggle={() =>
+                    setAssistantTraceState(
+                      message.id,
+                      message.traceState === "expanded" ? "collapsed" : "expanded"
+                    )
+                  }
+                  t={t}
+                />
+              ) : null}
+              {message.text ? (
+                <div
+                  className={cn(
+                    "rounded-md px-3 py-2",
+                    message.role === "user"
+                      ? "bg-[#335f69] text-white"
+                      : "border border-[#e8dfcf] bg-white text-[#2f332f] dark:border-white/10 dark:bg-white/[0.06] dark:text-white"
+                  )}
+                >
+                  <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
-
-        {(traceRows.length > 0 || isRunning) && (
-          <div className="mt-4 space-y-2 rounded-md border border-[#d8e6ea] bg-[#f4fafb] p-3 dark:border-[#4b7f8c]/40 dark:bg-[#0f2930]/40">
-            {traceRows.map((row) => (
-              <div key={row.id} className="flex gap-2 text-xs text-[#555250] dark:text-gray-200">
-                {row.status === "running" ? (
-                  <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-[#4b7f8c]" aria-hidden="true" />
-                ) : row.status === "error" ? (
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#c96442]" aria-hidden="true" />
-                ) : (
-                  <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4b7f8c]" aria-hidden="true" />
-                )}
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{row.label}</p>
-                  {row.detail ? <p className="line-clamp-2 text-[#777166] dark:text-gray-300">{row.detail}</p> : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
 
         {error ? (
           <div className="mt-4 rounded-md border border-[#e8c0af] bg-[#fff4ef] p-3 text-sm text-[#8a3a22] dark:border-[#c96442]/40 dark:bg-[#341a13] dark:text-[#ffd4c6]">
@@ -234,6 +287,88 @@ export function PublicAssistantDrawer({
         </div>
       </form>
     </aside>
+  );
+}
+
+function PublicAssistantTrace({
+  rows,
+  state,
+  onToggle,
+  t,
+}: {
+  rows: TraceRow[];
+  state: TraceState;
+  onToggle: () => void;
+  t: TranslateFn;
+}) {
+  if (rows.length === 0 && state !== "live") return null;
+
+  const hasError = rows.some((row) => row.status === "error");
+  const running = state === "live";
+  const expanded = state === "expanded" || running;
+  const toolCount = rows.filter((row) => row.id.startsWith("planning-") === false && row.status !== "error").length;
+  const label = running
+    ? t("public.assistant.planning")
+    : hasError
+      ? t("public.assistant.errorTitle")
+      : `${t("public.assistant.traceComplete")} · ${t("chat.trace.toolCallsCount", { count: toolCount })}`;
+
+  return (
+    <div className={cn("mb-2", rows.length === 0 && "min-h-5")}>
+      <button
+        type="button"
+        className={cn(
+          "flex max-w-full items-center gap-1.5 text-xs text-[#777166] underline-offset-2 hover:underline dark:text-gray-300",
+          running && "cursor-default hover:no-underline"
+        )}
+        onClick={running ? undefined : onToggle}
+        disabled={running}
+        aria-expanded={expanded}
+      >
+        {running ? (
+          <Brain className="h-3.5 w-3.5 shrink-0 animate-pulse text-[#4b7f8c]" aria-hidden="true" />
+        ) : expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        )}
+        <span className="truncate">{label}</span>
+      </button>
+
+      {expanded ? (
+        <div className="mt-2 max-h-[40vh] space-y-2 overflow-y-auto border-l border-[#d8e6ea] pl-3 dark:border-[#4b7f8c]/40">
+          {rows.map((row) => (
+            <div key={row.id} className="flex gap-2 text-xs text-[#555250] dark:text-gray-200">
+              {row.id.startsWith("planning-") ? (
+                <Brain
+                  className={cn(
+                    "mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4b7f8c]",
+                    row.status === "running" && "animate-pulse"
+                  )}
+                  aria-hidden="true"
+                />
+              ) : row.status === "running" ? (
+                <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-[#4b7f8c]" aria-hidden="true" />
+              ) : row.status === "error" ? (
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#c96442]" aria-hidden="true" />
+              ) : (
+                <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4b7f8c]" aria-hidden="true" />
+              )}
+              <div className="min-w-0">
+                <p className="truncate font-medium">{row.label}</p>
+                {row.detail ? <p className="line-clamp-2 text-[#777166] dark:text-gray-300">{row.detail}</p> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function markTraceRowsComplete(rows: TraceRow[]): TraceRow[] {
+  return rows.map((row) =>
+    row.status === "running" ? { ...row, status: "success" } : row
   );
 }
 

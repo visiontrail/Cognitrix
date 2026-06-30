@@ -120,6 +120,8 @@ describe("PublicPageClient", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("Published answer")).toBeInTheDocument();
+    expect(screen.queryByText("list_snapshot_tables")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Thought complete/ }));
     expect(screen.getByText("list_snapshot_tables")).toBeInTheDocument();
   });
 

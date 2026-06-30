@@ -152,6 +152,14 @@ export function PublishedFreeCanvas({
   const handlePointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement | null;
+    // Radix dropdowns/tooltips portal their content to document.body, so it is
+    // not a DOM descendant of the viewport even though React still bubbles the
+    // pointer event up to this handler. Starting a pan-drag (preventDefault +
+    // setPointerCapture) on those clicks captures the pointer and swallows the
+    // menu selection — that is why the published account menu's language toggle
+    // never fired on the free canvas. Only pan when the pointer truly lands on
+    // the canvas surface (a real DOM descendant of the viewport).
+    if (target && !event.currentTarget.contains(target)) return;
     if (target?.closest("[data-public-canvas-control]")) return;
     event.preventDefault();
     dragRef.current = {

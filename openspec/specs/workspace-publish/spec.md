@@ -1,5 +1,8 @@
-## MODIFIED Requirements
+# workspace-publish Specification
 
+## Purpose
+TBD - created by archiving change add-public-share-ai-assistant. Update Purpose after archive.
+## Requirements
 ### Requirement: Publish action available on Web Page Design canvas
 
 A **Publish** button SHALL be visible in the Web Page Design canvas toolbar to users whose role on the current workspace is `owner` or `editor`. The button is disabled if any chart zone contains a chart with no loaded data. Users without owner/editor access MUST NOT see the Publish button. Clicking the button opens the public-link publish dialog defined by this capability.
@@ -23,11 +26,12 @@ A **Publish** button SHALL be visible in the Web Page Design canvas toolbar to u
 ### Requirement: Publish creates an immutable versioned snapshot
 
 When the user confirms publish in the public-link dialog, the system SHALL call `POST /workspaces/{workspace_id}/publish` without visibility fields. The backend creates a new version record and writes the snapshot to `UPLOAD_DIR/published/{workspace_id}/{version}/` containing:
-- `manifest.json` — sidebar config, grid layout, page layout, zone positions, text zones
+- `manifest.json` — sidebar config, grid layout, page layout, zone positions, text zones, assistant availability metadata, and per-chart assistant data metadata
 - `charts/{chart_id}/spec.json` — ECharts or Recharts spec
-- `charts/{chart_id}/data.json` — raw rows, capped at `AGENT_MAX_SQL_ROWS`
+- `charts/{chart_id}/data.json` — render rows, capped at `AGENT_MAX_SQL_ROWS`
+- `charts/{chart_id}/assistant-data.jsonl` — full assistant-readable raw rows carried by the chart asset at publish time
 
-The raw data rows MUST pass through the same `redact_rows()` and `forbidden_sensitive_columns()` pipeline as the query runtime before being written. The publish operation MUST create or refresh the workspace's active public-link record so the returned public URL points at the newly created snapshot version.
+Both render rows and assistant rows MUST pass through the same `redact_rows()` and `forbidden_sensitive_columns()` pipeline as the query runtime before being written. `assistant-data.jsonl` MUST NOT be silently truncated by `AGENT_MAX_SQL_ROWS`; if complete assistant rows are unavailable for any published chart node, the manifest MUST mark assistant availability as false for the snapshot or the publish request MUST fail with an explicit validation error. The publish operation MUST create or refresh the workspace's active public-link record so the returned public URL points at the newly created snapshot version.
 
 #### Scenario: Successful publish
 - **WHEN** owner/editor 在弹窗中确认发布且所有 zone 都已加载数据
@@ -37,10 +41,22 @@ The raw data rows MUST pass through the same `redact_rows()` and `forbidden_sens
 #### Scenario: Sensitive column redaction
 - **WHEN** a chart's underlying data contains columns flagged by `forbidden_sensitive_columns()` for the publishing user's role
 - **THEN** those columns are excluded from `charts/{chart_id}/data.json`
+- **AND** those columns are excluded from `charts/{chart_id}/assistant-data.jsonl`
 
 #### Scenario: Data cap enforcement
 - **WHEN** a chart's source query returns more rows than `AGENT_MAX_SQL_ROWS`
 - **THEN** only the first `AGENT_MAX_SQL_ROWS` rows are written to `data.json`; the manifest records `data_truncated: true` for that chart
+- **AND** all publishable assistant rows are written to `assistant-data.jsonl` without using `AGENT_MAX_SQL_ROWS` as a cap
+
+#### Scenario: Assistant availability recorded
+- **WHEN** every published chart node has complete assistant rows after redaction
+- **THEN** `manifest.json` records `assistant.available: true`
+- **AND** every chart entry records `assistant_data_path`, `assistant_row_count`, and `assistant_data_available: true`
+
+#### Scenario: Incomplete assistant rows are not presented as complete
+- **WHEN** any published chart node lacks complete assistant rows
+- **THEN** the system MUST NOT publish a manifest that claims `assistant.available: true`
+- **AND** the public assistant MUST NOT be enabled against that incomplete snapshot
 
 ### Requirement: Publish history accessible per workspace
 
@@ -66,8 +82,6 @@ Published page assets SHALL be served from snapshot files, not from any live Duc
 - **WHEN** a public token points at a missing snapshot file
 - **THEN** the public API returns HTTP 404
 
-## ADDED Requirements
-
 ### Requirement: Publish dialog manages public link lifecycle
 
 点击 Publish 按钮时 SHALL 打开公开链接发布弹窗。弹窗 MUST 表达“任何持有链接的人都可以查看该发布快照”，并在存在 active 公开发布时展示公开链接、复制按钮、打开预览、更新发布、取消发布动作；在未发布时展示确认发布动作。弹窗 MUST 提示发布内容是当前时刻快照，后续改动需要点击更新发布才会出现在公开页。
@@ -91,28 +105,3 @@ Published page assets SHALL be served from snapshot files, not from any live Duc
 - **THEN** 前端调用 `DELETE /workspaces/{workspace_id}/publish`
 - **AND** 弹窗进入未发布状态
 
-## REMOVED Requirements
-
-### Requirement: Publish 弹窗暴露可见性策略
-
-**Reason**: Published pages are no longer private/registered/allowlist resources. Publish now creates a public link, and possession of the link is the only viewer-side access grant.
-
-**Migration**: Replace the visibility settings UI with the public-link lifecycle dialog.
-
-### Requirement: Publish 接口接受可见性参数
-
-**Reason**: The publish API no longer accepts `visibility_mode` or `visibility_user_ids`.
-
-**Migration**: Clients MUST call `POST /workspaces/{workspace_id}/publish` with layout/sidebar/charts only. The backend creates or refreshes the workspace's public publication automatically.
-
-### Requirement: 发布历史按版本记录可见性
-
-**Reason**: Version history no longer records or displays visibility summaries.
-
-**Migration**: History rows should show version/time/publisher/page id. Public-link status is queried from `GET /workspaces/{workspace_id}/publish`.
-
-### Requirement: 调整已发布版本的可见性
-
-**Reason**: There is no published-version visibility matrix to adjust.
-
-**Migration**: To stop public access, call `DELETE /workspaces/{workspace_id}/publish`. To expose updated content, call `POST /workspaces/{workspace_id}/publish`.

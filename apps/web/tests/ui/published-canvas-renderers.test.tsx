@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PublishedFixedCanvas, PublishedFreeCanvas } from "../../components/public/published-canvas-renderers";
@@ -138,6 +139,44 @@ describe("published canvas renderers", () => {
     fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 140, clientY: 125 });
     fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 140, clientY: 125 });
     expect(stage).toHaveStyle({ transform: "matrix(1, 0, 0, 1, 40, 25)" });
+  });
+
+  it("does not pan the free-layout canvas when interacting with the portalled account menu", async () => {
+    const user = userEvent.setup();
+    // Regression: the account menu (and every Radix dropdown) portals its
+    // content to document.body, so it is not a DOM descendant of the viewport,
+    // yet React still bubbles the pointerdown up to the viewport's pan handler.
+    // The handler used to start a pan-drag (preventDefault + setPointerCapture)
+    // on those clicks, capturing the pointer and swallowing the menu selection —
+    // which is why the published account menu's language toggle never fired on
+    // the free canvas. A pointerdown originating in the menu must not pan.
+    const manifest: PublishedManifest = {
+      ...baseManifest,
+      canvas: {
+        format_id: "infinite",
+        kind: "free_layout",
+        bounds: { x: 0, y: 0, width: 640, height: 420 },
+      },
+      content: { nodes: [], edges: [] },
+    };
+
+    render(<PublishedFreeCanvas token="pub-token" manifest={manifest} />);
+
+    const stage = screen.getByTestId("published-free-canvas-stage");
+    const viewport = screen.getByTestId("published-free-canvas-viewport");
+    expect(stage).toHaveStyle({ transform: "matrix(1, 0, 0, 1, 0, 0)" });
+
+    await user.click(screen.getByRole("button", { name: "Open account menu" }));
+    const languageItem = await screen.findByRole("menuitem", { name: "Language" });
+
+    // Press inside the portalled menu item, then drag across the viewport.
+    fireEvent.pointerDown(languageItem, { button: 0, pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { pointerId: 2, clientX: 220, clientY: 180 });
+    fireEvent.pointerUp(viewport, { pointerId: 2, clientX: 220, clientY: 180 });
+
+    // The canvas must stay put — the menu interaction is not a pan gesture.
+    expect(stage).toHaveStyle({ transform: "matrix(1, 0, 0, 1, 0, 0)" });
+    expect(viewport.className).not.toContain("cursor-grabbing");
   });
 
   it("themes light published free-layout backgrounds in dark mode", async () => {

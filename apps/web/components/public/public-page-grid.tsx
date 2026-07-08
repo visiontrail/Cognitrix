@@ -14,9 +14,18 @@ import {
   type CanvasBackgroundPreset,
 } from "@/lib/workspace/canvas-backgrounds";
 import { getWebDesignGridTemplateColumns, getWebDesignGridWidth } from "@/lib/workspace/web-design-grid";
+import {
+  GRID_COLS,
+  GRID_GAP,
+  gridUnitsToPx,
+  isFluidGrid,
+  rowUnitOf,
+} from "@/lib/workspace/web-design-layout";
 import type { ChartSpec } from "@/types/chart";
 import { useI18n } from "@/lib/i18n/context";
 import { useTheme } from "@/lib/theme/context";
+
+const PUBLIC_CHART_HEADER_PX = 40;
 
 export function PublicPageGrid({
   token,
@@ -46,6 +55,24 @@ export function PublicPageGrid({
       zones: manifest.layout.zones,
     };
   const grid = pageLayout.grid;
+  const fluid = isFluidGrid(grid);
+  const rowUnit = rowUnitOf(grid);
+  const gridStyle = fluid
+    ? {
+        gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+        gridAutoRows: `${rowUnit}px`,
+        gap: GRID_GAP,
+        width: "100%",
+        maxWidth: 1120,
+        marginLeft: "auto",
+        marginRight: "auto",
+      }
+    : {
+        gridTemplateColumns: getWebDesignGridTemplateColumns(grid),
+        gridTemplateRows: (grid.rows ?? []).map((row) => `${row.height}px`).join(" "),
+        minWidth: "100%",
+        width: getWebDesignGridWidth(grid),
+      };
   return (
     <div className="min-w-0 flex-1 overflow-auto p-5">
       <div
@@ -54,15 +81,13 @@ export function PublicPageGrid({
         data-testid="public-page-grid-canvas"
         style={{
           ...backgroundStyle,
-          gridTemplateColumns: getWebDesignGridTemplateColumns(grid),
-          gridTemplateRows: grid.rows.map((row) => `${row.height}px`).join(" "),
-          minWidth: "100%",
-          width: getWebDesignGridWidth(grid),
+          ...gridStyle,
         }}
       >
-        {grid.rows.map((row, rowIndex) => (
-          <div key={row.id} id={row.id} style={{ gridColumn: "1 / -1", gridRow: rowIndex + 1 }} />
-        ))}
+        {!fluid &&
+          (grid.rows ?? []).map((row, rowIndex) => (
+            <div key={row.id} id={row.id} style={{ gridColumn: "1 / -1", gridRow: rowIndex + 1 }} />
+          ))}
         {pageLayout.zones.map((zone) => (
           <PublicChartZone
             key={zone.id}
@@ -70,12 +95,13 @@ export function PublicPageGrid({
             zone={zone}
             title={manifest.charts.find((chart) => chart.chart_id === chartIdFromZone(zone))?.title}
             theme={resolvedTheme}
+            fluidRowUnit={fluid ? rowUnit : undefined}
             selected={selectedChartId === chartIdFromZone(zone)}
             onSelectChart={onSelectChart}
           />
         ))}
         {(pageLayout.textZones ?? []).map((zone) => (
-          <PublicTextZoneBlock key={zone.id} zone={zone} />
+          <PublicTextZoneBlock key={zone.id} zone={zone} fluid={fluid} />
         ))}
       </div>
     </div>
@@ -87,6 +113,7 @@ function PublicChartZone({
   zone,
   title,
   theme,
+  fluidRowUnit,
   selected,
   onSelectChart,
 }: {
@@ -94,6 +121,8 @@ function PublicChartZone({
   zone: PublishedZone;
   title?: string;
   theme: "light" | "dark";
+  /** Present on fluid unit-grid layouts; row heights derive from this instead of legacy pixels. */
+  fluidRowUnit?: number;
   selected?: boolean;
   onSelectChart?: (chartId: string) => void;
 }) {
@@ -117,7 +146,13 @@ function PublicChartZone({
     };
   }, [chartId, token]);
 
-  const height = useMemo(() => Math.max(180, zone.rowSpan * 260), [zone.rowSpan]);
+  const height = useMemo(
+    () =>
+      fluidRowUnit
+        ? Math.max(140, gridUnitsToPx(zone.rowSpan, fluidRowUnit, GRID_GAP) - PUBLIC_CHART_HEADER_PX)
+        : Math.max(180, zone.rowSpan * 260),
+    [zone.rowSpan, fluidRowUnit]
+  );
 
   return (
     <div
@@ -161,11 +196,15 @@ const PUBLISHED_TEXT_STYLE_MAP: Record<"title" | "subtitle" | "body", string> = 
   body: "text-sm leading-relaxed text-[#555250] dark:text-gray-200",
 };
 
-function PublicTextZoneBlock({ zone }: { zone: PublishedTextZone }) {
+function PublicTextZoneBlock({ zone, fluid }: { zone: PublishedTextZone; fluid?: boolean }) {
   const className = PUBLISHED_TEXT_STYLE_MAP[zone.style] ?? PUBLISHED_TEXT_STYLE_MAP.body;
   return (
     <div
-      className="overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] p-4 dark:border-white/10 dark:bg-white/[0.06]"
+      className={
+        fluid
+          ? "overflow-hidden"
+          : "overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] p-4 dark:border-white/10 dark:bg-white/[0.06]"
+      }
       style={{
         gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
         gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,

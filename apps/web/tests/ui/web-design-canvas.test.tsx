@@ -9,8 +9,9 @@ import { WebDesignCanvas } from "../../components/workspace/web-design-canvas";
 import { WorkspaceToolbar } from "../../components/workspace/workspace-toolbar";
 import { clearInMemoryToken, setInMemoryToken } from "../../lib/auth/session";
 import { DEFAULT_CANVAS_FORMAT } from "../../lib/workspace/canvas-formats";
+import { CHART_DEFAULT_H, CHART_DEFAULT_W, createFluidGrid } from "../../lib/workspace/web-design-layout";
 import { useWorkspaceStore } from "../../stores/workspace-store";
-import type { WorkspaceNode } from "../../types/workspace";
+import type { WebDesignLayout, WorkspaceNode } from "../../types/workspace";
 
 const toBlobMock = vi.fn();
 const clipboardWriteMock = vi.fn();
@@ -42,13 +43,23 @@ const chartNode: WorkspaceNode = {
   },
 };
 
-function createDataTransfer() {
-  const data = new Map<string, string>();
+function webDesignWithZone(zone: WebDesignLayout["zones"][number]): WebDesignLayout {
+  const layout = emptyWebDesign();
   return {
-    dropEffect: "",
-    effectAllowed: "",
-    getData: vi.fn((type: string) => data.get(type) ?? ""),
-    setData: vi.fn((type: string, value: string) => data.set(type, value)),
+    ...layout,
+    zones: [zone],
+    pages: layout.pages?.map((page) => ({ ...page, zones: [zone] })),
+  };
+}
+
+function emptyWebDesign(): WebDesignLayout {
+  return {
+    grid: createFluidGrid(),
+    zones: [],
+    sidebar: [{ id: "section-1", label: "Section 1", pageId: "section-1", anchorRowId: "row-1", children: [] }],
+    pages: [{ id: "section-1", title: "Section 1", grid: createFluidGrid(), zones: [], textZones: [] }],
+    activePageId: "section-1",
+    preview: false,
   };
 }
 
@@ -95,18 +106,7 @@ describe("WebDesignCanvas state", () => {
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
       canvasFormat: DEFAULT_CANVAS_FORMAT,
-      webDesign: {
-        grid: {
-          columns: 2,
-          rows: [
-            { id: "row-1", height: 400 },
-            { id: "row-2", height: 400 },
-          ],
-        },
-        zones: [],
-        sidebar: [{ id: "section-1", label: "Section 1", anchorRowId: "row-1", children: [] }],
-        preview: false,
-      },
+      webDesign: emptyWebDesign(),
       hasUnsavedChanges: false,
     });
   });
@@ -122,6 +122,78 @@ describe("WebDesignCanvas state", () => {
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
       canvasFormat: DEFAULT_CANVAS_FORMAT,
+      webDesign: emptyWebDesign(),
+      hasUnsavedChanges: false,
+    });
+  });
+
+  it("adds charts on the fluid grid side by side, then wraps to the next band", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-b" });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-c" });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.canvasFormat.id).toBe("web-design");
+    const zones = state.webDesign.zones;
+    expect(zones).toHaveLength(3);
+    expect(zones.map((zone) => [zone.column, zone.row])).toEqual([
+      [0, 0],
+      [CHART_DEFAULT_W, 0],
+      [0, CHART_DEFAULT_H],
+    ]);
+    expect(zones.every((zone) => zone.colSpan === CHART_DEFAULT_W && zone.rowSpan === CHART_DEFAULT_H)).toBe(true);
+  });
+
+  it("pushes an occupied block down when another block moves onto it", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-b" });
+    const [zoneA, zoneB] = useWorkspaceStore.getState().webDesign.zones;
+
+    useWorkspaceStore.getState().moveWebDesignBlock(zoneB.id, 0, 0);
+
+    const zones = useWorkspaceStore.getState().webDesign.zones;
+    expect(zones.find((zone) => zone.id === zoneB.id)).toMatchObject({ column: 0, row: 0 });
+    expect(zones.find((zone) => zone.id === zoneA.id)).toMatchObject({ column: 0, row: CHART_DEFAULT_H });
+  });
+
+  it("clamps block resize to grid bounds and chart minimums", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
+    const zoneId = useWorkspaceStore.getState().webDesign.zones[0].id;
+
+    useWorkspaceStore.getState().resizeWebDesignBlock(zoneId, 40, 1);
+    let zone = useWorkspaceStore.getState().webDesign.zones[0];
+    expect(zone.colSpan).toBe(12);
+    expect(zone.rowSpan).toBe(3);
+
+    useWorkspaceStore.getState().resizeWebDesignBlock(zoneId, 1, 1);
+    zone = useWorkspaceStore.getState().webDesign.zones[0];
+    expect(zone.colSpan).toBe(3);
+    expect(zone.rowSpan).toBe(3);
+  });
+
+  it("closes gaps when a block is removed", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-b" });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-c" });
+    const [zoneA, , zoneC] = useWorkspaceStore.getState().webDesign.zones;
+
+    useWorkspaceStore.getState().removeWebDesignZone(zoneA.id);
+
+    const zones = useWorkspaceStore.getState().webDesign.zones;
+    expect(zones).toHaveLength(2);
+    expect(zones.find((zone) => zone.id === zoneC.id)).toMatchObject({ column: 0, row: 0 });
+  });
+
+  it("migrates legacy fixed-pixel snapshots to the fluid grid on load", () => {
+    useWorkspaceStore.getState().loadSnapshot({
+      workspaceId: "ws-test",
+      viewport: { x: 0, y: 0, zoom: 1 },
+      canvasFormat: { id: "web-design" },
       webDesign: {
         grid: {
           columns: 2,
@@ -130,101 +202,79 @@ describe("WebDesignCanvas state", () => {
             { id: "row-2", height: 400 },
           ],
         },
-        zones: [],
+        zones: [
+          { id: "z1", nodeId: "node-chart", chartId: "chart-1", column: 1, row: 0, colSpan: 1, rowSpan: 1 },
+        ],
         sidebar: [{ id: "section-1", label: "Section 1", anchorRowId: "row-1", children: [] }],
         preview: false,
       },
-      hasUnsavedChanges: false,
-    });
-  });
-
-  it("clamps grid zone resize to available columns and minimum span", () => {
-    const store = useWorkspaceStore.getState();
-    store.placeWebDesignZone("node-chart", 1, 0);
-    const zoneId = useWorkspaceStore.getState().webDesign.zones[0].id;
-
-    useWorkspaceStore.getState().resizeWebDesignZone(zoneId, 4, 0);
-
-    const zone = useWorkspaceStore.getState().webDesign.zones[0];
-    expect(zone.colSpan).toBe(1);
-    expect(zone.rowSpan).toBe(1);
-  });
-
-  it("moves chart zones between empty grid cells", () => {
-    const store = useWorkspaceStore.getState();
-    store.placeWebDesignZone("node-chart", 0, 0);
-    const zoneId = useWorkspaceStore.getState().webDesign.zones[0].id;
-
-    useWorkspaceStore.getState().moveWebDesignZone(zoneId, 1, 1);
-
-    const zone = useWorkspaceStore.getState().webDesign.zones[0];
-    expect(zone.column).toBe(1);
-    expect(zone.row).toBe(1);
-  });
-
-  it("keeps moved chart zones from overlapping another chart area", () => {
-    useWorkspaceStore.setState({
-      nodes: [
-        chartNode,
-        {
-          ...chartNode,
-          id: "node-chart-2",
-          data: { ...chartNode.data, assetId: "chart-2", title: "Turnover" },
-        },
-      ],
     });
 
+    const layout = useWorkspaceStore.getState().webDesign;
+    expect(layout.grid.columns).toBe(12);
+    expect(layout.grid.rowUnit).toBeGreaterThan(0);
+    const zone = layout.zones[0];
+    expect(zone.column).toBe(6);
+    expect(zone.colSpan).toBe(6);
+    expect(zone.rowSpan).toBeGreaterThanOrEqual(3);
+  });
+
+  it("adds a full-width title text block and a half-width annotation", () => {
     const store = useWorkspaceStore.getState();
-    store.placeWebDesignZone("node-chart", 0, 0);
-    store.placeWebDesignZone("node-chart-2", 1, 0);
-    const zoneId = useWorkspaceStore.getState().webDesign.zones[0].id;
+    store.addWebDesignTextZone("title");
+    useWorkspaceStore.getState().addWebDesignTextZone("body");
 
-    useWorkspaceStore.getState().moveWebDesignZone(zoneId, 1, 0);
-
-    const zone = useWorkspaceStore.getState().webDesign.zones[0];
-    expect(zone.column).toBe(0);
-    expect(zone.row).toBe(0);
+    const textZones = useWorkspaceStore.getState().webDesign.pages?.[0].textZones ?? [];
+    expect(textZones).toHaveLength(2);
+    expect(textZones[0]).toMatchObject({ column: 0, row: 0, colSpan: 12 });
+    expect(textZones[1]).toMatchObject({ column: 0, row: 1, colSpan: 6 });
   });
 
-  it("supports dragging a chart zone to another grid area", () => {
-    useWorkspaceStore.getState().placeWebDesignZone("node-chart", 0, 0);
+  it("moves a focused chart block with arrow keys", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
     renderWithProviders(<WebDesignCanvas />);
 
-    const dataTransfer = createDataTransfer();
-    const dragHandle = screen.getByText("Headcount").closest("[draggable='true']");
-    expect(dragHandle).not.toBeNull();
-    fireEvent.dragStart(dragHandle!, { dataTransfer });
-    fireEvent.dragOver(screen.getByLabelText("Grid cell row 2 column 2"), { dataTransfer });
-    fireEvent.drop(screen.getByLabelText("Grid cell row 2 column 2"), { dataTransfer });
+    const block = screen.getByLabelText("Chart zone Headcount");
+    block.focus();
+    fireEvent.keyDown(block, { key: "ArrowRight" });
 
-    const zone = useWorkspaceStore.getState().webDesign.zones[0];
-    expect(zone.column).toBe(1);
-    expect(zone.row).toBe(1);
+    expect(useWorkspaceStore.getState().webDesign.zones[0].column).toBe(1);
+
+    fireEvent.keyDown(block, { key: "ArrowDown", shiftKey: true });
+    expect(useWorkspaceStore.getState().webDesign.zones[0].rowSpan).toBe(CHART_DEFAULT_H + 1);
   });
 
-  it("renders a control to reduce a chart zone row span", async () => {
-    useWorkspaceStore.getState().placeWebDesignZone("node-chart", 0, 0);
-    const zoneId = useWorkspaceStore.getState().webDesign.zones[0].id;
-    useWorkspaceStore.getState().resizeWebDesignZone(zoneId, 1, 2);
+  it("removes a focused block with the Delete key", () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
     renderWithProviders(<WebDesignCanvas />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Decrease row span" }));
+    const block = screen.getByLabelText("Chart zone Headcount");
+    block.focus();
+    fireEvent.keyDown(block, { key: "Delete" });
 
-    expect(useWorkspaceStore.getState().webDesign.zones[0].rowSpan).toBe(1);
+    expect(useWorkspaceStore.getState().webDesign.zones).toHaveLength(0);
   });
 
-  it("resizes a Web Page Design column from the vertical drag handle", () => {
+  it("shows an empty-state hint when the page has no blocks", () => {
     renderWithProviders(<WebDesignCanvas />);
 
-    fireEvent.mouseDown(screen.getByLabelText("Resize column 1"), { clientX: 100 });
-    fireEvent.mouseMove(window, { clientX: 170 });
-    fireEvent.mouseUp(window);
-
-    expect(useWorkspaceStore.getState().webDesign.grid.columnWidths).toEqual([350, 280]);
+    expect(screen.getByText("This page is empty")).toBeInTheDocument();
   });
 
-  it("copies a Web Page Design chart zone to the clipboard as a PNG", async () => {
-    useWorkspaceStore.getState().placeWebDesignZone("node-chart", 0, 0);
+  it("does not render legacy row/column management controls", () => {
+    renderWithProviders(<WebDesignCanvas />);
+
+    expect(screen.queryByText(/columns$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/rows$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Resize column/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Grid cell/)).not.toBeInTheDocument();
+  });
+
+  it("copies a Web Page Design chart block to the clipboard as a PNG", async () => {
+    useWorkspaceStore.setState({ nodes: [] });
+    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart" });
     renderWithProviders(<WebDesignCanvas />);
 
     await userEvent.click(screen.getByRole("button", { name: "Copy as PNG image" }));
@@ -253,30 +303,6 @@ describe("WebDesignCanvas state", () => {
     expect(firstSection.children[0].children).toHaveLength(0);
   });
 
-  it("does not render the old unplaced charts tray", () => {
-    renderWithProviders(<WebDesignCanvas />);
-
-    expect(screen.queryByText("Unplaced charts")).not.toBeInTheDocument();
-    expect(screen.queryByText("All charts are placed.")).not.toBeInTheDocument();
-  });
-
-  it("adds reusable chart copies directly to the Web Page Design grid", () => {
-    useWorkspaceStore.setState({ nodes: [], webDesign: { ...useWorkspaceStore.getState().webDesign, zones: [] } });
-
-    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-a" });
-    useWorkspaceStore.getState().addNodeToWebDesign({ ...chartNode, id: "node-chart-b" });
-
-    const state = useWorkspaceStore.getState();
-    expect(state.canvasFormat.id).toBe("web-design");
-    expect(state.nodes.map((node) => node.id)).toEqual(["node-chart-a", "node-chart-b"]);
-    expect(state.webDesign.zones).toHaveLength(2);
-    expect(state.webDesign.zones.map((zone) => zone.chartId)).toEqual(["chart-1", "chart-1"]);
-    expect(state.webDesign.zones.map((zone) => [zone.column, zone.row])).toEqual([
-      [0, 0],
-      [1, 0],
-    ]);
-  });
-
   it("allows publishing charts whose data is stored in an ECharts dataset", () => {
     useWorkspaceStore.setState({
       nodes: [
@@ -301,20 +327,15 @@ describe("WebDesignCanvas state", () => {
           },
         },
       ],
-      webDesign: {
-        ...useWorkspaceStore.getState().webDesign,
-        zones: [
-          {
-            id: "zone-1",
-            nodeId: "node-chart",
-            chartId: "chart-1",
-            column: 0,
-            row: 0,
-            colSpan: 1,
-            rowSpan: 1,
-          },
-        ],
-      },
+      webDesign: webDesignWithZone({
+        id: "zone-1",
+        nodeId: "node-chart",
+        chartId: "chart-1",
+        column: 0,
+        row: 0,
+        colSpan: 6,
+        rowSpan: 5,
+      }),
     });
 
     vi.stubGlobal(
@@ -360,20 +381,15 @@ describe("WebDesignCanvas state", () => {
           },
         },
       ],
-      webDesign: {
-        ...useWorkspaceStore.getState().webDesign,
-        zones: [
-          {
-            id: "zone-1",
-            nodeId: "node-chart",
-            chartId: "chart-1",
-            column: 0,
-            row: 0,
-            colSpan: 1,
-            rowSpan: 1,
-          },
-        ],
-      },
+      webDesign: webDesignWithZone({
+        id: "zone-1",
+        nodeId: "node-chart",
+        chartId: "chart-1",
+        column: 0,
+        row: 0,
+        colSpan: 6,
+        rowSpan: 5,
+      }),
     });
 
     vi.stubGlobal(

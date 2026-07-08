@@ -103,7 +103,14 @@ export type WebDesignGridRow = {
 
 export type WebDesignGridConfig = {
   columns: number;
+  /** @deprecated legacy fixed-pixel grids only; fluid grids size columns as container fractions */
   columnWidths?: number[];
+  /**
+   * Height in px of one grid unit row. Present on fluid 12-column layouts
+   * (the current format); absent on legacy fixed-pixel grids.
+   */
+  rowUnit?: number;
+  /** Explicit pixel rows; only meaningful on legacy grids, empty on fluid grids. */
   rows: WebDesignGridRow[];
 };
 

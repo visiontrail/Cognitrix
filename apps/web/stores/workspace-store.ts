@@ -17,10 +17,21 @@ import {
   safeSaveToStorage,
 } from "@/lib/chat/session-storage";
 import {
-  DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-  normalizeWebDesignColumnWidths,
-  resizeWebDesignColumnWidths,
-} from "@/lib/workspace/web-design-grid";
+  CHART_DEFAULT_H,
+  CHART_DEFAULT_W,
+  compactLayout,
+  createFluidGrid,
+  findSlot,
+  isFluidGrid,
+  layoutItemsToPage,
+  migrateLegacyPage,
+  minSizeFor,
+  moveItem,
+  pageToLayoutItems,
+  resizeItem,
+  rowUnitOf,
+  type LayoutItem,
+} from "@/lib/workspace/web-design-layout";
 import type {
   Workspace,
   WorkspaceNode,
@@ -36,37 +47,16 @@ import type {
 } from "@/types/workspace";
 
 const DEFAULT_WEB_DESIGN_LAYOUT: WebDesignLayout = {
-  grid: {
-    columns: 3,
-    columnWidths: [
-      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-      DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-    ],
-    rows: [
-      { id: "row-1", height: 400 },
-      { id: "row-2", height: 400 },
-    ],
-  },
+  grid: createFluidGrid(),
   zones: [],
   sidebar: [{ id: "section-1", label: "Section 1", pageId: "section-1", anchorRowId: "row-1", children: [] }],
   pages: [
     {
       id: "section-1",
       title: "Section 1",
-      grid: {
-        columns: 3,
-        columnWidths: [
-          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-          DEFAULT_WEB_DESIGN_COLUMN_WIDTH,
-        ],
-        rows: [
-          { id: "row-1", height: 400 },
-          { id: "row-2", height: 400 },
-        ],
-      },
+      grid: createFluidGrid(),
       zones: [],
+      textZones: [],
     },
   ],
   activePageId: "section-1",
@@ -112,14 +102,12 @@ type WorkspaceState = {
   addCanvasPage: () => void;
   removeCanvasPage: () => void;
   deleteCanvasPage: (pageIndex: number) => void;
-  setWebDesignColumns: (columns: number) => void;
-  setWebDesignColumnWidth: (columnIndex: number, width: number) => void;
-  addWebDesignRow: () => void;
-  removeWebDesignRow: (rowId: string) => void;
-  setWebDesignRowHeight: (rowId: string, height: number) => void;
-  placeWebDesignZone: (nodeId: string, column: number, row: number) => void;
-  moveWebDesignZone: (zoneId: string, column: number, row: number) => void;
-  resizeWebDesignZone: (zoneId: string, colSpan: number, rowSpan: number) => void;
+  /** Move a chart or text block to grid units (x, y); collisions push down, then the page compacts. */
+  moveWebDesignBlock: (blockId: string, x: number, y: number) => void;
+  /** Resize a chart or text block to grid units (w, h) with per-kind minimums. */
+  resizeWebDesignBlock: (blockId: string, w: number, h: number) => void;
+  /** Commit a full drag/resize preview layout in one state update. */
+  commitWebDesignLayout: (items: LayoutItem[]) => void;
   removeWebDesignZone: (zoneId: string) => void;
   addWebDesignTextZone: (style: WebDesignTextStyle) => void;
   updateWebDesignTextZone: (zoneId: string, updates: Partial<Omit<WebDesignTextZone, "id">>) => void;
@@ -269,24 +257,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       nodesByFormat["web-design"] = webDesignNodes;
 
       const activePage = getActiveWebDesignPage(state.webDesign);
-      const placement = findNextWebDesignCell(activePage);
-      const rows =
-        placement.row < activePage.grid.rows.length
-          ? activePage.grid.rows
-          : [...activePage.grid.rows, { id: `row-${activePage.grid.rows.length + 1}`, height: 400 }];
+      const items = pageToLayoutItems(activePage);
+      const slot = findSlot(items, CHART_DEFAULT_W, CHART_DEFAULT_H);
       const nextPage = {
         ...activePage,
-        grid: { ...activePage.grid, rows },
         zones: [
           ...activePage.zones,
           {
             id: `zone-${node.id}`,
             nodeId: node.id,
             chartId: node.data.assetId,
-            column: placement.column,
-            row: placement.row,
-            colSpan: 1,
-            rowSpan: 1,
+            column: slot.x,
+            row: slot.y,
+            colSpan: CHART_DEFAULT_W,
+            rowSpan: CHART_DEFAULT_H,
           },
         ],
       };
@@ -539,199 +523,74 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }),
 
-  setWebDesignColumns: (columns) =>
+  moveWebDesignBlock: (blockId, x, y) =>
     set((state) => {
-      const nextColumns = clamp(columns, 2, 10);
+      const activePage = getActiveWebDesignPage(state.webDesign);
+      const items = pageToLayoutItems(activePage);
+      if (!items.some((item) => item.id === blockId)) return {};
       return {
         webDesign: updateActiveWebDesignPage(state.webDesign, (page) =>
-          clampPageToColumns(
-            {
-              ...page,
-              grid: {
-                ...page.grid,
-                columns: nextColumns,
-                columnWidths: normalizeWebDesignColumnWidths(nextColumns, page.grid.columnWidths),
-              },
-            },
-            nextColumns
-          )
+          layoutItemsToPage(page, moveItem(pageToLayoutItems(page), blockId, x, y))
         ),
         hasUnsavedChanges: true,
       };
     }),
 
-  setWebDesignColumnWidth: (columnIndex, width) =>
-    set((state) => ({
-      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-        ...page,
-        grid: {
-          ...page.grid,
-          columnWidths: resizeWebDesignColumnWidths(page.grid.columns, page.grid.columnWidths, columnIndex, width),
-        },
-      })),
-      hasUnsavedChanges: true,
-    })),
-
-  addWebDesignRow: () =>
+  resizeWebDesignBlock: (blockId, w, h) =>
     set((state) => {
       const activePage = getActiveWebDesignPage(state.webDesign);
-      const nextIndex = activePage.grid.rows.length + 1;
+      const target = pageToLayoutItems(activePage).find((item) => item.id === blockId);
+      if (!target) return {};
+      const { minW, minH } = minSizeFor(target.kind);
       return {
-        webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-          ...page,
-          grid: {
-            ...page.grid,
-            rows: [...page.grid.rows, { id: `row-${nextIndex}`, height: 400 }],
-          },
-        })),
-        hasUnsavedChanges: true,
-      };
-    }),
-
-  removeWebDesignRow: (rowId) =>
-    set((state) => {
-      const activePage = getActiveWebDesignPage(state.webDesign);
-      if (activePage.grid.rows.length <= 1) return {};
-      const rows = activePage.grid.rows.filter((row) => row.id !== rowId);
-      return {
-        webDesign: updateActiveWebDesignPage(
-          {
-            ...state.webDesign,
-            sidebar: retargetSidebar(state.webDesign.sidebar, rows[0]?.id ?? "row-1"),
-          },
-          (page) => ({
-            ...page,
-            grid: { ...page.grid, rows },
-            zones: page.zones.filter((zone) => rows[zone.row]),
-          })
+        webDesign: updateActiveWebDesignPage(state.webDesign, (page) =>
+          layoutItemsToPage(page, resizeItem(pageToLayoutItems(page), blockId, w, h, minW, minH))
         ),
         hasUnsavedChanges: true,
       };
     }),
 
-  setWebDesignRowHeight: (rowId, height) =>
+  commitWebDesignLayout: (items) =>
     set((state) => ({
-      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-        ...page,
-        grid: {
-          ...page.grid,
-          rows: page.grid.rows.map((row) =>
-            row.id === rowId ? { ...row, height: clamp(height, 40, 800) } : row
-          ),
-        },
-      })),
-      hasUnsavedChanges: true,
-    })),
-
-  placeWebDesignZone: (nodeId, column, row) =>
-    set((state) => {
-      const activePage = getActiveWebDesignPage(state.webDesign);
-      const chartNode = state.nodes.find((node) => node.id === nodeId && node.data.type === "chart");
-      if (!chartNode || activePage.zones.some((zone) => zone.nodeId === nodeId)) return {};
-      if (chartNode.data.type !== "chart") return {};
-      const chartData = chartNode.data;
-      const safeColumn = clamp(column, 0, activePage.grid.columns - 1);
-      const safeRow = clamp(row, 0, activePage.grid.rows.length - 1);
-      if (activePage.zones.some((zone) => zone.column === safeColumn && zone.row === safeRow)) {
-        return {};
-      }
-      return {
-        webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-          ...page,
-          zones: [
-            ...page.zones,
-            {
-              id: `zone-${nodeId}-${Date.now().toString(36)}`,
-              nodeId,
-              chartId: chartData.assetId,
-              column: safeColumn,
-              row: safeRow,
-              colSpan: 1,
-              rowSpan: 1,
-            },
-          ],
-        })),
-        hasUnsavedChanges: true,
-      };
-    }),
-
-  moveWebDesignZone: (zoneId, column, row) =>
-    set((state) => {
-      const activePage = getActiveWebDesignPage(state.webDesign);
-      const zone = activePage.zones.find((item) => item.id === zoneId);
-      if (!zone) return {};
-
-      const safeColumn = clamp(column, 0, activePage.grid.columns - zone.colSpan);
-      const safeRow = clamp(row, 0, activePage.grid.rows.length - zone.rowSpan);
-      if (zone.column === safeColumn && zone.row === safeRow) return {};
-      if (zoneOverlaps(activePage.zones, zoneId, safeColumn, safeRow, zone.colSpan, zone.rowSpan)) {
-        return {};
-      }
-
-      return {
-        webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-          ...page,
-          zones: page.zones.map((item) =>
-            item.id === zoneId ? { ...item, column: safeColumn, row: safeRow } : item
-          ),
-        })),
-        hasUnsavedChanges: true,
-      };
-    }),
-
-  resizeWebDesignZone: (zoneId, colSpan, rowSpan) =>
-    set((state) => ({
-      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-        ...page,
-        zones: page.zones.map((zone) =>
-          zone.id === zoneId
-            ? {
-                ...zone,
-                colSpan: clamp(colSpan, 1, page.grid.columns - zone.column),
-                rowSpan: clamp(rowSpan, 1, page.grid.rows.length - zone.row),
-              }
-            : zone
-        ),
-      })),
+      webDesign: updateActiveWebDesignPage(state.webDesign, (page) =>
+        layoutItemsToPage(page, items)
+      ),
       hasUnsavedChanges: true,
     })),
 
   removeWebDesignZone: (zoneId) =>
     set((state) => ({
-      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-        ...page,
-        zones: page.zones.filter((zone) => zone.id !== zoneId),
-      })),
+      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => {
+        const next = { ...page, zones: page.zones.filter((zone) => zone.id !== zoneId) };
+        return layoutItemsToPage(next, compactLayout(pageToLayoutItems(next)));
+      }),
       hasUnsavedChanges: true,
     })),
 
   addWebDesignTextZone: (style) =>
     set((state) => {
       const activePage = getActiveWebDesignPage(state.webDesign);
-      const allZones = [
-        ...activePage.zones.map((z) => ({ column: z.column, row: z.row, colSpan: z.colSpan, rowSpan: z.rowSpan })),
-        ...(activePage.textZones ?? []).map((z) => ({ column: z.column, row: z.row, colSpan: z.colSpan, rowSpan: z.rowSpan })),
-      ];
-      const placement = findNextFreeCell(activePage.grid, allZones);
-      const rows =
-        placement.row < activePage.grid.rows.length
-          ? activePage.grid.rows
-          : [...activePage.grid.rows, { id: `row-${activePage.grid.rows.length + 1}`, height: 200 }];
+      const size =
+        style === "title"
+          ? { w: 12, h: 1 }
+          : style === "subtitle"
+            ? { w: 12, h: 1 }
+            : { w: 6, h: 2 };
+      const slot = findSlot(pageToLayoutItems(activePage), size.w, size.h);
       const defaultContent =
         style === "title" ? "标题" : style === "subtitle" ? "副标题" : "在此输入分析说明...";
       const newZone: WebDesignTextZone = {
         id: `text-zone-${Date.now().toString(36)}`,
-        column: placement.column,
-        row: placement.row,
-        colSpan: style === "title" ? activePage.grid.columns : 1,
-        rowSpan: 1,
+        column: slot.x,
+        row: slot.y,
+        colSpan: size.w,
+        rowSpan: size.h,
         content: defaultContent,
         style,
       };
       return {
         webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
           ...page,
-          grid: { ...page.grid, rows },
           textZones: [...(page.textZones ?? []), newZone],
         })),
         hasUnsavedChanges: true,
@@ -751,10 +610,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   removeWebDesignTextZone: (zoneId) =>
     set((state) => ({
-      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => ({
-        ...page,
-        textZones: (page.textZones ?? []).filter((zone) => zone.id !== zoneId),
-      })),
+      webDesign: updateActiveWebDesignPage(state.webDesign, (page) => {
+        const next = { ...page, textZones: (page.textZones ?? []).filter((zone) => zone.id !== zoneId) };
+        return layoutItemsToPage(next, compactLayout(pageToLayoutItems(next)));
+      }),
       hasUnsavedChanges: true,
     })),
 
@@ -1053,110 +912,28 @@ function getNodesAbsoluteBounds(
 function normalizeWebDesignLayout(value: unknown): WebDesignLayout {
   if (!value || typeof value !== "object") return DEFAULT_WEB_DESIGN_LAYOUT;
   const layout = value as Partial<WebDesignLayout>;
-  const grid = {
-    columns: clamp(Number(layout.grid?.columns ?? 3), 2, 10),
-    columnWidths: normalizeWebDesignColumnWidths(
-      clamp(Number(layout.grid?.columns ?? 3), 2, 10),
-      layout.grid?.columnWidths
-    ),
-    rows: Array.isArray(layout.grid?.rows) && layout.grid.rows.length
-      ? layout.grid.rows.map((row, index) => ({
-          id: String(row.id || `row-${index + 1}`),
-          height: clamp(Number(row.height ?? 400), 40, 800),
-        }))
-      : DEFAULT_WEB_DESIGN_LAYOUT.grid.rows,
-  };
+  const grid = layout.grid ?? createFluidGrid();
   const zones = Array.isArray(layout.zones) ? layout.zones : [];
   const sidebar = Array.isArray(layout.sidebar) && layout.sidebar.length
-    ? normalizeSidebar(layout.sidebar, grid.rows[0]?.id ?? "row-1")
+    ? normalizeSidebar(layout.sidebar, "row-1")
     : DEFAULT_WEB_DESIGN_LAYOUT.sidebar;
-  return ensureWebDesignPages({
-    grid: {
-      columns: grid.columns,
-      columnWidths: grid.columnWidths,
-      rows: grid.rows,
-    },
+  const ensured = ensureWebDesignPages({
+    grid,
     zones,
     sidebar,
     pages: normalizePages(layout.pages, grid, zones),
     activePageId: typeof layout.activePageId === "string" ? layout.activePageId : undefined,
     preview: Boolean(layout.preview),
   });
-}
-
-function findNextFreeCell(
-  grid: WebDesignPage["grid"],
-  zones: { column: number; row: number; colSpan: number; rowSpan: number }[]
-): { column: number; row: number } {
-  const occupied = new Set<string>();
-  for (const zone of zones) {
-    for (let row = zone.row; row < zone.row + zone.rowSpan; row += 1) {
-      for (let column = zone.column; column < zone.column + zone.colSpan; column += 1) {
-        occupied.add(`${column}:${row}`);
-      }
-    }
-  }
-  for (let row = 0; row < grid.rows.length; row += 1) {
-    for (let column = 0; column < grid.columns; column += 1) {
-      if (!occupied.has(`${column}:${row}`)) return { column, row };
-    }
-  }
-  return { column: 0, row: grid.rows.length };
-}
-
-function findNextWebDesignCell(page: Pick<WebDesignPage, "grid" | "zones">): { column: number; row: number } {
-  const occupied = new Set<string>();
-  for (const zone of page.zones) {
-    for (let row = zone.row; row < zone.row + zone.rowSpan; row += 1) {
-      for (let column = zone.column; column < zone.column + zone.colSpan; column += 1) {
-        occupied.add(`${column}:${row}`);
-      }
-    }
-  }
-
-  for (let row = 0; row < page.grid.rows.length; row += 1) {
-    for (let column = 0; column < page.grid.columns; column += 1) {
-      if (!occupied.has(`${column}:${row}`)) return { column, row };
-    }
-  }
-
-  return { column: 0, row: page.grid.rows.length };
-}
-
-function zoneOverlaps(
-  zones: WebDesignLayout["zones"],
-  zoneId: string,
-  column: number,
-  row: number,
-  colSpan: number,
-  rowSpan: number
-): boolean {
-  return zones.some((zone) => {
-    if (zone.id === zoneId) return false;
-
-    return (
-      column < zone.column + zone.colSpan &&
-      column + colSpan > zone.column &&
-      row < zone.row + zone.rowSpan &&
-      row + rowSpan > zone.row
-    );
-  });
-}
-
-function clampPageToColumns(page: WebDesignPage, columns: number): WebDesignPage {
-  const clampZone = <T extends { column: number; colSpan: number }>(zone: T): T => {
-    const column = clamp(zone.column, 0, columns - 1);
-    return {
-      ...zone,
-      column,
-      colSpan: clamp(zone.colSpan, 1, columns - column),
-    };
-  };
-
+  // Every page — legacy fixed-pixel or already fluid — comes out as a fluid unit grid.
+  const pages = (ensured.pages ?? []).map(migrateLegacyPage);
+  const activePage = pages.find((page) => page.id === ensured.activePageId) ?? pages[0];
   return {
-    ...page,
-    zones: page.zones.map(clampZone),
-    textZones: (page.textZones ?? []).map(clampZone),
+    ...ensured,
+    pages,
+    activePageId: activePage?.id ?? ensured.activePageId,
+    grid: activePage?.grid ?? createFluidGrid(),
+    zones: activePage?.zones ?? [],
   };
 }
 
@@ -1292,16 +1069,21 @@ function normalizePages(
 }
 
 function normalizeGrid(grid: WebDesignLayout["grid"]): WebDesignLayout["grid"] {
-  const columns = clamp(Number(grid.columns ?? 3), 2, 10);
+  if (isFluidGrid(grid)) {
+    return { columns: 12, rowUnit: rowUnitOf(grid), rows: [] };
+  }
+  // Legacy fixed-pixel grid: pass through mostly untouched; migrateLegacyPage
+  // converts it to fluid units right after normalization.
+  const columns = clamp(Number(grid.columns ?? 3), 1, 10);
   return {
     columns,
-    columnWidths: normalizeWebDesignColumnWidths(columns, grid.columnWidths),
+    columnWidths: Array.isArray(grid.columnWidths) ? grid.columnWidths : undefined,
     rows: Array.isArray(grid.rows) && grid.rows.length
       ? grid.rows.map((row, index) => ({
           id: String(row.id || `row-${index + 1}`),
           height: clamp(Number(row.height ?? 400), 40, 800),
         }))
-      : cloneGrid(DEFAULT_WEB_DESIGN_LAYOUT.grid).rows,
+      : [{ id: "row-1", height: 400 }],
   };
 }
 
@@ -1321,8 +1103,9 @@ function normalizeSidebar(items: WebDesignSidebarItem[], fallbackRowId: string):
 function cloneGrid(grid: WebDesignLayout["grid"]): WebDesignLayout["grid"] {
   return {
     columns: grid.columns,
-    columnWidths: normalizeWebDesignColumnWidths(grid.columns, grid.columnWidths),
-    rows: grid.rows.map((row) => ({ ...row })),
+    ...(Array.isArray(grid.columnWidths) ? { columnWidths: [...grid.columnWidths] } : {}),
+    ...(isFluidGrid(grid) ? { rowUnit: rowUnitOf(grid) } : {}),
+    rows: (grid.rows ?? []).map((row) => ({ ...row })),
   };
 }
 
@@ -1350,10 +1133,3 @@ function removeSidebarItem(items: WebDesignSidebarItem[], itemId: string): WebDe
     .map((item) => ({ ...item, children: removeSidebarItem(item.children, itemId) }));
 }
 
-function retargetSidebar(items: WebDesignSidebarItem[], fallbackRowId: string): WebDesignSidebarItem[] {
-  return items.map((item) => ({
-    ...item,
-    anchorRowId: item.anchorRowId || fallbackRowId,
-    children: retargetSidebar(item.children, fallbackRowId),
-  }));
-}

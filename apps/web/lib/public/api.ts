@@ -26,10 +26,18 @@ export type PublishedZone = {
   rowSpan: number;
 };
 
+export type PublishedGrid = {
+  columns: number;
+  columnWidths?: number[];
+  /** Present on fluid 12-column layouts (units); absent on legacy fixed-pixel grids. */
+  rowUnit?: number;
+  rows: { id: string; height: number }[];
+};
+
 export type PublishedPageLayout = {
   id: string;
   title: string;
-  grid: { columns: number; columnWidths?: number[]; rows: { id: string; height: number }[] };
+  grid: PublishedGrid;
   zones: PublishedZone[];
   textZones?: PublishedTextZone[];
 };
@@ -70,7 +78,7 @@ export type PublishedManifest = {
     };
   };
   layout: {
-    grid: { columns: number; columnWidths?: number[]; rows: { id: string; height: number }[] };
+    grid: PublishedGrid;
     zones: PublishedZone[];
     pages?: PublishedPageLayout[];
     activePageId?: string;

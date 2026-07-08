@@ -1,21 +1,27 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   AlignLeft,
-  BotMessageSquare,
   Check,
-  ChevronDown,
-  ChevronUp,
   Eye,
+  GripVertical,
   Heading1,
   Heading2,
   ImageDown,
-  Minus,
-  PanelLeft,
   Plus,
   Trash2,
   Type,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -27,35 +33,53 @@ import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
 import {
-  getWebDesignGridTemplateColumns,
-  getWebDesignGridWidth,
-  normalizeWebDesignColumnWidths,
-} from "@/lib/workspace/web-design-grid";
+  GRID_COLS,
+  GRID_GAP,
+  applyRect,
+  clampRect,
+  layoutBottom,
+  minSizeFor,
+  pageToLayoutItems,
+  rowUnitOf,
+  type GridRect,
+  type LayoutItem,
+} from "@/lib/workspace/web-design-layout";
 import { CollaboratorsDialog } from "@/components/sharing/share-dialog";
-import { Users } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { ChartNodeData, WebDesignPage, WebDesignSidebarItem, WebDesignTextStyle, WebDesignTextZone, WebDesignZone, WorkspaceNode } from "@/types/workspace";
+import type {
+  ChartNodeData,
+  WebDesignPage,
+  WebDesignSidebarItem,
+  WebDesignTextStyle,
+  WebDesignTextZone,
+  WorkspaceNode,
+} from "@/types/workspace";
 
-const WEB_DESIGN_ZONE_MIME = "application/x-web-design-zone";
-const WEB_DESIGN_TEXT_ZONE_MIME = "application/x-web-design-text-zone";
+const CHART_HEADER_PX = 40;
+const CANVAS_MAX_WIDTH = 1120;
+const FALLBACK_CANVAS_WIDTH = 960;
+
+type DragMode = "move" | "resize-e" | "resize-s" | "resize-se";
+
+type DragState = {
+  id: string;
+  mode: DragMode;
+  origin: LayoutItem;
+  startClientX: number;
+  startClientY: number;
+  /** Live pixel rect of the dragged block (follows the pointer un-snapped). */
+  ghost: { left: number; top: number; width: number; height: number };
+  /** Layout preview with the dragged block snapped in and neighbors pushed/compacted. */
+  preview: LayoutItem[];
+};
 
 export function WebDesignCanvas() {
   const { t } = useI18n();
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const nodes = useWorkspaceStore((s) => s.nodes);
   const layout = useWorkspaceStore((s) => s.webDesign);
-  const setColumns = useWorkspaceStore((s) => s.setWebDesignColumns);
-  const setColumnWidth = useWorkspaceStore((s) => s.setWebDesignColumnWidth);
-  const addRow = useWorkspaceStore((s) => s.addWebDesignRow);
-  const removeRow = useWorkspaceStore((s) => s.removeWebDesignRow);
-  const setRowHeight = useWorkspaceStore((s) => s.setWebDesignRowHeight);
-  const moveZone = useWorkspaceStore((s) => s.moveWebDesignZone);
-  const resizeZone = useWorkspaceStore((s) => s.resizeWebDesignZone);
-  const removeZone = useWorkspaceStore((s) => s.removeWebDesignZone);
-  const addTextZone = useWorkspaceStore((s) => s.addWebDesignTextZone);
-  const updateTextZone = useWorkspaceStore((s) => s.updateWebDesignTextZone);
-  const removeTextZone = useWorkspaceStore((s) => s.removeWebDesignTextZone);
   const setPreview = useWorkspaceStore((s) => s.setWebDesignPreview);
+  const addTextZone = useWorkspaceStore((s) => s.addWebDesignTextZone);
   const activePage = getActivePage(layout);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const activeWorkspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === activeWorkspaceId));
@@ -64,76 +88,18 @@ export function WebDesignCanvas() {
   );
   const canEdit = userWorkspaceRole === "owner" || userWorkspaceRole === "editor";
 
-  const chartNodes = useMemo(
-    () => nodes.filter((node): node is WorkspaceNode & { data: ChartNodeData } => node.data.type === "chart"),
-    [nodes]
-  );
-  const pages = getPages(layout);
-  const columnWidths = normalizeWebDesignColumnWidths(activePage.grid.columns, activePage.grid.columnWidths);
-  const gridWidth = getWebDesignGridWidth(activePage.grid);
-  const gridHeight = activePage.grid.rows.reduce((sum, row) => sum + row.height, 0);
   return (
     <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <main className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8d1c1] bg-[#fffdf7] px-4 py-2 dark:border-white/10 dark:bg-[#1c1c38]/90">
           <div className="flex items-center gap-2">
-            <PanelLeft className="h-4 w-4 text-[#996b35] dark:text-[#d97757]" />
             <span className="text-sm font-semibold">{t("workspace.webDesign.title")}</span>
             {!layout.preview && (
               <>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    disabled={activePage.grid.columns <= 2}
-                    onClick={() => setColumns(activePage.grid.columns - 1)}
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </Button>
-                  <span className="w-20 whitespace-nowrap text-center text-sm">
-                    {t("workspace.webDesign.columnsCount", { count: activePage.grid.columns })}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    onClick={() => {
-                      if (activePage.grid.columns >= 10) {
-                        toast.error(t("workspace.webDesign.maxColumns"));
-                        return;
-                      }
-                      setColumns(activePage.grid.columns + 1);
-                    }}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    disabled={activePage.grid.rows.length <= 1}
-                    onClick={() => removeRow(activePage.grid.rows[activePage.grid.rows.length - 1].id)}
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </Button>
-                  <span className="w-20 whitespace-nowrap text-center text-sm">
-                    {t("workspace.webDesign.rowsCount", { count: activePage.grid.rows.length })}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    onClick={() => {
-                      if (activePage.grid.rows.length >= 10) {
-                        toast.error(t("workspace.webDesign.maxRows"));
-                        return;
-                      }
-                      addRow();
-                    }}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
                 <AddTextZoneMenu onAdd={addTextZone} t={t} />
+                <span className="hidden text-xs text-[#8b8577] sm:inline dark:text-gray-400">
+                  {t("workspace.webDesign.dragHint")}
+                </span>
               </>
             )}
           </div>
@@ -153,93 +119,19 @@ export function WebDesignCanvas() {
 
         <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] overflow-hidden">
           <SidebarEditor preview={layout.preview} />
-          <div className="overflow-auto p-5">
-            <div className="relative">
-              <div
-                className={cn(
-                  "grid rounded-md border border-[#d8d1c1] bg-white shadow-sm dark:border-white/10 dark:bg-[#181820]",
-                  layout.preview && "border-transparent shadow-none"
-                )}
-                style={{
-                  gridTemplateColumns: getWebDesignGridTemplateColumns(activePage.grid),
-                  gridTemplateRows: activePage.grid.rows.map((row) => `${row.height}px`).join(" "),
-                  minWidth: "100%",
-                  width: gridWidth,
-                }}
-              >
-                {activePage.grid.rows.map((row, rowIndex) =>
-                  Array.from({ length: activePage.grid.columns }).map((_, columnIndex) => (
-                    <GridCell
-                      key={`${row.id}-${columnIndex}`}
-                      rowId={row.id}
-                      rowIndex={rowIndex}
-                      columnIndex={columnIndex}
-                      preview={layout.preview}
-                      onDropZone={(zoneId) => moveZone(zoneId, columnIndex, rowIndex)}
-                      onDropTextZone={(zoneId) => updateTextZone(zoneId, { column: columnIndex, row: rowIndex })}
-                    />
-                  ))
-                )}
-                {activePage.zones.map((zone) => (
-                  <GridZone
-                    key={zone.id}
-                    zone={zone}
-                    node={chartNodes.find((node) => node.id === zone.nodeId)}
-                    preview={layout.preview}
-                    onResize={(colSpan, rowSpan) => resizeZone(zone.id, colSpan, rowSpan)}
-                    onRemove={() => removeZone(zone.id)}
-                    maxColumns={activePage.grid.columns}
-                    maxRows={activePage.grid.rows.length}
-                  />
-                ))}
-                {(activePage.textZones ?? []).map((zone) => (
-                  <TextGridZone
-                    key={zone.id}
-                    zone={zone}
-                    preview={layout.preview}
-                    onUpdate={(updates) => updateTextZone(zone.id, updates)}
-                    onResize={(colSpan, rowSpan) => updateTextZone(zone.id, { colSpan, rowSpan })}
-                    onRemove={() => removeTextZone(zone.id)}
-                    maxColumns={activePage.grid.columns}
-                    maxRows={activePage.grid.rows.length}
-                  />
-                ))}
-              </div>
-              {!layout.preview &&
-                columnWidths.map((width, index) => {
-                  const leftPx = columnWidths.slice(0, index + 1).reduce((sum, item) => sum + item, 0);
-                  return (
-                    <ColumnResizeHandle
-                      key={`column-${index}`}
-                      columnIndex={index}
-                      leftPx={leftPx}
-                      currentWidth={width}
-                      heightPx={gridHeight}
-                      onSetWidth={(nextWidth) => setColumnWidth(index, nextWidth)}
-                    />
-                  );
-                })}
-              {!layout.preview &&
-                activePage.grid.rows.map((row, index) => {
-                  const topPx = activePage.grid.rows
-                    .slice(0, index + 1)
-                    .reduce((sum, r) => sum + r.height, 0);
-                  return (
-                    <RowResizeHandle
-                      key={row.id}
-                      rowId={row.id}
-                      topPx={topPx}
-                      currentHeight={row.height}
-                      onSetHeight={(height) => setRowHeight(row.id, height)}
-                    />
-                  );
-                })}
+          <div className="overflow-auto px-6 py-6">
+            <div
+              className={cn(
+                "mx-auto rounded-lg border border-[#e2dccf] bg-white px-6 py-6 shadow-sm dark:border-white/10 dark:bg-[#181820]",
+                layout.preview && "border-transparent shadow-none"
+              )}
+              style={{ maxWidth: CANVAS_MAX_WIDTH }}
+            >
+              <FluidGridEditor key={activePage.id} page={activePage} nodes={nodes} preview={layout.preview} />
             </div>
           </div>
         </div>
       </main>
-
-
 
       {canEdit && (
         <CollaboratorsDialog
@@ -250,6 +142,553 @@ export function WebDesignCanvas() {
         />
       )}
     </div>
+  );
+}
+
+function FluidGridEditor({
+  page,
+  nodes,
+  preview,
+}: {
+  page: WebDesignPage;
+  nodes: WorkspaceNode[];
+  preview: boolean;
+}) {
+  const { t } = useI18n();
+  const moveBlock = useWorkspaceStore((s) => s.moveWebDesignBlock);
+  const resizeBlock = useWorkspaceStore((s) => s.resizeWebDesignBlock);
+  const commitLayout = useWorkspaceStore((s) => s.commitWebDesignLayout);
+  const removeZone = useWorkspaceStore((s) => s.removeWebDesignZone);
+  const removeTextZone = useWorkspaceStore((s) => s.removeWebDesignTextZone);
+  const updateTextZone = useWorkspaceStore((s) => s.updateWebDesignTextZone);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(FALLBACK_CANVAS_WIDTH);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  dragRef.current = drag;
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width && width > 120) setContainerWidth(width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const rowUnit = rowUnitOf(page.grid);
+  const colWidth = (containerWidth - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+  const stepX = colWidth + GRID_GAP;
+  const stepY = rowUnit + GRID_GAP;
+  const xPx = useCallback((x: number) => x * stepX, [stepX]);
+  const yPx = useCallback((y: number) => y * stepY, [stepY]);
+  const wPx = useCallback((w: number) => Math.max(0, w * colWidth + (w - 1) * GRID_GAP), [colWidth]);
+  const hPx = useCallback((h: number) => Math.max(0, h * rowUnit + (h - 1) * GRID_GAP), [rowUnit]);
+
+  const chartNodes = useMemo(
+    () => nodes.filter((node): node is WorkspaceNode & { data: ChartNodeData } => node.data.type === "chart"),
+    [nodes]
+  );
+  const committedItems = useMemo(() => pageToLayoutItems(page), [page]);
+  const renderedItems = drag?.preview ?? committedItems;
+  const itemById = useMemo(() => new Map(renderedItems.map((item) => [item.id, item])), [renderedItems]);
+
+  const bottomUnits = Math.max(layoutBottom(renderedItems), drag ? Math.ceil((drag.ghost.top + drag.ghost.height) / stepY) + 1 : 0);
+  const contentHeight = bottomUnits > 0 ? yPx(bottomUnits) - GRID_GAP : 0;
+  const canvasHeight = preview ? Math.max(contentHeight, rowUnit) : Math.max(contentHeight + stepY * 2, rowUnit * 4);
+
+  const beginDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, id: string, mode: DragMode) => {
+      if (preview) return;
+      const item = committedItems.find((entry) => entry.id === id);
+      if (!item) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
+      } catch {
+        // Pointer capture is an optimization (keeps events flowing outside the
+        // canvas); failing to acquire it must not cancel the drag.
+      }
+      setDrag({
+        id,
+        mode,
+        origin: item,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        ghost: { left: xPx(item.x), top: yPx(item.y), width: wPx(item.w), height: hPx(item.h) },
+        preview: committedItems.map((entry) => ({ ...entry })),
+      });
+    },
+    [preview, committedItems, xPx, yPx, wPx, hPx]
+  );
+
+  const onDragMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const current = dragRef.current;
+      if (!current) return;
+      event.preventDefault();
+      const dx = event.clientX - current.startClientX;
+      const dy = event.clientY - current.startClientY;
+      const { origin, mode } = current;
+      const { minW, minH } = minSizeFor(origin.kind);
+
+      let ghost = current.ghost;
+      let target: GridRect = { ...origin };
+      if (mode === "move") {
+        const left = Math.min(Math.max(xPx(origin.x) + dx, 0), containerWidth - wPx(origin.w));
+        const top = Math.max(yPx(origin.y) + dy, 0);
+        ghost = { left, top, width: wPx(origin.w), height: hPx(origin.h) };
+        target = { ...origin, x: Math.round(left / stepX), y: Math.round(top / stepY) };
+      } else {
+        const growX = mode === "resize-e" || mode === "resize-se";
+        const growY = mode === "resize-s" || mode === "resize-se";
+        const width = growX
+          ? Math.min(Math.max(wPx(origin.w) + dx, wPx(minW)), containerWidth - xPx(origin.x))
+          : wPx(origin.w);
+        const height = growY ? Math.max(hPx(origin.h) + dy, hPx(minH)) : hPx(origin.h);
+        ghost = { left: xPx(origin.x), top: yPx(origin.y), width, height };
+        target = {
+          ...origin,
+          w: growX ? Math.round((width + GRID_GAP) / stepX) : origin.w,
+          h: growY ? Math.round((height + GRID_GAP) / stepY) : origin.h,
+        };
+      }
+
+      const snapped = clampRect(target, minW, minH);
+      const previousTarget = current.preview.find((item) => item.id === current.id);
+      const preview =
+        previousTarget &&
+        previousTarget.x === snapped.x &&
+        previousTarget.y === snapped.y &&
+        previousTarget.w === snapped.w &&
+        previousTarget.h === snapped.h
+          ? current.preview
+          : applyRect(committedItems, current.id, snapped, minW, minH);
+      setDrag({ ...current, ghost, preview });
+    },
+    [committedItems, containerWidth, stepX, stepY, xPx, yPx, wPx, hPx]
+  );
+
+  const endDrag = useCallback(() => {
+    const current = dragRef.current;
+    if (!current) return;
+    const changed = current.preview.some((item) => {
+      const before = committedItems.find((entry) => entry.id === item.id);
+      return !before || before.x !== item.x || before.y !== item.y || before.w !== item.w || before.h !== item.h;
+    });
+    if (changed) commitLayout(current.preview);
+    setDrag(null);
+  }, [commitLayout, committedItems]);
+
+  const handleBlockKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>, item: LayoutItem) => {
+      if (preview || event.target !== event.currentTarget) return;
+      const step = 1;
+      const resizeKeys = event.shiftKey;
+      let handled = true;
+      if (event.key === "ArrowLeft") {
+        if (resizeKeys) resizeBlock(item.id, item.w - step, item.h);
+        else moveBlock(item.id, item.x - step, item.y);
+      } else if (event.key === "ArrowRight") {
+        if (resizeKeys) resizeBlock(item.id, item.w + step, item.h);
+        else moveBlock(item.id, item.x + step, item.y);
+      } else if (event.key === "ArrowUp") {
+        if (resizeKeys) resizeBlock(item.id, item.w, item.h - step);
+        else moveBlock(item.id, item.x, item.y - step);
+      } else if (event.key === "ArrowDown") {
+        if (resizeKeys) resizeBlock(item.id, item.w, item.h + step);
+        else moveBlock(item.id, item.x, item.y + step);
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        if (item.kind === "chart") removeZone(item.id);
+        else removeTextZone(item.id);
+      } else {
+        handled = false;
+      }
+      if (handled) event.preventDefault();
+    },
+    [preview, moveBlock, resizeBlock, removeZone, removeTextZone]
+  );
+
+  const dragging = Boolean(drag);
+  const activeGhostItem = drag ? itemById.get(drag.id) : undefined;
+  const isEmpty = !page.zones.length && !(page.textZones ?? []).length;
+
+  return (
+    <div
+      ref={containerRef}
+      data-testid="web-design-grid"
+      className="relative"
+      style={{ height: canvasHeight }}
+      onPointerMove={dragging ? onDragMove : undefined}
+      onPointerUp={dragging ? endDrag : undefined}
+      onPointerCancel={dragging ? endDrag : undefined}
+    >
+      {/* Column guides: only visible while a block is being moved or resized. */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 transition-opacity duration-150",
+          dragging ? "opacity-100" : "opacity-0"
+        )}
+      >
+        {Array.from({ length: GRID_COLS }).map((_, index) => (
+          <div
+            key={index}
+            className="absolute inset-y-0 rounded-sm bg-[#996b35]/[0.06] dark:bg-[#d97757]/[0.08]"
+            style={{ left: xPx(index), width: colWidth }}
+          />
+        ))}
+      </div>
+
+      {/* Snap placeholder for the dragged block. */}
+      {drag && activeGhostItem && (
+        <div
+          aria-hidden
+          className="absolute rounded-md border-2 border-dashed border-[#c89b62] bg-[#996b35]/10 transition-all duration-100 dark:border-[#d97757] dark:bg-[#d97757]/10"
+          style={{
+            left: xPx(activeGhostItem.x),
+            top: yPx(activeGhostItem.y),
+            width: wPx(activeGhostItem.w),
+            height: hPx(activeGhostItem.h),
+          }}
+        />
+      )}
+
+      {isEmpty && !preview && (
+        <div className="absolute inset-x-0 top-0 flex h-64 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-[#d8d1c1] text-center dark:border-white/15">
+          <p className="text-sm font-medium text-[#6f6a5d] dark:text-gray-300">
+            {t("workspace.webDesign.emptyTitle")}
+          </p>
+          <p className="max-w-sm text-xs text-[#8b8577] dark:text-gray-400">
+            {t("workspace.webDesign.emptyBody")}
+          </p>
+        </div>
+      )}
+
+      {page.zones.map((zone) => {
+        const item = itemById.get(zone.id);
+        if (!item) return null;
+        const node = chartNodes.find((chartNode) => chartNode.id === zone.nodeId);
+        if (!node) return null;
+        const isActive = drag?.id === zone.id;
+        const rectPx = isActive && drag
+          ? drag.ghost
+          : { left: xPx(item.x), top: yPx(item.y), width: wPx(item.w), height: hPx(item.h) };
+        return (
+          <ChartBlock
+            key={zone.id}
+            item={item}
+            node={node}
+            preview={preview}
+            active={isActive}
+            rectPx={rectPx}
+            chartHeight={hPx(item.h) - CHART_HEADER_PX}
+            onPointerDownMove={(event) => beginDrag(event, zone.id, "move")}
+            onPointerDownResize={(event, mode) => beginDrag(event, zone.id, mode)}
+            onKeyDown={(event) => handleBlockKeyDown(event, item)}
+            onRemove={() => removeZone(zone.id)}
+          />
+        );
+      })}
+
+      {(page.textZones ?? []).map((zone) => {
+        const item = itemById.get(zone.id);
+        if (!item) return null;
+        const isActive = drag?.id === zone.id;
+        const rectPx = isActive && drag
+          ? drag.ghost
+          : { left: xPx(item.x), top: yPx(item.y), width: wPx(item.w), height: hPx(item.h) };
+        return (
+          <TextBlock
+            key={zone.id}
+            item={item}
+            zone={zone}
+            preview={preview}
+            active={isActive}
+            rectPx={rectPx}
+            onPointerDownMove={(event) => beginDrag(event, zone.id, "move")}
+            onPointerDownResize={(event, mode) => beginDrag(event, zone.id, mode)}
+            onKeyDown={(event) => handleBlockKeyDown(event, item)}
+            onChange={(content) => updateTextZone(zone.id, { content })}
+            onRemove={() => removeTextZone(zone.id)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function blockPositionStyle(rectPx: { left: number; top: number; width: number; height: number }, active: boolean) {
+  return {
+    left: rectPx.left,
+    top: rectPx.top,
+    width: rectPx.width,
+    height: rectPx.height,
+    transition: active ? "none" : "left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease",
+    zIndex: active ? 40 : 10,
+  } as const;
+}
+
+function ResizeHandles({
+  label,
+  onPointerDown,
+}: {
+  label: string;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>, mode: DragMode) => void;
+}) {
+  return (
+    <>
+      <div
+        role="presentation"
+        className="absolute inset-y-2 -right-1 w-2 cursor-ew-resize touch-none"
+        onPointerDown={(event) => onPointerDown(event, "resize-e")}
+      />
+      <div
+        role="presentation"
+        className="absolute inset-x-2 -bottom-1 h-2 cursor-ns-resize touch-none"
+        onPointerDown={(event) => onPointerDown(event, "resize-s")}
+      />
+      <button
+        type="button"
+        aria-label={label}
+        className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 cursor-nwse-resize touch-none items-end justify-end rounded-tl opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+        onPointerDown={(event) => onPointerDown(event, "resize-se")}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" className="m-0.5 text-[#a89a7f] dark:text-white/50" aria-hidden>
+          <path d="M9 1v8H1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+    </>
+  );
+}
+
+function ChartBlock({
+  item,
+  node,
+  preview,
+  active,
+  rectPx,
+  chartHeight,
+  onPointerDownMove,
+  onPointerDownResize,
+  onKeyDown,
+  onRemove,
+}: {
+  item: LayoutItem;
+  node: WorkspaceNode & { data: ChartNodeData };
+  preview: boolean;
+  active: boolean;
+  rectPx: { left: number; top: number; width: number; height: number };
+  chartHeight: number;
+  onPointerDownMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerDownResize: (event: ReactPointerEvent<HTMLElement>, mode: DragMode) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  onRemove: () => void;
+}) {
+  const { t } = useI18n();
+  const chartCaptureRef = useRef<HTMLDivElement>(null);
+  const [isCopying, setIsCopying] = useState(false);
+
+  const handleCopyAsPng = async () => {
+    if (!chartCaptureRef.current) {
+      toast.error(t("chat.toast.chartAssetNotFound"));
+      return;
+    }
+    if (!canCopyPngToClipboard()) {
+      toast.error(t("chat.toast.clipboardImageUnsupported"));
+      return;
+    }
+    setIsCopying(true);
+    try {
+      await copyElementAsPngToClipboard(chartCaptureRef.current);
+      toast.success(t("chat.toast.chartCopiedAsPng"));
+    } catch {
+      toast.error(t("chat.toast.chartCopyFailed"));
+    } finally {
+      setIsCopying(false);
+    }
+  };
+
+  return (
+    <section
+      aria-label={t("workspace.webDesign.aria.chartZone", { title: node.data.title })}
+      tabIndex={preview ? undefined : 0}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "group absolute overflow-hidden rounded-md border bg-white dark:bg-[#1c1c38]",
+        active
+          ? "border-[#c89b62] shadow-lg dark:border-[#d97757]"
+          : "border-[#e2dccf] dark:border-white/10",
+        !preview &&
+          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c89b62] dark:focus-visible:outline-[#d97757]"
+      )}
+      style={blockPositionStyle(rectPx, active)}
+    >
+      <div
+        className={cn(
+          "flex items-center justify-between gap-1 border-b border-[#eee8dc] bg-[#faf8f4] px-2 dark:border-white/10 dark:bg-[#25254d]",
+          !preview && "cursor-grab touch-none active:cursor-grabbing"
+        )}
+        style={{ height: CHART_HEADER_PX }}
+        onPointerDown={preview ? undefined : onPointerDownMove}
+        aria-label={preview ? undefined : t("workspace.webDesign.aria.moveBlock", { title: node.data.title })}
+      >
+        <div className="flex min-w-0 items-center gap-1.5">
+          {!preview && <GripVertical className="h-3.5 w-3.5 shrink-0 text-[#b3a88e] dark:text-white/40" />}
+          <span className="truncate text-sm font-semibold text-[#4a4842] dark:text-gray-100">{node.data.title}</span>
+        </div>
+        {!preview && (
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6"
+                  onClick={handleCopyAsPng}
+                  disabled={isCopying}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  aria-label={t("chat.duplicate")}
+                >
+                  <ImageDown className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("chat.duplicate")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6"
+                  onClick={onRemove}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  aria-label={t("workspace.webDesign.aria.removeZone")}
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("workspace.webDesign.aria.removeZone")}</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+      <div ref={chartCaptureRef} className="bg-parchment dark:bg-[#111115]">
+        <ChartPreview spec={node.data.spec} height={Math.max(140, chartHeight)} />
+      </div>
+      {!preview && (
+        <ResizeHandles
+          label={t("workspace.webDesign.aria.resizeBlock", { title: node.data.title })}
+          onPointerDown={onPointerDownResize}
+        />
+      )}
+    </section>
+  );
+}
+
+const TEXT_ZONE_STYLE_MAP: Record<WebDesignTextStyle, { className: string; placeholderKey: string }> = {
+  title: {
+    className: "text-2xl font-bold leading-tight text-[#2f332f] dark:text-white",
+    placeholderKey: "workspace.webDesign.textZone.titlePlaceholder",
+  },
+  subtitle: {
+    className: "text-lg font-semibold leading-snug text-[#4a4842] dark:text-gray-100",
+    placeholderKey: "workspace.webDesign.textZone.subtitlePlaceholder",
+  },
+  body: {
+    className: "text-sm leading-relaxed text-[#555250] dark:text-gray-300",
+    placeholderKey: "workspace.webDesign.textZone.bodyPlaceholder",
+  },
+};
+
+function TextBlock({
+  item,
+  zone,
+  preview,
+  active,
+  rectPx,
+  onPointerDownMove,
+  onPointerDownResize,
+  onKeyDown,
+  onChange,
+  onRemove,
+}: {
+  item: LayoutItem;
+  zone: WebDesignTextZone;
+  preview: boolean;
+  active: boolean;
+  rectPx: { left: number; top: number; width: number; height: number };
+  onPointerDownMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerDownResize: (event: ReactPointerEvent<HTMLElement>, mode: DragMode) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  onChange: (content: string) => void;
+  onRemove: () => void;
+}) {
+  const { t } = useI18n();
+  const styleConfig = TEXT_ZONE_STYLE_MAP[zone.style] ?? TEXT_ZONE_STYLE_MAP.body;
+
+  if (preview) {
+    return (
+      <section
+        aria-label={t("workspace.webDesign.aria.textZone")}
+        className="absolute overflow-hidden"
+        style={blockPositionStyle(rectPx, false)}
+      >
+        <p className={cn("whitespace-pre-wrap", styleConfig.className)}>{zone.content}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      aria-label={t("workspace.webDesign.aria.textZone")}
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "group absolute overflow-hidden rounded-md border bg-transparent",
+        active
+          ? "border-[#c89b62] shadow-lg dark:border-[#d97757]"
+          : "border-transparent hover:border-[#e2dccf] dark:hover:border-white/15",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c89b62] dark:focus-visible:outline-[#d97757]"
+      )}
+      style={blockPositionStyle(rectPx, active)}
+    >
+      <div className="pointer-events-none absolute left-1 top-1 z-10 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+        <button
+          type="button"
+          aria-label={t("workspace.webDesign.aria.moveBlock", { title: t(`workspace.webDesign.textZone.${zone.style}`) })}
+          className="pointer-events-auto flex h-6 w-6 cursor-grab touch-none items-center justify-center rounded bg-[#f3efe4] text-[#8b8577] active:cursor-grabbing dark:bg-white/10 dark:text-white/60"
+          onPointerDown={onPointerDownMove}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={t("workspace.webDesign.aria.removeTextZone")}
+          className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded bg-[#f3efe4] text-red-400 dark:bg-white/10"
+          onClick={onRemove}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <Textarea
+        className={cn(
+          "h-full min-h-0 w-full resize-none border-none bg-transparent p-2 pl-8 shadow-none focus-visible:ring-0",
+          styleConfig.className
+        )}
+        placeholder={t(styleConfig.placeholderKey)}
+        value={zone.content}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <ResizeHandles
+        label={t("workspace.webDesign.aria.resizeBlock", { title: t(`workspace.webDesign.textZone.${zone.style}`) })}
+        onPointerDown={onPointerDownResize}
+      />
+    </section>
   );
 }
 
@@ -326,397 +765,6 @@ function AddTextZoneMenu({
         </div>
       )}
     </div>
-  );
-}
-
-const TEXT_ZONE_STYLE_MAP: Record<
-  WebDesignTextStyle,
-  { className: string; placeholderKey: string }
-> = {
-  title: {
-    className: "text-2xl font-bold leading-tight text-[#2f332f] dark:text-white",
-    placeholderKey: "workspace.webDesign.textZone.titlePlaceholder",
-  },
-  subtitle: {
-    className: "text-lg font-semibold leading-snug text-[#4a4842] dark:text-gray-100",
-    placeholderKey: "workspace.webDesign.textZone.subtitlePlaceholder",
-  },
-  body: {
-    className: "text-sm leading-relaxed text-[#555250] dark:text-gray-300",
-    placeholderKey: "workspace.webDesign.textZone.bodyPlaceholder",
-  },
-};
-
-function TextGridZone({
-  zone,
-  preview,
-  onUpdate,
-  onResize,
-  onRemove,
-  maxColumns,
-  maxRows,
-}: {
-  zone: WebDesignTextZone;
-  preview: boolean;
-  onUpdate: (updates: Partial<Omit<WebDesignTextZone, "id">>) => void;
-  onResize: (colSpan: number, rowSpan: number) => void;
-  onRemove: () => void;
-  maxColumns: number;
-  maxRows: number;
-}) {
-  const { t } = useI18n();
-  const styleConfig = TEXT_ZONE_STYLE_MAP[zone.style] ?? TEXT_ZONE_STYLE_MAP.body;
-
-  const handleDragStart = (event: DragEvent<HTMLElement>) => {
-    if (preview) {
-      event.preventDefault();
-      return;
-    }
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(WEB_DESIGN_TEXT_ZONE_MIME, zone.id);
-    event.dataTransfer.setData("text/plain", zone.id);
-  };
-
-  return (
-    <section
-      aria-label={t("workspace.webDesign.aria.textZone")}
-      className={cn(
-        "relative z-10 overflow-hidden rounded-md border border-[#c8d8f0] bg-[#f5f9ff] dark:border-[#365a7f] dark:bg-[#172233]",
-        !preview && "ring-1 ring-[#c8d8f0] dark:ring-[#365a7f]"
-      )}
-      style={{
-        gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
-        gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,
-      }}
-    >
-      {!preview && (
-        <div
-          draggable
-          onDragStart={handleDragStart}
-          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#d0e4f8] bg-[#eaf3ff] px-2 py-1 active:cursor-grabbing dark:border-[#365a7f] dark:bg-[#1d3048]"
-        >
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="rounded bg-[#d0e4f8] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3a6ea8] dark:bg-[#284765] dark:text-[#b9dcff]">
-              {t(`workspace.webDesign.textZone.${zone.style}`)}
-            </span>
-            <div className="flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(Math.max(1, zone.colSpan - 1), zone.rowSpan)}
-                    aria-label={t("workspace.webDesign.aria.decreaseColumnSpan")}
-                  >
-                    <Minus className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
-              </Tooltip>
-              <span className="text-[10px] text-[#555] dark:text-gray-300">
-                {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(Math.min(maxColumns - zone.column, zone.colSpan + 1), zone.rowSpan)}
-                    aria-label={t("workspace.webDesign.aria.increaseColumnSpan")}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.increaseColumnSpan")}</TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(zone.colSpan, Math.max(1, zone.rowSpan - 1))}
-                    aria-label={t("workspace.webDesign.aria.decreaseRowSpan")}
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
-              </Tooltip>
-              <span className="text-[10px] text-[#555] dark:text-gray-300">
-                {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(zone.colSpan, Math.min(maxRows - zone.row, zone.rowSpan + 1))}
-                    aria-label={t("workspace.webDesign.aria.increaseRowSpan")}
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.increaseRowSpan")}</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="h-5 w-5" onClick={onRemove}>
-                <Trash2 className="h-3 w-3 text-red-400" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t("workspace.webDesign.aria.removeTextZone")}</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-      <div className="h-full p-3">
-        {preview ? (
-          <p className={cn("whitespace-pre-wrap", styleConfig.className)}>{zone.content}</p>
-        ) : (
-          <Textarea
-            className={cn(
-              "h-full min-h-[80px] w-full resize-none border-none bg-transparent p-0 shadow-none focus-visible:ring-0",
-              styleConfig.className
-            )}
-            placeholder={t(styleConfig.placeholderKey)}
-            value={zone.content}
-            onChange={(e) => onUpdate({ content: e.target.value })}
-          />
-        )}
-      </div>
-    </section>
-  );
-}
-
-function GridCell({
-  rowId,
-  rowIndex,
-  columnIndex,
-  preview,
-  onDropZone,
-  onDropTextZone,
-}: {
-  rowId: string;
-  rowIndex: number;
-  columnIndex: number;
-  preview: boolean;
-  onDropZone: (zoneId: string) => void;
-  onDropTextZone: (zoneId: string) => void;
-}) {
-  const { t } = useI18n();
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (preview) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-  };
-
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (preview) return;
-    event.preventDefault();
-    const zoneId = event.dataTransfer.getData(WEB_DESIGN_ZONE_MIME);
-    if (zoneId) {
-      onDropZone(zoneId);
-      return;
-    }
-    const textZoneId = event.dataTransfer.getData(WEB_DESIGN_TEXT_ZONE_MIME);
-    if (textZoneId) {
-      onDropTextZone(textZoneId);
-    }
-  };
-
-  return (
-    <div
-      id={columnIndex === 0 ? rowId : undefined}
-      aria-label={t("workspace.webDesign.aria.gridCell", { row: rowIndex + 1, column: columnIndex + 1 })}
-      className={cn("border border-dashed border-[#e2dccf] dark:border-white/10", preview && "border-transparent")}
-      style={{ gridColumn: columnIndex + 1, gridRow: rowIndex + 1 }}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    />
-  );
-}
-
-function GridZone({
-  zone,
-  node,
-  preview,
-  onResize,
-  onRemove,
-  maxColumns,
-  maxRows,
-}: {
-  zone: WebDesignZone;
-  node?: WorkspaceNode & { data: ChartNodeData };
-  preview: boolean;
-  onResize: (colSpan: number, rowSpan: number) => void;
-  onRemove: () => void;
-  maxColumns: number;
-  maxRows: number;
-}) {
-  const { t } = useI18n();
-  const chartCaptureRef = useRef<HTMLDivElement>(null);
-  const [isCopying, setIsCopying] = useState(false);
-  if (!node) return null;
-  const handleDragStart = (event: DragEvent<HTMLElement>) => {
-    if (preview) {
-      event.preventDefault();
-      return;
-    }
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(WEB_DESIGN_ZONE_MIME, zone.id);
-    event.dataTransfer.setData("text/plain", zone.id);
-  };
-  const handleCopyAsPng = async () => {
-    if (!chartCaptureRef.current) {
-      toast.error(t("chat.toast.chartAssetNotFound"));
-      return;
-    }
-    if (!canCopyPngToClipboard()) {
-      toast.error(t("chat.toast.clipboardImageUnsupported"));
-      return;
-    }
-
-    setIsCopying(true);
-    try {
-      await copyElementAsPngToClipboard(chartCaptureRef.current);
-      toast.success(t("chat.toast.chartCopiedAsPng"));
-    } catch {
-      toast.error(t("chat.toast.chartCopyFailed"));
-    } finally {
-      setIsCopying(false);
-    }
-  };
-
-  return (
-    <section
-      aria-label={t("workspace.webDesign.aria.chartZone", { title: node.data.title })}
-      className={cn(
-        "relative z-10 overflow-hidden rounded-md border border-[#cfc5b2] bg-white dark:border-white/10 dark:bg-[#1c1c38]",
-      )}
-      style={{
-        gridColumn: `${zone.column + 1} / span ${zone.colSpan}`,
-        gridRow: `${zone.row + 1} / span ${zone.rowSpan}`,
-      }}
-    >
-      {!preview ? (
-        <div
-          draggable
-          onDragStart={handleDragStart}
-          className="flex cursor-grab flex-wrap items-center justify-between gap-y-1 border-b border-[#eee8dc] bg-[#faf8f4] px-2 py-1 active:cursor-grabbing dark:border-white/10 dark:bg-[#25254d]"
-        >
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="rounded bg-[#ede8de] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#7a6a4f] truncate max-w-[120px] dark:bg-white/10 dark:text-gray-200">
-              {node.data.title}
-            </span>
-            <div className="flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(Math.max(1, zone.colSpan - 1), zone.rowSpan)}
-                    aria-label={t("workspace.webDesign.aria.decreaseColumnSpan")}
-                  >
-                    <Minus className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.decreaseColumnSpan")}</TooltipContent>
-              </Tooltip>
-              <span className="text-[10px] text-[#555] dark:text-gray-300">
-                {t("workspace.webDesign.columnSpanLabel", { count: zone.colSpan })}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(Math.min(maxColumns - zone.column, zone.colSpan + 1), zone.rowSpan)}
-                    aria-label={t("workspace.webDesign.aria.increaseColumnSpan")}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.increaseColumnSpan")}</TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(zone.colSpan, Math.max(1, zone.rowSpan - 1))}
-                    aria-label={t("workspace.webDesign.aria.decreaseRowSpan")}
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.decreaseRowSpan")}</TooltipContent>
-              </Tooltip>
-              <span className="text-[10px] text-[#555] dark:text-gray-300">
-                {t("workspace.webDesign.rowSpanLabel", { count: zone.rowSpan })}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-5 w-5"
-                    onClick={() => onResize(zone.colSpan, Math.min(maxRows - zone.row, zone.rowSpan + 1))}
-                    aria-label={t("workspace.webDesign.aria.increaseRowSpan")}
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("workspace.webDesign.aria.increaseRowSpan")}</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-5 w-5"
-                  onClick={handleCopyAsPng}
-                  disabled={isCopying}
-                  aria-label={t("chat.duplicate")}
-                >
-                  <ImageDown className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("chat.duplicate")}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" className="h-5 w-5" onClick={onRemove}>
-                  <Trash2 className="h-3 w-3 text-red-400" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("workspace.webDesign.aria.removeZone")}</TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      ) : (
-        <div className="border-b border-[#eee8dc] px-3 py-2 text-sm font-semibold dark:border-white/10">
-          {node.data.title}
-        </div>
-      )}
-      <div ref={chartCaptureRef} className="bg-parchment dark:bg-[#111115]">
-        <ChartPreview spec={node.data.spec} height={Math.max(180, zone.rowSpan * 260)} />
-      </div>
-    </section>
   );
 }
 
@@ -803,124 +851,6 @@ function SidebarEditor({ preview }: { preview: boolean }) {
         ))}
       </div>
     </aside>
-  );
-}
-
-function ColumnResizeHandle({
-  columnIndex,
-  leftPx,
-  currentWidth,
-  heightPx,
-  onSetWidth,
-}: {
-  columnIndex: number;
-  leftPx: number;
-  currentWidth: number;
-  heightPx: number;
-  onSetWidth: (width: number) => void;
-}) {
-  const { t } = useI18n();
-  const [dragging, setDragging] = useState(false);
-
-  const handleMouseDown = (e: ReactMouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = currentWidth;
-    setDragging(true);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (ev: MouseEvent) => {
-      onSetWidth(startWidth + ev.clientX - startX);
-    };
-    const onUp = () => {
-      setDragging(false);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  return (
-    <div
-      aria-label={t("workspace.webDesign.aria.resizeColumn", { column: columnIndex + 1 })}
-      className={cn(
-        "group absolute top-0 z-30 flex w-3 cursor-col-resize select-none justify-center",
-        dragging && "z-40"
-      )}
-      style={{ left: leftPx - 6, height: heightPx }}
-      onMouseDown={handleMouseDown}
-    >
-      <div
-        className={cn(
-          "h-full w-0.5 transition-colors",
-          dragging
-            ? "bg-[#996b35] dark:bg-[#d97757]"
-            : "bg-transparent group-hover:bg-[#d8d1c1] dark:group-hover:bg-white/20"
-        )}
-      />
-    </div>
-  );
-}
-
-function RowResizeHandle({
-  rowId,
-  topPx,
-  currentHeight,
-  onSetHeight,
-}: {
-  rowId: string;
-  topPx: number;
-  currentHeight: number;
-  onSetHeight: (height: number) => void;
-}) {
-  const { t } = useI18n();
-  const [dragging, setDragging] = useState(false);
-
-  const handleMouseDown = (e: ReactMouseEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startHeight = currentHeight;
-    setDragging(true);
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (ev: MouseEvent) => {
-      onSetHeight(startHeight + ev.clientY - startY);
-    };
-    const onUp = () => {
-      setDragging(false);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  return (
-    <div
-      aria-label={t("workspace.webDesign.aria.resizeRow", { rowId })}
-      className={cn(
-        "group absolute inset-x-0 z-30 flex h-3 cursor-row-resize select-none items-center",
-        dragging && "z-40"
-      )}
-      style={{ top: topPx - 6 }}
-      onMouseDown={handleMouseDown}
-    >
-      <div
-        className={cn(
-          "h-0.5 w-full transition-colors",
-          dragging
-            ? "bg-[#996b35] dark:bg-[#d97757]"
-            : "bg-transparent group-hover:bg-[#d8d1c1] dark:group-hover:bg-white/20"
-        )}
-      />
-    </div>
   );
 }
 

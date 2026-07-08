@@ -1,3 +1,8 @@
+/**
+ * Legacy fixed-pixel grid helpers. Only published snapshots created before the
+ * fluid 12-column layout still carry pixel column widths; the editor itself no
+ * longer produces them.
+ */
 export const DEFAULT_WEB_DESIGN_COLUMN_WIDTH = 280;
 export const MIN_WEB_DESIGN_COLUMN_WIDTH = 120;
 export const MAX_WEB_DESIGN_COLUMN_WIDTH = 640;
@@ -17,18 +22,6 @@ export function normalizeWebDesignColumnWidths(
   return Array.from({ length: safeColumns }, (_, index) =>
     clamp(Number(widths[index] ?? DEFAULT_WEB_DESIGN_COLUMN_WIDTH), MIN_WEB_DESIGN_COLUMN_WIDTH, MAX_WEB_DESIGN_COLUMN_WIDTH)
   );
-}
-
-export function resizeWebDesignColumnWidths(
-  columns: number,
-  columnWidths: unknown,
-  columnIndex: number,
-  width: number
-): number[] {
-  const nextWidths = normalizeWebDesignColumnWidths(columns, columnWidths);
-  if (columnIndex < 0 || columnIndex >= nextWidths.length) return nextWidths;
-  nextWidths[columnIndex] = clamp(width, MIN_WEB_DESIGN_COLUMN_WIDTH, MAX_WEB_DESIGN_COLUMN_WIDTH);
-  return nextWidths;
 }
 
 export function getWebDesignGridTemplateColumns(grid: WebDesignGridLike): string {

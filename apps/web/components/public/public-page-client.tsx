@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   getDefaultPublicAssistantDrawerWidth,
   PublicAssistantDrawer,
@@ -24,6 +24,11 @@ import { useTheme } from "@/lib/theme/context";
 import { Button } from "@/components/ui/button";
 
 type LoadState = "loading" | "ready" | "invalid" | "auth_required" | "forbidden";
+
+// Below this viewport width the assistant drawer overlays the full content, so
+// auto-opening it on load would hide the page. Only auto-open when there is room
+// to show both the canvas and the drawer side by side.
+const ASSISTANT_AUTO_OPEN_MIN_WIDTH = 768;
 
 const LEGACY_WEB_PAGE_BACKGROUND: CanvasBackgroundPreset = {
   id: "legacy-public-web-page",
@@ -54,6 +59,13 @@ export function PublicPageClient({ token }: { token: string }) {
           return;
         }
         setPage(payload);
+        if (
+          payload.manifest.assistant?.available === true &&
+          typeof window !== "undefined" &&
+          window.innerWidth >= ASSISTANT_AUTO_OPEN_MIN_WIDTH
+        ) {
+          setAssistantOpen(true);
+        }
         if ((payload.manifest.canvas?.kind ?? "web_page") === "web_page") {
           const firstSidebarPageId =
             payload.manifest.sidebar?.[0]?.pageId ?? payload.manifest.sidebar?.[0]?.id;
@@ -199,7 +211,10 @@ export function PublicPageClient({ token }: { token: string }) {
         activePageId={activePageId}
         onSelectPage={setActivePageId}
       />
-      <main className="relative flex min-h-0 min-w-0 flex-1">
+      <main
+        className="relative flex min-h-0 min-w-0 flex-1 transition-[padding] duration-200 ease-out md:pr-[var(--public-assistant-offset)]"
+        style={{ "--public-assistant-offset": `${assistantOffsetRight}px` } as CSSProperties}
+      >
         <PublicCanvasActions
           getCanvasElement={() => webPageCanvasRef.current}
           filenameBase={filenameBase}

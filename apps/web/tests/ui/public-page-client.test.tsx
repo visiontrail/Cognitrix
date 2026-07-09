@@ -92,6 +92,49 @@ describe("PublicPageClient", () => {
     expect(screen.queryByTestId("published-free-canvas")).not.toBeInTheDocument();
   });
 
+  it("auto-opens the assistant drawer when it is available and the viewport is wide", async () => {
+    const payload = manifestBase("web_page");
+    payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+    fetchPublicManifestMock.mockResolvedValue(payload);
+
+    render(<PublicPageClient token="tok" />);
+
+    // The drawer is opened without any user interaction. Its width reserves space
+    // on the web-page <main> so the grid content re-flows into the remaining width.
+    expect(await screen.findByTestId("public-assistant-drawer")).toBeInTheDocument();
+    const main = document.querySelector("main");
+    expect(main).not.toBeNull();
+    expect(main?.style.getPropertyValue("--public-assistant-offset")).toBe("420px");
+  });
+
+  it("keeps the assistant drawer closed on load when the assistant is unavailable", async () => {
+    fetchPublicManifestMock.mockResolvedValue(manifestBase("web_page"));
+
+    render(<PublicPageClient token="tok" />);
+
+    await waitFor(() => expect(screen.getByText("Section 1")).toBeInTheDocument());
+    expect(screen.queryByTestId("public-assistant-drawer")).not.toBeInTheDocument();
+    const main = document.querySelector("main");
+    expect(main?.style.getPropertyValue("--public-assistant-offset")).toBe("0px");
+  });
+
+  it("does not auto-open the assistant drawer on narrow viewports", async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    try {
+      const payload = manifestBase("web_page");
+      payload.manifest.assistant = { available: true, chart_count: 1, row_count: 2 };
+      fetchPublicManifestMock.mockResolvedValue(payload);
+
+      render(<PublicPageClient token="tok" />);
+
+      await waitFor(() => expect(screen.getByText("Section 1")).toBeInTheDocument());
+      expect(screen.queryByTestId("public-assistant-drawer")).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
   it("opens the public assistant drawer and renders streamed events", async () => {
     const user = userEvent.setup();
     const payload = manifestBase("web_page");

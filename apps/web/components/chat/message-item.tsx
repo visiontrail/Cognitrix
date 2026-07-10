@@ -3,6 +3,7 @@
 import type { ChatMessage } from "@/types/chat";
 import { ChartMessageCard, MultiChartMessageGroup } from "./chart-message-card";
 import { MultiChartConfirmationBox } from "./multi-chart-confirmation-box";
+import { MessageSources } from "./message-sources";
 import { AgentTrace } from "./agent-trace";
 import { SavedPromptEditorDialog } from "./saved-prompts/saved-prompt-editor-dialog";
 import { Button } from "@/components/ui/button";
@@ -196,6 +197,9 @@ export function MessageItem({ message }: { message: ChatMessage }) {
             chartType={message.chartAsset.chartType}
           />
         ) : null}
+
+        {/* Source citations — only for assistant messages that used web tools */}
+        {!isUser && <MessageSources sources={message.sources} />}
       </div>
 
       {isUser && saveDialogOpen ? (

@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     agent_max_sql_rows: int = Field(default=200, alias="AGENT_MAX_SQL_ROWS")
     agent_max_sql_scan_rows: int = Field(default=10000, alias="AGENT_MAX_SQL_SCAN_ROWS")
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
+    web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
+    web_search_provider: str = Field(default="bocha", alias="WEB_SEARCH_PROVIDER")
+    web_search_api_key: str = Field(default="", alias="WEB_SEARCH_API_KEY")
+    web_search_max_results: int = Field(default=8, alias="WEB_SEARCH_MAX_RESULTS")
+    web_search_max_calls_per_turn: int = Field(default=5, alias="WEB_SEARCH_MAX_CALLS_PER_TURN")
+    web_fetch_timeout_seconds: float = Field(default=15.0, alias="WEB_FETCH_TIMEOUT_SECONDS")
+    web_fetch_max_bytes: int = Field(default=2097152, alias="WEB_FETCH_MAX_BYTES")
+    web_fetch_max_chars: int = Field(default=20000, alias="WEB_FETCH_MAX_CHARS")
     public_assistant_cache_ttl_seconds: int = Field(default=30 * 60, alias="PUBLIC_ASSISTANT_CACHE_TTL_SECONDS")
     public_assistant_cache_max_entries: int = Field(default=10, alias="PUBLIC_ASSISTANT_CACHE_MAX_ENTRIES")
     public_assistant_max_query_rows: int = Field(default=200, alias="PUBLIC_ASSISTANT_MAX_QUERY_ROWS")
@@ -97,12 +105,23 @@ class Settings(BaseSettings):
             raise ValueError("API_TIMEOUT_MS must be greater than 0")
         return value
 
-    @field_validator("agent_timeout_seconds", "ingestion_plan_timeout_seconds")
+    @field_validator("agent_timeout_seconds", "ingestion_plan_timeout_seconds", "web_fetch_timeout_seconds")
     @classmethod
     def validate_agent_timeout_seconds(cls, value: float) -> float:
         if value <= 0:
-            raise ValueError("AGENT_TIMEOUT_SECONDS / INGESTION_PLAN_TIMEOUT_SECONDS must be greater than 0")
+            raise ValueError(
+                "AGENT_TIMEOUT_SECONDS / INGESTION_PLAN_TIMEOUT_SECONDS / WEB_FETCH_TIMEOUT_SECONDS must be greater than 0"
+            )
         return value
+
+    @field_validator("web_search_provider")
+    @classmethod
+    def validate_web_search_provider(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"bocha", "tavily"}
+        if normalized not in allowed:
+            raise ValueError(f"WEB_SEARCH_PROVIDER must be one of: {', '.join(sorted(allowed))}")
+        return normalized
 
     @field_validator(
         "agent_max_tool_steps",
@@ -113,6 +132,10 @@ class Settings(BaseSettings):
         "public_assistant_max_query_rows",
         "agent_max_multi_charts",
         "multi_chart_confirmation_ttl_seconds",
+        "web_search_max_results",
+        "web_search_max_calls_per_turn",
+        "web_fetch_max_bytes",
+        "web_fetch_max_chars",
     )
     @classmethod
     def validate_positive_ints(cls, value: int, info) -> int:  # type: ignore[no-untyped-def]

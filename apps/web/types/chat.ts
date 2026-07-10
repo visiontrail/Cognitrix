@@ -15,6 +15,14 @@ export type TraceSummary = {
   status: "ok" | "error" | "incomplete";
 };
 
+// A web source cited in an assistant answer that used the web-research tools.
+// `id` matches an inline `[n]` citation in the message prose.
+export type MessageSource = {
+  id: number;
+  title: string;
+  url: string;
+};
+
 export type ChatMessage = {
   id: string;
   sessionId: string;
@@ -25,6 +33,9 @@ export type ChatMessage = {
   multiChartConfirmation?: MultiChartConfirmation;
   timestamp: string;
   traceSummary?: TraceSummary;
+  // Web sources cited by the assistant (only present when the answer used web
+  // tools). Persisted with the message so the citation区 survives a reload.
+  sources?: MessageSource[];
   // The "+" menu generation options the user selected on the request turn that
   // produced this assistant message (e.g. multi-chart, data labels). Surfaced
   // in the agent-trace summary line; persisted so it survives a reload.

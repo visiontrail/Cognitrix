@@ -43,12 +43,18 @@ class AgentGuardrailContext:
     project_id: str
 
 
+WEB_NETWORK_TOOLS = frozenset({"web_search", "web_fetch"})
+WEB_RESEARCH_TOOLS = ("web_search", "web_fetch", "save_web_research")
+
+
 class AgentGuardrails:
     def __init__(self) -> None:
         settings = get_settings()
         self.max_sql_rows = settings.agent_max_sql_rows
         self.max_sql_scan_rows = settings.agent_max_sql_scan_rows
-        self._allowed_tools = (
+        self.web_search_enabled = bool(settings.web_search_enabled)
+        self.max_web_calls_per_turn = int(settings.web_search_max_calls_per_turn)
+        base_tools = (
             "list_tables",
             "describe_table",
             "sample_rows",
@@ -58,10 +64,31 @@ class AgentGuardrails:
             "get_distinct_values",
             "save_view",
         )
+        # Web tools only join the whitelist when the feature is enabled, so a
+        # disabled deployment rejects them exactly like any other unknown tool.
+        self._allowed_tools = (
+            base_tools + WEB_RESEARCH_TOOLS if self.web_search_enabled else base_tools
+        )
 
     @property
     def allowed_tools(self) -> tuple[str, ...]:
         return self._allowed_tools
+
+    @staticmethod
+    def is_network_tool(tool_name: str) -> bool:
+        return tool_name in WEB_NETWORK_TOOLS
+
+    def enforce_web_call_budget(self, current_calls: int) -> None:
+        """Reject a network tool call once the per-turn budget is spent."""
+        if current_calls >= self.max_web_calls_per_turn:
+            raise AgentGuardrailError(
+                code="WEB_SEARCH_BUDGET_EXCEEDED",
+                message=(
+                    "Web-research budget for this turn is exhausted "
+                    f"({self.max_web_calls_per_turn} calls). Stop searching and "
+                    "answer with the information already gathered."
+                ),
+            )
 
     def validate_user_message(self, *, message: str, context: AgentGuardrailContext) -> None:
         for pattern, code in FORBIDDEN_MESSAGE_PATTERNS:

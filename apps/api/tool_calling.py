@@ -14,9 +14,13 @@ from typing import Any, Callable, Literal
 import duckdb
 from pydantic import BaseModel, Field
 
+from urllib.parse import urlparse
+
 from .agent_logging import format_agent_debug_blocks
+from .audit import get_audit_logger
 from .column_metadata import enrich_column_with_metadata, load_table_column_metadata
 from .config import get_settings
+from .web_research import WebResearchError, fetch_page, search_web
 from .data_policy import (
     filter_schema_columns,
     forbidden_sensitive_columns,
@@ -47,7 +51,42 @@ from .views import SaveViewInput, ViewStorageError, get_view_storage_service
 from .workspaces import get_workspace_service
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SAFE_DUCKDB_TYPE_RE = re.compile(r"^[A-Za-z0-9_(),\s]+$")
 logger = logging.getLogger("cognitrix.tool_calling")
+
+# save_web_research namespace + write limits (see design D4).
+WEB_RESEARCH_TABLE_PREFIX = "web_research_"
+WEB_RESEARCH_MAX_ROWS = 1000
+WEB_RESEARCH_MAX_COLUMNS = 30
+WEB_RESEARCH_SOURCE_COLUMNS = ("_source_url", "_source_title", "_retrieved_at")
+# Base DuckDB types accepted for web-research columns (parameters like
+# DECIMAL(18,2) are allowed; only the leading type token is checked).
+ALLOWED_DUCKDB_BASE_TYPES = frozenset(
+    {
+        "VARCHAR",
+        "TEXT",
+        "CHAR",
+        "BOOLEAN",
+        "TINYINT",
+        "SMALLINT",
+        "INTEGER",
+        "INT",
+        "BIGINT",
+        "HUGEINT",
+        "UTINYINT",
+        "USMALLINT",
+        "UINTEGER",
+        "UBIGINT",
+        "FLOAT",
+        "REAL",
+        "DOUBLE",
+        "DECIMAL",
+        "NUMERIC",
+        "DATE",
+        "TIME",
+        "TIMESTAMP",
+    }
+)
 
 TOOLS_REQUIRE_ACTIVE_DATASET = frozenset(
     {
@@ -88,6 +127,9 @@ class ToolCall(BaseModel):
         "run_semantic_query",
         "execute_readonly_sql",
         "get_distinct_values",
+        "web_search",
+        "web_fetch",
+        "save_web_research",
     ]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -175,6 +217,9 @@ class ToolCallingService:
             "run_semantic_query": self._tool_run_semantic_query,
             "execute_readonly_sql": self._tool_execute_readonly_sql,
             "get_distinct_values": self._tool_get_distinct_values,
+            "web_search": self._tool_web_search,
+            "web_fetch": self._tool_web_fetch,
+            "save_web_research": self._tool_save_web_research,
         }
 
         self._tool_specs: dict[str, dict[str, Any]] = {
@@ -188,6 +233,9 @@ class ToolCallingService:
             "save_view": {"readOnlyHint": False},
             "query_metrics": {"readOnlyHint": True},
             "describe_dataset": {"readOnlyHint": True},
+            "web_search": {"readOnlyHint": True},
+            "web_fetch": {"readOnlyHint": True},
+            "save_web_research": {"readOnlyHint": False},
         }
 
     def invoke(self, request: ToolCallRequest) -> ToolCallResponse:
@@ -1006,6 +1054,290 @@ class ToolCallingService:
             "saved_at": result["saved_at"],
         }
 
+    # ------------------------------------------------------------------
+    # Web research tools (search / fetch / persist). Enabled only when
+    # WEB_SEARCH_ENABLED=true; every one is metadata-audited (never body).
+    # ------------------------------------------------------------------
+
+    def _tool_web_search(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        settings = get_settings()
+        self._require_web_search_enabled(settings)
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ToolExecutionError(
+                code="QUERY_REQUIRED",
+                message="web_search requires a non-empty query.",
+                retryable=False,
+            )
+        requested_top_k = arguments.get("top_k")
+        top_k = int(requested_top_k) if requested_top_k not in (None, "") else None
+        started = time.perf_counter()
+        try:
+            results = search_web(query, top_k=top_k, settings=settings)
+        except WebResearchError as exc:
+            self._audit_web_event(
+                action="web_search",
+                context=context,
+                status="error",
+                detail={"provider": settings.web_search_provider, "code": exc.code},
+            )
+            raise ToolExecutionError(code=exc.code, message=exc.message, retryable=False) from exc
+
+        payload_results = [item.to_dict() for item in results]
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        self._audit_web_event(
+            action="web_search",
+            context=context,
+            status="success",
+            detail={
+                "provider": settings.web_search_provider,
+                "result_count": len(payload_results),
+                "domains": sorted({_url_domain(str(item.get("url", ""))) for item in payload_results}),
+                "query_length": len(query),
+                "duration_ms": duration_ms,
+            },
+        )
+        return {
+            "query": query,
+            "provider": settings.web_search_provider,
+            "count": len(payload_results),
+            "results": payload_results,
+        }
+
+    def _tool_web_fetch(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        settings = get_settings()
+        self._require_web_search_enabled(settings)
+        url = str(arguments.get("url", "")).strip()
+        if not url:
+            raise ToolExecutionError(
+                code="URL_REQUIRED",
+                message="web_fetch requires a url.",
+                retryable=False,
+            )
+        started = time.perf_counter()
+        try:
+            fetched = fetch_page(url, settings=settings)
+        except WebResearchError as exc:
+            self._audit_web_event(
+                action="web_fetch",
+                context=context,
+                status="error",
+                detail={"domain": _url_domain(url), "code": exc.code},
+            )
+            raise ToolExecutionError(code=exc.code, message=exc.message, retryable=False) from exc
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        self._audit_web_event(
+            action="web_fetch",
+            context=context,
+            status="success",
+            detail={
+                "domain": _url_domain(str(fetched.get("url", url))),
+                "byte_size": fetched.get("byte_size"),
+                "char_count": fetched.get("char_count"),
+                "truncated": bool(fetched.get("truncated")),
+                "duration_ms": duration_ms,
+            },
+        )
+        return {
+            "url": fetched.get("url"),
+            "title": fetched.get("title"),
+            "content": fetched.get("content"),
+            "truncated": bool(fetched.get("truncated")),
+            "byte_size": fetched.get("byte_size"),
+            "char_count": fetched.get("char_count"),
+            "fetched_at": _utc_now(),
+            "purpose": str(arguments.get("purpose") or "").strip() or None,
+        }
+
+    def _tool_save_web_research(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        settings = get_settings()
+        self._require_web_search_enabled(settings)
+
+        raw_table = str(arguments.get("table_name", "")).strip()
+        if not raw_table:
+            raise ToolExecutionError(
+                code="TABLE_NAME_REQUIRED",
+                message="save_web_research requires table_name.",
+                retryable=False,
+            )
+        safe_table = _safe_identifier(raw_table)
+        full_table = f"{WEB_RESEARCH_TABLE_PREFIX}{safe_table}"
+
+        columns = self._normalize_web_research_columns(arguments.get("columns"))
+        rows = arguments.get("rows")
+        if not isinstance(rows, list):
+            raise ToolExecutionError(
+                code="INVALID_ROWS",
+                message="save_web_research requires rows as a list of objects.",
+                retryable=False,
+            )
+        if len(rows) > WEB_RESEARCH_MAX_ROWS:
+            raise ToolExecutionError(
+                code="WEB_RESEARCH_ROW_LIMIT_EXCEEDED",
+                message=f"save_web_research accepts at most {WEB_RESEARCH_MAX_ROWS} rows (got {len(rows)}).",
+                retryable=False,
+            )
+
+        round_sources = arguments.get("_round_sources")
+        normalized_sources = _normalize_web_sources(arguments.get("sources"), round_sources)
+        if not normalized_sources:
+            raise ToolExecutionError(
+                code="WEB_RESEARCH_SOURCES_REQUIRED",
+                message="save_web_research requires at least one source URL for provenance.",
+                retryable=False,
+            )
+
+        retrieved_at = datetime.now(timezone.utc)
+        column_names = [column["name"] for column in columns]
+        all_columns = column_names + list(WEB_RESEARCH_SOURCE_COLUMNS)
+        column_ddl = ", ".join(f'"{column["name"]}" {column["type"]}' for column in columns)
+        source_ddl = '"_source_url" VARCHAR, "_source_title" VARCHAR, "_retrieved_at" TIMESTAMP'
+        create_sql = f'CREATE OR REPLACE TABLE "{full_table}" ({column_ddl}, {source_ddl})'
+        insert_columns = ", ".join(f'"{name}"' for name in all_columns)
+        placeholders = ", ".join(["?"] * len(all_columns))
+        insert_sql = f'INSERT INTO "{full_table}" ({insert_columns}) VALUES ({placeholders})'
+
+        params: list[list[Any]] = []
+        per_row = len(normalized_sources) == len(rows) and len(rows) > 0
+        joined_url = ";".join(dict.fromkeys(item["url"] for item in normalized_sources))[:1000]
+        joined_title = ";".join(dict.fromkeys(item["title"] for item in normalized_sources if item["title"]))[:1000]
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ToolExecutionError(
+                    code="INVALID_ROWS",
+                    message="Each row must be an object.",
+                    retryable=False,
+                )
+            values: list[Any] = [row.get(name) for name in column_names]
+            if per_row:
+                values.append(normalized_sources[index]["url"])
+                values.append(normalized_sources[index]["title"])
+            else:
+                values.append(joined_url)
+                values.append(joined_title)
+            values.append(retrieved_at)
+            params.append(values)
+
+        try:
+            with self.dataset_service.session_manager.connection(
+                context.user_id,
+                context.project_id,
+                workspace_id=context.workspace_id,
+            ) as conn:
+                conn.execute(create_sql)
+                if params:
+                    conn.executemany(insert_sql, params)
+        except duckdb.Error as exc:
+            logger.warning(
+                "save_web_research_failed user_id=%s project_id=%s table=%s error=%s",
+                context.user_id,
+                context.project_id,
+                full_table,
+                str(exc),
+            )
+            raise ToolExecutionError(
+                code="WEB_RESEARCH_WRITE_FAILED",
+                message="Failed to persist web research data.",
+                retryable=False,
+            ) from exc
+
+        source_urls = list(dict.fromkeys(item["url"] for item in normalized_sources))
+        self._audit_web_event(
+            action="save_web_research",
+            context=context,
+            status="success",
+            detail={
+                "table": full_table,
+                "row_count": len(rows),
+                "column_count": len(columns),
+                "source_domains": sorted({_url_domain(url) for url in source_urls}),
+            },
+        )
+        return {
+            "table": full_table,
+            "row_count": len(rows),
+            "column_count": len(columns),
+            "columns": column_names,
+            "source_urls": source_urls,
+        }
+
+    @staticmethod
+    def _require_web_search_enabled(settings: Any) -> None:
+        if not settings.web_search_enabled:
+            raise ToolExecutionError(
+                code="WEB_SEARCH_DISABLED",
+                message="Web search tools are disabled (WEB_SEARCH_ENABLED=false).",
+                retryable=False,
+            )
+
+    @staticmethod
+    def _normalize_web_research_columns(raw_columns: Any) -> list[dict[str, str]]:
+        if not isinstance(raw_columns, list) or not raw_columns:
+            raise ToolExecutionError(
+                code="INVALID_COLUMNS",
+                message="save_web_research requires columns as a non-empty list of {name, type}.",
+                retryable=False,
+            )
+        if len(raw_columns) > WEB_RESEARCH_MAX_COLUMNS:
+            raise ToolExecutionError(
+                code="WEB_RESEARCH_COLUMN_LIMIT_EXCEEDED",
+                message=f"save_web_research accepts at most {WEB_RESEARCH_MAX_COLUMNS} columns.",
+                retryable=False,
+            )
+        seen: set[str] = set()
+        normalized: list[dict[str, str]] = []
+        for item in raw_columns:
+            if not isinstance(item, dict):
+                raise ToolExecutionError(
+                    code="INVALID_COLUMNS",
+                    message="Each column must be an object with name and type.",
+                    retryable=False,
+                )
+            name = str(item.get("name", "")).strip()
+            if not SAFE_IDENTIFIER_RE.match(name):
+                raise ToolExecutionError(
+                    code="INVALID_IDENTIFIER",
+                    message=f"Invalid column name: {name}",
+                    retryable=False,
+                )
+            if name.lower() in {column.lower() for column in WEB_RESEARCH_SOURCE_COLUMNS}:
+                raise ToolExecutionError(
+                    code="RESERVED_COLUMN_NAME",
+                    message=f"Column '{name}' is reserved for provenance metadata.",
+                    retryable=False,
+                )
+            if name.lower() in seen:
+                raise ToolExecutionError(
+                    code="DUPLICATE_COLUMN",
+                    message=f"Duplicate column name: {name}",
+                    retryable=False,
+                )
+            seen.add(name.lower())
+            normalized.append({"name": name, "type": _normalize_duckdb_type(item.get("type"))})
+        return normalized
+
+    def _audit_web_event(
+        self,
+        *,
+        action: str,
+        context: ToolContext,
+        status: str,
+        detail: dict[str, Any],
+    ) -> None:
+        try:
+            get_audit_logger().log(
+                event_type="agent",
+                action=action,
+                status=status,
+                severity="INFO" if status == "success" else "WARNING",
+                user_id=context.user_id,
+                project_id=context.project_id,
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001 - auditing must never break a tool call
+            logger.debug("web_audit_failed action=%s", action, exc_info=True)
+
     def _prepare_tool_scope(
         self,
         *,
@@ -1323,6 +1655,69 @@ def _safe_identifier(value: str) -> str:
             retryable=False,
         )
     return value
+
+
+def _normalize_duckdb_type(raw_type: Any) -> str:
+    normalized = " ".join(str(raw_type or "").strip().split())
+    if not normalized or not SAFE_DUCKDB_TYPE_RE.match(normalized):
+        raise ToolExecutionError(
+            code="INVALID_COLUMN_TYPE",
+            message=f"Invalid DuckDB column type: {raw_type!r}",
+            retryable=False,
+        )
+    base_token = re.split(r"[(\s]", normalized, maxsplit=1)[0].upper()
+    if base_token not in ALLOWED_DUCKDB_BASE_TYPES:
+        raise ToolExecutionError(
+            code="INVALID_COLUMN_TYPE",
+            message=f"Unsupported column type: {normalized}",
+            retryable=False,
+        )
+    return normalized
+
+
+def _url_domain(url: str) -> str:
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+    return host.lower()
+
+
+def _normalize_web_sources(sources: Any, round_sources: Any) -> list[dict[str, str]]:
+    """Normalize provided sources, falling back to runtime round-level sources.
+
+    Accepts items shaped as ``{url, title}`` or ``{id, title, url}``. Returns a
+    de-duplicated (by url) list preserving order.
+    """
+    def _coerce(raw: Any) -> list[dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        coerced: list[dict[str, str]] = []
+        for item in raw:
+            if isinstance(item, str):
+                url = item.strip()
+                title = ""
+            elif isinstance(item, dict):
+                url = str(item.get("url") or "").strip()
+                title = str(item.get("title") or "").strip()
+            else:
+                continue
+            if url:
+                coerced.append({"url": url, "title": title})
+        return coerced
+
+    primary = _coerce(sources)
+    if not primary:
+        primary = _coerce(round_sources)
+
+    deduped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in primary:
+        if item["url"] in seen:
+            continue
+        seen.add(item["url"])
+        deduped.append(item)
+    return deduped
 
 
 def _summarize_tool_result(result: dict[str, Any]) -> dict[str, Any]:

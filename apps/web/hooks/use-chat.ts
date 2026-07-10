@@ -42,6 +42,7 @@ import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/c
 import type {
   ChatMessage,
   ChatSession,
+  MessageSource,
   MultiChartConfirmation,
   MultiChartConfirmationSubmission,
 } from "@/types/chat";
@@ -557,6 +558,7 @@ async function streamAssistantResponse({
     multiChartGroupId?: string;
   }> = [];
   let pendingMultiChartConfirmation: MultiChartConfirmation | undefined;
+  let sources: MessageSource[] | undefined;
   let terminalReason: "final" | "error" | "closed" = "closed";
   let planningStepCounter = 0;
   let toolStepCount = 0;
@@ -696,6 +698,10 @@ async function streamAssistantResponse({
 
       if (streamEvent.event === "final") {
         finalText = String(payload.text ?? finalText);
+        const parsedSources = parseMessageSources(payload.sources);
+        if (parsedSources.length > 0) {
+          sources = parsedSources;
+        }
         if (payload.status !== "awaiting_confirmation" && payload.status !== "failed") {
           useChatStore.getState().clearPendingMultiChartConfirmation(sessionId);
         }
@@ -777,6 +783,7 @@ async function streamAssistantResponse({
         ? { stepCount: toolCallCount, durationMs, status: traceStatus }
         : undefined,
     generationOptions: generationOptions.length > 0 ? generationOptions : undefined,
+    sources: sources && sources.length > 0 ? sources : undefined,
   };
   return {
     assistantMessage,
@@ -2290,6 +2297,22 @@ function asNumber(value: unknown): number {
     }
   }
   return 0;
+}
+
+function parseMessageSources(raw: unknown): MessageSource[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const parsed: MessageSource[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const title = typeof item.title === "string" && item.title.trim() ? item.title.trim() : url;
+    const id = asNumber(item.id) || parsed.length + 1;
+    parsed.push({ id, title, url });
+  }
+  return parsed;
 }
 
 function buildScatterClusteringOption({

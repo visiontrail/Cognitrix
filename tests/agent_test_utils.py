@@ -43,6 +43,7 @@ def set_agent_env(
     monkeypatch.setenv("AGENT_MAX_SQL_ROWS", "200")
     monkeypatch.setenv("AGENT_MAX_SQL_SCAN_ROWS", "10000")
     monkeypatch.setenv("AGENT_TIMEOUT_SECONDS", "25")
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "false")
 
     get_settings.cache_clear()
     clear_auth_cache()

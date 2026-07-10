@@ -217,11 +217,14 @@ async def on_startup() -> None:
     )
     logger.info(
         "chat_runtime_config claude_agent_sdk_enabled=%s "
-        "agent_max_tool_steps=%s agent_max_sql_rows=%s agent_timeout_seconds=%s",
+        "agent_max_tool_steps=%s agent_max_sql_rows=%s agent_timeout_seconds=%s "
+        "web_search_enabled=%s web_search_provider=%s",
         settings.claude_agent_sdk_enabled,
         settings.agent_max_tool_steps,
         settings.agent_max_sql_rows,
         settings.agent_timeout_seconds,
+        settings.web_search_enabled,
+        settings.web_search_provider,
     )
     logger.info(
         "agentic_ingestion_forced_enabled=true configured_flag=%s",

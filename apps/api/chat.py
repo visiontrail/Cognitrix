@@ -32,7 +32,7 @@ class ChatStreamRequest(BaseModel):
     user_id: str
     project_id: str
     workspace_id: str | None = None
-    dataset_table: str
+    dataset_table: str = ""
     message: str | None = None
     preferred_chart_type: str | None = None
     generation_strategy: Literal["multi_chart"] | None = None

@@ -1367,7 +1367,11 @@ class AgentRuntime:
 
         self._emit_planning_event(
             run_context,
-            f"Analyzing request for dataset `{request.dataset_table}`.",
+            (
+                f"Analyzing request for dataset `{request.dataset_table}`."
+                if request.dataset_table
+                else "Analyzing your request."
+            ),
         )
 
         plan = await self.multi_chart_planner.plan(
@@ -2685,7 +2689,11 @@ class AgentRuntime:
     def _emit_planning_event(self, run_context: SDKRunContext, text: str) -> None:
         if run_context.planning_emitted:
             return
-        planning_text = text.strip() or f"Analyzing request for dataset `{run_context.request.dataset_table}`."
+        planning_text = text.strip() or (
+            f"Analyzing request for dataset `{run_context.request.dataset_table}`."
+            if run_context.request.dataset_table
+            else "Analyzing your request."
+        )
         payload = {
             "conversation_id": run_context.request.conversation_id,
             "request_id": run_context.request.request_id,
@@ -2906,6 +2914,8 @@ class AgentRuntime:
 
         if len(all_tables) == 1:
             return all_tables[0]
+        if not request.dataset_table.strip():
+            return all_tables[0]
         return request.dataset_table
 
     @staticmethod
@@ -2936,7 +2946,7 @@ class AgentRuntime:
                 workspace_id=request.workspace_id,
             )
         except Exception:
-            all_tables = [request.dataset_table]
+            all_tables = [request.dataset_table] if request.dataset_table else []
 
         if len(all_tables) > 1:
             other_tables = [t for t in all_tables if t != request.dataset_table]
@@ -2945,8 +2955,13 @@ class AgentRuntime:
                 f"Other tables in this session: {', '.join(f'`{t}`' for t in other_tables)}. "
                 "You may JOIN across these tables in execute_readonly_sql when answering cross-table questions."
             )
-        else:
+        elif request.dataset_table:
             tables_hint = f"Active dataset table: `{request.dataset_table}`."
+        else:
+            tables_hint = (
+                "No dataset tables have been uploaded in this session yet. "
+                "Confirm with list_tables; do not assume any table exists."
+            )
 
         context_hint = (
             tables_hint

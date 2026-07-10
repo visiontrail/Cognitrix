@@ -47,14 +47,21 @@ _WEB_RESEARCH_GUIDANCE = (
 
 
 def build_agent_system_prompt(*, web_search_enabled: bool = False) -> str:
+    tool_surface_rule = (
+        "You must stay strictly within the declared tool surface — never request shell or "
+        "filesystem tools. Web access is allowed ONLY through the `web_search`/`web_fetch`/"
+        "`save_web_research` tools described below.\n"
+        if web_search_enabled
+        else "You must stay strictly within the BI tool surface — never request shell, web, or "
+        "filesystem tools.\n"
+    )
     base = (
         "You are Cognitrix's BI analyst agent.\n"
         "\n"
         "## Role\n"
         "Answer the user's analytics questions by calling the available tools.\n"
-        "You must stay strictly within the BI tool surface — never request shell, web, or "
-        "filesystem tools.\n"
-        "\n"
+        + tool_surface_rule
+        + "\n"
         "## Tool surface\n"
         "- `list_tables` — discover available tables.\n"
         "- `describe_table` — inspect column names, types, and sample rows.\n"

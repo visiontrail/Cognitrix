@@ -367,7 +367,7 @@ export function useSendMessage() {
   });
 }
 
-const DEFAULT_DATASET_TABLE = process.env.NEXT_PUBLIC_DEFAULT_DATASET_TABLE ?? "employees_wide";
+const DEFAULT_DATASET_TABLE = process.env.NEXT_PUBLIC_DEFAULT_DATASET_TABLE ?? "";
 const configuredClearance = Number(process.env.NEXT_PUBLIC_DEFAULT_CLEARANCE ?? 1);
 const DEFAULT_CLEARANCE = Number.isFinite(configuredClearance)
   ? Math.max(0, Math.trunc(configuredClearance))
@@ -1932,7 +1932,7 @@ function toChartAsset(
       sessionId: source.sessionId,
       messageId: source.messageId,
       prompt: source.prompt,
-      datasetTable: DEFAULT_DATASET_TABLE,
+      datasetTable: DEFAULT_DATASET_TABLE || undefined,
     },
     createdAt: now,
     updatedAt: now,

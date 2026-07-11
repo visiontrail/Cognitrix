@@ -226,6 +226,12 @@ async def on_startup() -> None:
         settings.web_search_enabled,
         settings.web_search_provider,
     )
+    if settings.web_search_enabled and not settings.web_search_api_key.strip():
+        logger.warning(
+            "web_search_enabled_without_api_key provider=%s — every web_search/"
+            "web_fetch call will fail until WEB_SEARCH_API_KEY is set",
+            settings.web_search_provider,
+        )
     logger.info(
         "agentic_ingestion_forced_enabled=true configured_flag=%s",
         settings.agentic_ingestion_enabled,

@@ -232,11 +232,12 @@ class WorkspaceStateStore:
             for seq, message in enumerate(messages):
                 # The `id` column is a global PRIMARY KEY used only internally;
                 # the client's own message id is preserved verbatim in `payload`.
-                # Deriving the row id from session_id + seq keeps it unique within
-                # the just-cleared session *and* globally (session ids are unique),
-                # so a payload with duplicate/colliding client message ids can no
-                # longer trip a UNIQUE constraint failure.
-                message_id = f"{session_id}#{seq}"
+                # The row id must carry the full (workspace, user, session) scope:
+                # the same session id can legitimately appear in more than one
+                # workspace (e.g. the client races a workspace switch), and the
+                # DELETE above only clears this scope's rows — an id derived from
+                # session_id alone would collide with the other workspace's rows.
+                message_id = f"{workspace_id}#{user_id}#{session_id}#{seq}"
                 conn.execute(
                     """
                     INSERT INTO chat_messages

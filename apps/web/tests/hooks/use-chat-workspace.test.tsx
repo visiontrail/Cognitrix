@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   chatSessionsQueryKey,
+  useChatMessages,
   useChatSessions,
   useConfirmIngestionSetup,
   useSendMessage,
@@ -153,6 +154,67 @@ describe("use-chat workspace isolation", () => {
     await waitFor(() => expect(result.current.data).toEqual([]));
     expect(queryClient.getQueryData(chatSessionsQueryKey("ws-b"))).toEqual([]);
     expect(queryClient.getQueryData(chatSessionsQueryKey("ws-a"))).toHaveLength(1);
+  });
+
+  it("backfills local-only messages to the server for the owning workspace", async () => {
+    useChatStore.getState().setMessages("session-a", [
+      { id: "m1", sessionId: "session-a", role: "user", content: "hi", timestamp: "2026-05-11T00:00:00.000Z" },
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useChatMessages("session-a"), {
+      wrapper: wrapperFor(makeQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/workspaces/ws-a/chat/sessions/session-a/messages") &&
+          (init as RequestInit | undefined)?.method === "PUT"
+      );
+      expect(put).toBeTruthy();
+    });
+    expect(result.current.data?.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("does not leak a stale workspace's messages into a newly activated workspace", async () => {
+    // Regression: creating/switching a workspace flips activeWorkspaceId
+    // immediately, but the chat store is re-inited in an effect. In that window
+    // useChatMessages used to read the OLD workspace's local messages and
+    // backfill-PUT them into the NEW workspace (server replied 500).
+    useChatStore.getState().setMessages("session-a", [
+      { id: "m1", sessionId: "session-a", role: "user", content: "hi", timestamp: "2026-05-11T00:00:00.000Z" },
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Race window: workspace flipped, chat store still scoped to ws-a.
+    act(() => {
+      useWorkspaceStore.setState({ activeWorkspaceId: "ws-b" });
+    });
+    const { result } = renderHook(() => useChatMessages("session-a"), {
+      wrapper: wrapperFor(makeQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Flush the (absent) fire-and-forget backfill before asserting.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const putsToWsB = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        String(url).includes("/workspaces/ws-b/") &&
+        (init as RequestInit | undefined)?.method === "PUT"
+    );
+    expect(putsToWsB).toEqual([]);
+    // ws-a's local copy is untouched.
+    expect(useChatStore.getState().messagesBySession["session-a"]?.map((m) => m.id)).toEqual(["m1"]);
   });
 
   it("sends chat requests with active workspace and rejects sessions outside that scope", async () => {

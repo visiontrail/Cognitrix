@@ -107,15 +107,32 @@ export function useChatMessages(sessionId: string | null) {
       if (!workspaceId || !sessionId) {
         return EMPTY_MESSAGES;
       }
-      const local = useChatStore.getState().messagesBySession[sessionId] ?? EMPTY_MESSAGES;
+      // During a workspace switch this query can fire with the NEW workspace id
+      // while the chat store still holds the PREVIOUS workspace's state
+      // (AppShell re-inits the store in an effect). Consulting that stale state
+      // here would leak the old workspace's messages into the new one via the
+      // backfill PUT below — so the store only participates when it is scoped
+      // to this workspace and actually owns the session. Re-evaluated after
+      // each await because the scope can flip mid-fetch.
+      const storeOwnsSession = () =>
+        useChatStore.getState().getScopeWorkspaceId() === workspaceId &&
+        useChatStore.getState().hasSessionInCurrentScope(sessionId);
+      const local = storeOwnsSession()
+        ? useChatStore.getState().messagesBySession[sessionId] ?? EMPTY_MESSAGES
+        : EMPTY_MESSAGES;
       let server: ChatMessage[];
       try {
         server = await fetchServerMessages(workspaceId, sessionId);
       } catch {
-        setMessages(sessionId, local);
+        if (storeOwnsSession()) {
+          setMessages(sessionId, local);
+        }
         return local;
       }
       const merged = mergeMessages(server, local);
+      if (!storeOwnsSession()) {
+        return merged;
+      }
       setMessages(sessionId, merged);
       // Backfill messages this device has but the server does not yet.
       if (local.length > server.length) {

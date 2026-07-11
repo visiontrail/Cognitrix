@@ -1267,6 +1267,14 @@ class AgentRuntime:
             for item in self._tool_definitions
             if item.get("function", {}).get("name")
         )
+        # Per-instance SDK tool list for debug logging: unlike the module-level
+        # SDK_ALLOWED_TOOL_NAMES (base BI tools only), this reflects the actual
+        # surface, including web tools when WEB_SEARCH_ENABLED=true.
+        self._sdk_tool_names = tuple(
+            f"mcp__{SDK_MCP_SERVER_NAME}__{item['function']['name']}"
+            for item in self._tool_definitions
+            if item.get("function", {}).get("name")
+        )
         self._store = AgentSessionStore(
             db_path=(settings.upload_dir / "state" / "agent_sessions.sqlite3").resolve()
         )
@@ -1578,8 +1586,8 @@ class AgentRuntime:
     def get_persisted_session(self, conversation_id: str) -> AgentSessionState | None:
         return self._store.load(conversation_id)
 
-    @staticmethod
     def _log_turn_start_debug(
+        self,
         *,
         request: AgentRequest,
         session: AgentSessionState,
@@ -1600,7 +1608,7 @@ class AgentRuntime:
                     "message": request.message,
                     "response_locale": response_locale,
                     "runtime_backend": SDK_RUNTIME_BACKEND,
-                    "sdk_tools": list(SDK_ALLOWED_TOOL_NAMES),
+                    "sdk_tools": list(self._sdk_tool_names),
                     "multi_chart_confirmation": multi_chart_confirmation,
                 },
             ),

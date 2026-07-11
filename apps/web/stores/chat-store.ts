@@ -72,6 +72,7 @@ type ChatState = {
 
   getActiveMessages: () => ChatMessage[];
   hasSessionInCurrentScope: (sessionId: string) => boolean;
+  getScopeWorkspaceId: () => string | null;
   initForWorkspace: (userId: string, workspaceId: string | null) => void;
   initForUser: (userId: string) => void;
   clearForUser: () => void;
@@ -633,6 +634,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   hasSessionInCurrentScope: (sessionId: string) => get().sessions.some((session) => session.id === sessionId),
+
+  // Which workspace the store's current state belongs to. Server-sync callers
+  // must check this against their target workspace: during a workspace switch
+  // the store briefly still holds the previous workspace's sessions, and
+  // pushing those to the new workspace would leak chat history across
+  // workspaces (and used to 500 on the server's message-id uniqueness).
+  getScopeWorkspaceId: () => _currentWorkspaceId,
 
   initForWorkspace: (userId: string, workspaceId: string | null) => {
     const scopeKey = `${userId}:${workspaceId ?? ""}`;

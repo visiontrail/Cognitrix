@@ -39,6 +39,11 @@ function collectAssetIds(messages: ChatMessage[]): Set<string> {
 export async function syncSessionToServer(workspaceId: string, sessionId: string): Promise<void> {
   if (!workspaceId || !sessionId) return;
   const chat = useChatStore.getState();
+  // The store's state belongs to exactly one workspace. If the caller targets a
+  // different one (a workspace switch raced this commit point), pushing would
+  // copy the session into the wrong workspace — skip; the next commit inside
+  // the owning workspace will sync it.
+  if (chat.getScopeWorkspaceId() !== workspaceId) return;
   const session = chat.sessions.find((item) => item.id === sessionId);
   if (!session) return;
   const messages = chat.messagesBySession[sessionId] ?? [];
@@ -86,6 +91,9 @@ export async function hydrateWorkspaceStateFromServer(workspaceId: string): Prom
   const localSessions = useChatStore.getState().sessions;
   try {
     const serverSessions = await fetchServerSessions(workspaceId);
+    // Another workspace was activated while we awaited: the store now belongs
+    // to it, and writing this workspace's sessions there would mix histories.
+    if (useChatStore.getState().getScopeWorkspaceId() !== workspaceId) return;
     useChatStore.getState().setSessions(mergeSessions(serverSessions, localSessions));
     // Backfill sessions (and their messages + referenced assets) that exist only
     // on this device — e.g. data created before server persistence existed.

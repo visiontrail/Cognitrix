@@ -140,6 +140,62 @@ def test_replace_messages_tolerates_duplicate_client_ids(monkeypatch, tmp_path: 
         assert again.json()["count"] == 3
 
 
+def test_replace_messages_same_session_id_in_two_workspaces(monkeypatch, tmp_path: Path) -> None:
+    """The same session id written under two workspaces must not collide.
+
+    Regression for `sqlite3.IntegrityError: UNIQUE constraint failed: chat_messages.id`:
+    the client can race a workspace switch and PUT an existing session's messages
+    into a freshly created workspace. The internal row id was derived from
+    session_id + seq only, so the second workspace's insert collided with the
+    first workspace's rows.
+    """
+    _set_minimal_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="alice", project_id="north", role="hr", clearance=5)
+        ws_a = _create_workspace(client, headers, name="A")
+        ws_b = _create_workspace(client, headers, name="B")
+
+        messages = [
+            {"id": "m1", "role": "user", "content": "hi", "timestamp": "t1"},
+            {"id": "m2", "role": "assistant", "content": "hello", "timestamp": "t2"},
+        ]
+        for workspace_id in (ws_a, ws_b):
+            client.put(
+                f"/workspaces/{workspace_id}/chat/sessions/sess-shared",
+                headers=headers,
+                json={"title": "shared", "messageCount": 2},
+            )
+            put_msgs = client.put(
+                f"/workspaces/{workspace_id}/chat/sessions/sess-shared/messages",
+                headers=headers,
+                json={"messages": messages},
+            )
+            assert put_msgs.status_code == 200, put_msgs.text
+            assert put_msgs.json()["count"] == 2
+
+        # Both copies are independently readable.
+        for workspace_id in (ws_a, ws_b):
+            listed = client.get(
+                f"/workspaces/{workspace_id}/chat/sessions/sess-shared/messages", headers=headers
+            )
+            assert [m["id"] for m in listed.json()["messages"]] == ["m1", "m2"]
+
+        # Replacing one workspace's copy must not disturb the other's.
+        replaced = client.put(
+            f"/workspaces/{ws_b}/chat/sessions/sess-shared/messages",
+            headers=headers,
+            json={"messages": [{"id": "m3", "role": "user", "content": "only b"}]},
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert [
+            m["id"]
+            for m in client.get(
+                f"/workspaces/{ws_a}/chat/sessions/sess-shared/messages", headers=headers
+            ).json()["messages"]
+        ] == ["m1", "m2"]
+
+
 def test_chart_assets_round_trip(monkeypatch, tmp_path: Path) -> None:
     _set_minimal_env(monkeypatch, tmp_path)
 

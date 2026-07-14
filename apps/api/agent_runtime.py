@@ -463,6 +463,7 @@ class AgentRequest:
     preferred_chart_type: str | None = None
     response_locale: str | None = None
     generation_strategy: str | None = None
+    web_search_requested: bool = False
     multi_chart_confirmation: dict[str, Any] | None = None
 
 
@@ -2985,6 +2986,23 @@ class AgentRuntime:
                 f"`{preferred_chart_type}`. Honour this exact chart_type in the final JSON answer "
                 "unless the query returns no rows."
             )
+
+        if request.web_search_requested:
+            if self.settings.web_search_enabled:
+                parts.append(
+                    "## Web search explicitly enabled by the user\n"
+                    "The user turned on web search for this message. Treat the question as one "
+                    "that depends on external/public information: start with `web_search`, then "
+                    "`web_fetch` the most authoritative result pages to extract concrete facts, "
+                    "and cite the sources inline. Only skip web research if the question is "
+                    "clearly answerable from the uploaded dataset alone."
+                )
+            else:
+                parts.append(
+                    "The user requested web search for this message, but web research tools are "
+                    "disabled on this server. Answer from the local dataset only and state "
+                    "briefly that web search is currently unavailable."
+                )
 
         if session.last_result and isinstance(session.last_result, dict):
             prior_summary = json.dumps(session.last_result, ensure_ascii=False, default=str)

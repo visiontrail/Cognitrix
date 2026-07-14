@@ -1,4 +1,4 @@
-import { BarChart3, Tags, type LucideIcon } from "lucide-react";
+import { BarChart3, Globe, Tags, type LucideIcon } from "lucide-react";
 
 /**
  * Declarative registry for the multi-selectable chart-generation options that
@@ -13,7 +13,7 @@ import { BarChart3, Tags, type LucideIcon } from "lucide-react";
  * `buildGenerationOptionPayload` merges the contributions of the active set.
  */
 
-export type GenerationOptionId = "multi_chart" | "data_labels";
+export type GenerationOptionId = "multi_chart" | "data_labels" | "web_search";
 
 // Visual tone keys; the composer maps these to concrete Tailwind classes.
 export type GenerationOptionTone = "blue" | "terracotta";
@@ -23,6 +23,7 @@ export type GenerationOptionTone = "blue" | "terracotta";
 export type GenerationOptionPayload = {
   generationStrategy?: "multi_chart";
   showDataLabels?: boolean;
+  webSearch?: boolean;
 };
 
 export type GenerationOption = {
@@ -60,6 +61,16 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
     removeLabelKey: "chat.dataLabels.remove",
     hintKey: "chat.inputHintWithDataLabels",
     payload: { showDataLabels: true },
+  },
+  {
+    id: "web_search",
+    icon: Globe,
+    tone: "blue",
+    menuLabelKey: "chat.actions.webSearch",
+    chipLabelKey: "chat.webSearch.chip",
+    removeLabelKey: "chat.webSearch.remove",
+    hintKey: "chat.inputHintWithWebSearch",
+    payload: { webSearch: true },
   },
 ];
 

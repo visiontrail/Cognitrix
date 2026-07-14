@@ -29,6 +29,7 @@ describe("generation-options registry", () => {
   it("recognizes known option ids", () => {
     expect(isGenerationOptionId("multi_chart")).toBe(true);
     expect(isGenerationOptionId("data_labels")).toBe(true);
+    expect(isGenerationOptionId("web_search")).toBe(true);
     expect(isGenerationOptionId("nope")).toBe(false);
   });
 
@@ -60,6 +61,9 @@ describe("generation-options registry", () => {
       generationStrategy: "multi_chart",
       showDataLabels: true,
     });
+    expect(buildGenerationOptionPayload(setOf("web_search"))).toEqual({
+      webSearch: true,
+    });
   });
 
   it("recovers option ids from a sent payload (round-trips buildGenerationOptionPayload)", () => {
@@ -73,5 +77,7 @@ describe("generation-options registry", () => {
     ).toEqual(["multi_chart", "data_labels"]);
     // a falsey/absent data-labels flag must not be reported as selected
     expect(generationOptionIdsFromPayload({ showDataLabels: false })).toEqual([]);
+    expect(generationOptionIdsFromPayload({ webSearch: true })).toEqual(["web_search"]);
+    expect(generationOptionIdsFromPayload({ webSearch: false })).toEqual([]);
   });
 });

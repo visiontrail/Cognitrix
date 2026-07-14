@@ -110,6 +110,52 @@ def test_runtime_active_tool_names_toggle(monkeypatch, tmp_path):
     assert "save_web_research" not in disabled_runtime._active_tool_names
 
 
+def _system_text_request(*, web_search_requested: bool) -> AgentRequest:
+    return AgentRequest(
+        conversation_id="c",
+        request_id="r",
+        user_id="u1",
+        project_id="p1",
+        dataset_table="t",
+        message="compare 2024 salaries across regions",
+        role="admin",
+        department=None,
+        clearance=9,
+        web_search_requested=web_search_requested,
+    )
+
+
+def test_system_text_directive_when_user_requests_web_search(monkeypatch, tmp_path):
+    _enable_web(monkeypatch, tmp_path)
+    runtime = AgentRuntime()
+    session = AgentSessionState(conversation_id="c", agent_session_id="s")
+
+    requested = runtime._build_system_text(
+        request=_system_text_request(web_search_requested=True), session=session
+    )
+    assert "Web search explicitly enabled by the user" in requested
+
+    not_requested = runtime._build_system_text(
+        request=_system_text_request(web_search_requested=False), session=session
+    )
+    assert "Web search explicitly enabled by the user" not in not_requested
+
+
+def test_system_text_notes_unavailable_when_requested_but_disabled(monkeypatch, tmp_path):
+    set_agent_env(monkeypatch, tmp_path)  # WEB_SEARCH_ENABLED=false
+    get_settings.cache_clear()
+    clear_tool_calling_service_cache()
+    clear_agent_runtime_cache()
+    runtime = AgentRuntime()
+    session = AgentSessionState(conversation_id="c", agent_session_id="s")
+
+    text = runtime._build_system_text(
+        request=_system_text_request(web_search_requested=True), session=session
+    )
+    assert "web research tools are disabled" in text
+    assert "Web search explicitly enabled by the user" not in text
+
+
 # ---------------------------------------------------------------------------
 # save_web_research: namespace, identifiers, scale, provenance, interop
 # ---------------------------------------------------------------------------

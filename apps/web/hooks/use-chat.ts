@@ -202,6 +202,7 @@ export function useSendMessage() {
       preferredChartType,
       generationStrategy,
       showDataLabels,
+      webSearch,
       multiChartConfirmation,
     }: {
       sessionId: string;
@@ -211,6 +212,7 @@ export function useSendMessage() {
       preferredChartType?: QueryChartType;
       generationStrategy?: "multi_chart";
       showDataLabels?: boolean;
+      webSearch?: boolean;
       multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
       const workspaceId = getActiveWorkspaceIdOrThrow(t);
@@ -276,6 +278,7 @@ export function useSendMessage() {
           preferredChartType,
           generationStrategy,
           showDataLabels,
+          webSearch,
           multiChartConfirmation,
           workspaceId,
           signal: abortController.signal,
@@ -519,6 +522,7 @@ async function streamAssistantResponse({
   preferredChartType,
   generationStrategy,
   showDataLabels,
+  webSearch,
   multiChartConfirmation,
   workspaceId,
   signal,
@@ -530,6 +534,7 @@ async function streamAssistantResponse({
   preferredChartType?: QueryChartType;
   generationStrategy?: "multi_chart";
   showDataLabels?: boolean;
+  webSearch?: boolean;
   multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
   signal?: AbortSignal;
@@ -598,6 +603,7 @@ async function streamAssistantResponse({
         message: aiMessage,
         preferred_chart_type: preferredChartType ?? null,
         generation_strategy: generationStrategy ?? null,
+        web_search_requested: webSearch ?? false,
         response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),
@@ -749,7 +755,7 @@ async function streamAssistantResponse({
   const traceStatus: "ok" | "error" | "incomplete" =
     terminalReason === "final" ? "ok" : terminalReason === "error" ? "error" : "incomplete";
 
-  const generationOptions = generationOptionIdsFromPayload({ generationStrategy, showDataLabels });
+  const generationOptions = generationOptionIdsFromPayload({ generationStrategy, showDataLabels, webSearch });
 
   const specEvents = groupedSpecs.length > 0
     ? [...groupedSpecs].sort((a, b) => (a.chartIndex ?? 0) - (b.chartIndex ?? 0))

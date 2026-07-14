@@ -282,6 +282,45 @@ def test_save_web_research_requires_sources(monkeypatch, tmp_path):
     assert exc.value.code == "WEB_RESEARCH_SOURCES_REQUIRED"
 
 
+def test_web_search_success_path_returns_results(monkeypatch, tmp_path):
+    _enable_web(monkeypatch, tmp_path)
+    from apps.api import tool_calling as tool_calling_module
+    from apps.api.web_research import SearchResult
+
+    def _fake_search_web(query, *, top_k=None, settings=None):
+        return [SearchResult(title="EV Report", url="https://example.com/ev", snippet="BYD leads")]
+
+    monkeypatch.setattr(tool_calling_module, "search_web", _fake_search_web)
+    service = get_tool_calling_service()
+    result = service._tool_web_search(_tool_ctx(), {"query": "2026 H1 NEV sales", "top_k": 5})
+    assert result["count"] == 1
+    assert result["results"][0]["url"] == "https://example.com/ev"
+
+
+def test_web_fetch_success_path_returns_content(monkeypatch, tmp_path):
+    _enable_web(monkeypatch, tmp_path)
+    from apps.api import tool_calling as tool_calling_module
+
+    def _fake_fetch_page(url, *, settings=None):
+        return {
+            "url": url,
+            "title": "EV Report",
+            "content": "BYD leads the 2026 H1 ranking.",
+            "truncated": False,
+            "byte_size": 120,
+            "char_count": 30,
+        }
+
+    monkeypatch.setattr(tool_calling_module, "fetch_page", _fake_fetch_page)
+    service = get_tool_calling_service()
+    result = service._tool_web_fetch(
+        _tool_ctx(), {"url": "https://example.com/ev", "purpose": "ranking data"}
+    )
+    assert result["url"] == "https://example.com/ev"
+    assert result["content"] == "BYD leads the 2026 H1 ranking."
+    assert result["purpose"] == "ranking data"
+
+
 def test_web_tools_disabled_raise_when_invoked_directly(monkeypatch, tmp_path):
     set_agent_env(monkeypatch, tmp_path)  # disabled
     service = get_tool_calling_service()

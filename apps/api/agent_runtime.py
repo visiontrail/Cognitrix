@@ -251,7 +251,8 @@ WEB_RESEARCH_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Persist structured data you extracted from the web into the session database as a table "
                 "named web_research_<table_name>, so it can be queried, joined, and charted exactly like "
                 "uploaded data. Provenance columns (_source_url, _source_title, _retrieved_at) are added "
-                "automatically. Use this when the user will want to analyze the web data alongside their tables."
+                "automatically, and the table is registered in the workspace data catalog alongside "
+                "uploaded tables. Use this when the user will want to analyze the web data alongside their tables."
             ),
             "parameters": {
                 "type": "object",
@@ -259,6 +260,13 @@ WEB_RESEARCH_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "table_name": {
                         "type": "string",
                         "description": "snake_case base name; the real table becomes web_research_<table_name>",
+                    },
+                    "human_label": {
+                        "type": "string",
+                        "description": (
+                            "Short human-readable label for the saved table, in the user's language; "
+                            "shown in the workspace data catalog"
+                        ),
                     },
                     "columns": {
                         "type": "array",

@@ -18,7 +18,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from .agentic_ingestion.schema import initialize_sqlite_schema
 from .auth import AuthIdentity, require_permission
-from .column_metadata import enrich_column_with_metadata, load_table_column_metadata
+from .column_metadata import (
+    enrich_column_with_metadata,
+    load_table_column_metadata,
+    upsert_table_column_metadata,
+)
 from .config import get_settings
 from .data_policy import filter_schema_columns, redact_rows
 from .datasets import SAFE_IDENTIFIER_RE, get_dataset_service
@@ -31,6 +35,16 @@ BUSINESS_TYPES = ("roster", "project_progress", "attendance", "other")
 # branches on these exact values, so unknown values would be unexecutable.
 WRITE_MODES = ("update_existing", "time_partitioned_new_table", "new_table", "append_only")
 TIME_GRAINS = ("none", "month", "quarter", "year")
+# Catalog entries created by the agent's `save_web_research` tool. Web-research
+# tables reuse the existing catalog schema unchanged: free-form business_type,
+# write_mode 'new_table' (the tool CREATE OR REPLACEs the whole table) and
+# time_grain 'none'. They are never ingestion write targets.
+WEB_RESEARCH_BUSINESS_TYPE = "web_research"
+WEB_RESEARCH_PROVENANCE_COLUMNS = (
+    {"name": "_source_url", "type": "VARCHAR", "description": "Source URL"},
+    {"name": "_source_title", "type": "VARCHAR", "description": "Source title"},
+    {"name": "_retrieved_at", "type": "TIMESTAMP", "description": "Retrieved at (UTC)"},
+)
 BUSINESS_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 TABLE_NAME_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 logger = logging.getLogger("cognitrix.table_catalog")
@@ -253,6 +267,116 @@ class TableCatalogService:
                 status_code=404,
             )
 
+        return self._serialize_entry(row)
+
+    def register_web_research_entry(
+        self,
+        *,
+        workspace_id: str,
+        actor_user_id: str,
+        table_name: str,
+        human_label: str,
+        description: str,
+        columns: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Upsert a catalog entry for a `web_research_*` table.
+
+        Keyed on (workspace_id, business_type='web_research', table_name) so a
+        repeated save into the same table (CREATE OR REPLACE semantics) refreshes
+        the existing entry instead of duplicating it. Entries are never ingestion
+        write targets (is_active_target=0).
+        """
+        normalized_workspace_id = workspace_id.strip()
+        normalized_table = table_name.strip()
+        if not TABLE_NAME_PATTERN.match(normalized_table):
+            raise TableCatalogError(
+                code="CATALOG_TABLE_NAME_INVALID",
+                message="table_name must be a valid SQL identifier",
+                status_code=400,
+            )
+        normalized_label = human_label.strip()[:120] or normalized_table
+        normalized_description = description.strip()[:1000]
+        now = _utc_now()
+
+        with self._lock, self._connect() as conn:
+            self._assert_workspace_exists(conn, workspace_id=normalized_workspace_id)
+            self._ensure_user_record(conn, user_id=actor_user_id.strip())
+
+            existing = conn.execute(
+                """
+                SELECT id FROM table_catalog
+                WHERE workspace_id = ? AND business_type = ? AND table_name = ?
+                """,
+                (normalized_workspace_id, WEB_RESEARCH_BUSINESS_TYPE, normalized_table),
+            ).fetchone()
+            if existing is None:
+                catalog_id = uuid.uuid4().hex
+                conn.execute(
+                    """
+                    INSERT INTO table_catalog (
+                        id, workspace_id, table_name, human_label, business_type,
+                        write_mode, time_grain, primary_keys, match_columns,
+                        is_active_target, description, created_by, updated_by,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'new_table', 'none', '[]', '[]', 0, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        catalog_id,
+                        normalized_workspace_id,
+                        normalized_table,
+                        normalized_label,
+                        WEB_RESEARCH_BUSINESS_TYPE,
+                        normalized_description,
+                        actor_user_id.strip(),
+                        actor_user_id.strip(),
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                catalog_id = str(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE table_catalog
+                    SET human_label = ?, description = ?, updated_by = ?, updated_at = ?
+                    WHERE id = ? AND workspace_id = ?
+                    """,
+                    (
+                        normalized_label,
+                        normalized_description,
+                        actor_user_id.strip(),
+                        now,
+                        catalog_id,
+                        normalized_workspace_id,
+                    ),
+                )
+
+            if columns:
+                metadata_columns = [
+                    {"name": str(column.get("name") or ""), "type": str(column.get("type") or "")}
+                    for column in columns
+                ]
+                metadata_columns.extend(dict(column) for column in WEB_RESEARCH_PROVENANCE_COLUMNS)
+                upsert_table_column_metadata(
+                    conn,
+                    workspace_id=normalized_workspace_id,
+                    table_name=normalized_table,
+                    columns=metadata_columns,
+                    updated_at=now,
+                )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT * FROM table_catalog WHERE id = ? AND workspace_id = ?",
+                (catalog_id, normalized_workspace_id),
+            ).fetchone()
+
+        if row is None:
+            raise TableCatalogError(
+                code="CATALOG_ENTRY_NOT_FOUND",
+                message="Catalog entry not found after registration",
+                status_code=500,
+            )
         return self._serialize_entry(row)
 
     def delete_entry(self, *, workspace_id: str, catalog_id: str) -> None:

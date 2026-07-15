@@ -48,6 +48,7 @@ from .semantic import (
     get_metric_compiler,
     get_semantic_registry,
 )
+from .table_catalog import get_table_catalog_service
 from .views import SaveViewInput, ViewStorageError, get_view_storage_service
 from .workspaces import get_workspace_service
 
@@ -1244,6 +1245,15 @@ class ToolCallingService:
             ) from exc
 
         source_urls = list(dict.fromkeys(item["url"] for item in normalized_sources))
+        catalog_id = self._register_web_research_catalog_entry(
+            context=context,
+            table_name=full_table,
+            human_label=str(arguments.get("human_label") or "").strip()
+            or safe_table.replace("_", " "),
+            description="Saved by AI web research. Sources: "
+            + "; ".join(dict.fromkeys(item["title"] or item["url"] for item in normalized_sources)),
+            columns=columns,
+        )
         self._audit_web_event(
             action="save_web_research",
             context=context,
@@ -1253,6 +1263,7 @@ class ToolCallingService:
                 "row_count": len(rows),
                 "column_count": len(columns),
                 "source_domains": sorted({_url_domain(url) for url in source_urls}),
+                "catalog_registered": catalog_id is not None,
             },
         )
         return {
@@ -1261,7 +1272,43 @@ class ToolCallingService:
             "column_count": len(columns),
             "columns": column_names,
             "source_urls": source_urls,
+            "catalog_id": catalog_id,
         }
+
+    def _register_web_research_catalog_entry(
+        self,
+        *,
+        context: ToolContext,
+        table_name: str,
+        human_label: str,
+        description: str,
+        columns: list[dict[str, str]],
+    ) -> str | None:
+        """Mirror the uploaded-data behavior: expose the saved table in the
+        workspace data catalog. Best-effort — the DuckDB write already
+        succeeded, so a catalog failure (missing workspace, legacy login
+        without workspace_id, un-migrated schema) must never fail the tool."""
+        workspace_id = str(context.workspace_id or "").strip()
+        if not workspace_id:
+            return None
+        try:
+            entry = get_table_catalog_service().register_web_research_entry(
+                workspace_id=workspace_id,
+                actor_user_id=context.user_id,
+                table_name=table_name,
+                human_label=human_label,
+                description=description,
+                columns=columns,
+            )
+            return str(entry["id"])
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "web_research_catalog_register_failed workspace_id=%s table=%s",
+                workspace_id,
+                table_name,
+                exc_info=True,
+            )
+            return None
 
     @staticmethod
     def _require_web_search_enabled(settings: Any) -> None:

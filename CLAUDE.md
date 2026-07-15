@@ -156,7 +156,7 @@ DuckDB write access is restricted to the approved schema only. SQL identifiers a
 ### Data Storage
 
 All runtime data lives under `UPLOAD_DIR` (`apps/api/data/uploads/` locally):
-- `*.duckdb` — per-user/project DuckDB session files. Web-research data persisted by `save_web_research` lands here as `web_research_*` tables (namespace-isolated, with auto-appended `_source_url`/`_source_title`/`_retrieved_at` provenance columns) and is queryable/joinable by the normal BI tools
+- `*.duckdb` — per-user/project DuckDB session files. Web-research data persisted by `save_web_research` lands here as `web_research_*` tables (namespace-isolated, with auto-appended `_source_url`/`_source_title`/`_retrieved_at` provenance columns) and is queryable/joinable by the normal BI tools. Each save also best-effort registers a `table_catalog` entry (`business_type=web_research`, `write_mode=new_table`, `time_grain=none`, never an active ingestion target) plus column metadata, so the table shows up in the workspace catalog UI with data preview exactly like uploaded data; the existing catalog schema is reused unchanged
 - `state/ai_views.sqlite3` — saved views and versions
 - `state/agent_sessions.sqlite3` — resumable agent session state
 - `state/saved_prompts.sqlite3` — user-owned saved prompts (name, body, extracted variables, capability hints, usage metadata, archive state)

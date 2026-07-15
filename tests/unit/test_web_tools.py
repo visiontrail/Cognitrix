@@ -15,11 +15,13 @@ from apps.api.agent_runtime import (
     clear_agent_runtime_cache,
 )
 from apps.api.config import get_settings
+from apps.api.table_catalog import clear_table_catalog_service_cache
 from apps.api.tool_calling import (
     ToolContext,
     clear_tool_calling_service_cache,
     get_tool_calling_service,
 )
+from apps.api.workspaces import clear_workspace_service_cache
 
 from tests.agent_test_utils import set_agent_env
 
@@ -33,6 +35,8 @@ def _enable_web(monkeypatch, tmp_path, **overrides) -> None:
     get_settings.cache_clear()
     clear_tool_calling_service_cache()
     clear_agent_runtime_cache()
+    clear_workspace_service_cache()
+    clear_table_catalog_service_cache()
 
 
 def test_system_prompt_includes_web_guidance_only_when_enabled():
@@ -197,6 +201,89 @@ def test_save_web_research_persists_with_provenance(monkeypatch, tmp_path):
     )
     urls = {row.get("_source_url") for row in distinct["rows"]}
     assert urls == {"https://example.com/ev"}
+
+
+def test_save_web_research_without_workspace_skips_catalog(monkeypatch, tmp_path):
+    _enable_web(monkeypatch, tmp_path)
+    service = get_tool_calling_service()
+    result = service._tool_save_web_research(
+        _tool_ctx(),  # workspace_id=None
+        {
+            "table_name": "no_ws",
+            "columns": [{"name": "x", "type": "INTEGER"}],
+            "rows": [{"x": 1}],
+            "sources": [{"url": "https://example.com/x"}],
+        },
+    )
+    assert result["catalog_id"] is None
+
+
+def test_save_web_research_registers_catalog_entry(monkeypatch, tmp_path):
+    _enable_web(monkeypatch, tmp_path)
+    from apps.api.db_migrations import apply_migrations
+    from apps.api.table_catalog import get_table_catalog_service
+    from apps.api.workspaces import get_workspace_service
+
+    apply_migrations()  # relaxes the business_type CHECK so 'web_research' is accepted
+    workspace = get_workspace_service().create_workspace(owner_user_id="u1", name="Research WS")
+    workspace_id = workspace["workspace_id"]
+    ctx = ToolContext(
+        user_id="u1",
+        project_id="p1",
+        workspace_id=workspace_id,
+        dataset_table="",
+        role="admin",
+        department=None,
+        clearance=9,
+    )
+    service = get_tool_calling_service()
+    arguments = {
+        "table_name": "nev_top10",
+        "human_label": "新能源销量前十",
+        "columns": [
+            {"name": "brand", "type": "VARCHAR"},
+            {"name": "units", "type": "INTEGER"},
+        ],
+        "rows": [{"brand": "BYD", "units": 100}],
+        "sources": [{"url": "https://example.com/ev", "title": "EV Report"}],
+    }
+    result = service._tool_save_web_research(ctx, arguments)
+    assert result["catalog_id"]
+
+    catalog = get_table_catalog_service()
+    entries = catalog.list_entries(workspace_id=workspace_id)
+    matches = [e for e in entries if e["table_name"] == "web_research_nev_top10"]
+    assert len(matches) == 1
+    entry = matches[0]
+    assert entry["id"] == result["catalog_id"]
+    assert entry["business_type"] == "web_research"
+    assert entry["write_mode"] == "new_table"
+    assert entry["time_grain"] == "none"
+    assert entry["is_active_target"] is False
+    assert entry["human_label"] == "新能源销量前十"
+    assert "EV Report" in entry["description"]
+
+    # Repeated save into the same table refreshes the entry instead of duplicating.
+    again = service._tool_save_web_research(ctx, {**arguments, "human_label": "NEV Top 10"})
+    assert again["catalog_id"] == result["catalog_id"]
+    entries = catalog.list_entries(workspace_id=workspace_id)
+    matches = [e for e in entries if e["table_name"] == "web_research_nev_top10"]
+    assert len(matches) == 1
+    assert matches[0]["human_label"] == "NEV Top 10"
+
+    # Column metadata covers data + provenance columns for the catalog preview.
+    import sqlite3
+
+    with sqlite3.connect(catalog.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT column_name, description FROM table_column_metadata "
+            "WHERE workspace_id = ? AND table_name = ?",
+            (workspace_id, "web_research_nev_top10"),
+        ).fetchall()
+    by_name = {str(row["column_name"]): row for row in rows}
+    assert {"brand", "units", "_source_url", "_source_title", "_retrieved_at"} <= set(by_name)
+    assert by_name["_source_url"]["description"] == "Source URL"
 
 
 def test_save_web_research_rejects_bad_identifier(monkeypatch, tmp_path):

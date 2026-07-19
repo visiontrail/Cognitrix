@@ -1,6 +1,7 @@
 "use client";
 
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useAgentCanvasRunRecovery } from "@/hooks/use-agent-canvas-run";
 import { useAutoSaveWorkspace, useWorkspaceSnapshot } from "@/hooks/use-workspace";
 import { WorkspaceCanvas } from "./workspace-canvas";
 import { WorkspaceEmptyState } from "./workspace-empty-state";
@@ -11,6 +12,9 @@ export function WorkspacePanel() {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const { isLoading } = useWorkspaceSnapshot(activeWorkspaceId);
   useAutoSaveWorkspace({ enabled: Boolean(activeWorkspaceId) && !isLoading });
+  // Replay/re-attach only after the snapshot has been applied, so replayed ops
+  // are never clobbered by the initial loadSnapshot.
+  useAgentCanvasRunRecovery({ enabled: Boolean(activeWorkspaceId) && !isLoading });
 
   if (!activeWorkspaceId) {
     return <WorkspaceEmptyState />;

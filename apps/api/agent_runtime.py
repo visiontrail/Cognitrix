@@ -312,6 +312,28 @@ def _active_tool_definitions(settings: Any) -> list[dict[str, Any]]:
     return list(AGENT_TOOL_DEFINITIONS)
 
 
+def build_sdk_provider_env(settings: Any) -> tuple[dict[str, str], str | None]:
+    """Provider env vars + model for a ClaudeAgentOptions, shared by every
+    SDK-backed runtime (Q&A turns and agent-canvas runs)."""
+    env: dict[str, str] = {
+        "API_TIMEOUT_MS": str(settings.api_timeout_ms),
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    }
+    auth_token = (settings.anthropic_auth_token or settings.ai_api_key).strip()
+    if auth_token:
+        env["ANTHROPIC_API_KEY"] = auth_token
+        env["ANTHROPIC_AUTH_TOKEN"] = auth_token
+    if settings.anthropic_base_url.strip():
+        env["ANTHROPIC_BASE_URL"] = settings.anthropic_base_url.strip()
+    model = settings.ai_model.strip() or None
+    if model:
+        env["ANTHROPIC_MODEL"] = model
+        env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = (
+            settings.anthropic_default_haiku_model.strip() or model
+        )
+    return env, model
+
+
 GROUNDING_TOOL_NAMES = frozenset(
     {
         "list_tables",
@@ -2214,23 +2236,7 @@ class AgentRuntime:
             version="1.0.0",
             tools=self._build_sdk_tools(run_context=run_context),
         )
-        env: dict[str, str] = {
-            "API_TIMEOUT_MS": str(self.settings.api_timeout_ms),
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-        }
-        auth_token_source = self.settings.anthropic_auth_token or self.settings.ai_api_key
-        auth_token = auth_token_source.strip()
-        if auth_token:
-            env["ANTHROPIC_API_KEY"] = auth_token
-            env["ANTHROPIC_AUTH_TOKEN"] = auth_token
-        if self.settings.anthropic_base_url.strip():
-            env["ANTHROPIC_BASE_URL"] = self.settings.anthropic_base_url.strip()
-        model = self.settings.ai_model.strip() or None
-        if model:
-            env["ANTHROPIC_MODEL"] = model
-            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = (
-                self.settings.anthropic_default_haiku_model.strip() or model
-            )
+        env, model = build_sdk_provider_env(self.settings)
         resume_session = (
             session.agent_session_id
             if session.turn_count > 0 and session.agent_session_id and not force_fresh_session

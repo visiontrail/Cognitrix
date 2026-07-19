@@ -36,6 +36,15 @@ def parse_args() -> argparse.Namespace:
         "and assigned to WriteIngestionAgent via /admin/skills (requires the "
         "smoke user to be a superadmin).",
     )
+    # Agent canvas mode — long-horizon dashboard generation. Requires
+    # AGENT_CANVAS_MODE_ENABLED=true on the API and a live model provider.
+    parser.add_argument(
+        "--with-agent-canvas",
+        action="store_true",
+        help="After the chat step, run the agent-canvas flow end-to-end: "
+        "outline → approve → multi-chart run → page persisted in the canvas "
+        "snapshot → run-level undo removes the page.",
+    )
     return parser.parse_args()
 
 
@@ -184,6 +193,152 @@ def verify_xlsx_skill_bootstrap(
         (xlsx.get("sha256") or "")[:12],
         sep="",
     )
+
+
+def verify_agent_canvas_flow(
+    client: httpx.Client,
+    api_base_url: str,
+    auth_headers: dict[str, str],
+    *,
+    workspace_id: str,
+    dataset_table: str,
+) -> dict[str, Any]:
+    """Section 13 — agent canvas mode: outline → approve → run → snapshot → undo."""
+    capabilities = client.get(f"{api_base_url}/chat/capabilities", headers=auth_headers)
+    capabilities.raise_for_status()
+    if not capabilities.json().get("agent_canvas_mode_enabled"):
+        raise RuntimeError(
+            "--with-agent-canvas requires AGENT_CANVAS_MODE_ENABLED=true on the API"
+        )
+
+    conversation_id = f"smoke-agent-{int(time.time())}"
+    outline_response = client.post(
+        f"{api_base_url}/chat/stream",
+        headers=auth_headers,
+        json={
+            "user_id": "smoke-hr",
+            "project_id": "smoke-project",
+            "workspace_id": workspace_id,
+            "dataset_table": dataset_table,
+            "message": "构建一个包含 3 个图表的员工数据仪表盘（总人数、各部门人数、入职年份分布）",
+            "conversation_id": conversation_id,
+            "agent_mode": True,
+            "canvas_format": "web-design",
+        },
+        timeout=300.0,
+    )
+    outline_response.raise_for_status()
+    outline_events = parse_sse(outline_response.text)
+    confirmations = [
+        event["data"]
+        for event in outline_events
+        if event["event"] == "confirmation_required"
+        and isinstance(event["data"], dict)
+        and event["data"].get("confirmation_type") == "dashboard_outline"
+    ]
+    if not confirmations:
+        raise RuntimeError(f"agent canvas outline did not pause for approval: {outline_events[-3:]}")
+    confirmation = confirmations[-1]
+
+    run_response = client.post(
+        f"{api_base_url}/chat/stream",
+        headers=auth_headers,
+        json={
+            "user_id": "smoke-hr",
+            "project_id": "smoke-project",
+            "workspace_id": workspace_id,
+            "dataset_table": dataset_table,
+            "message": None,
+            "conversation_id": conversation_id,
+            "agent_run_confirmation": {
+                "confirmation_id": confirmation["confirmation_id"],
+                "action": "confirm",
+            },
+        },
+        timeout=900.0,
+    )
+    run_response.raise_for_status()
+    run_events = parse_sse(run_response.text)
+    canvas_ops = [event["data"] for event in run_events if event["event"] == "canvas_op"]
+    finals = [event["data"] for event in run_events if event["event"] == "final"]
+    if not finals or not isinstance(finals[-1], dict):
+        raise RuntimeError("agent canvas run produced no final event")
+    final_payload = finals[-1]
+    if final_payload.get("status") not in {"completed", "partial"}:
+        raise RuntimeError(f"agent canvas run did not finish: {final_payload}")
+    placed_count = int(final_payload.get("placed_count", 0))
+    if placed_count < 1:
+        raise RuntimeError(f"agent canvas run placed no charts: {final_payload}")
+    page_id = str(final_payload.get("page_id", ""))
+    run_id = str(final_payload.get("run_id", ""))
+    if not page_id or not canvas_ops or canvas_ops[0].get("op_type") != "create_page":
+        raise RuntimeError("agent canvas run missing create_page op / page_id")
+
+    # Persist the run page through the client's snapshot path (the server never
+    # writes the canvas snapshot itself), then verify it round-trips.
+    snapshot = {
+        "workspaceId": workspace_id,
+        "viewport": {"x": 0, "y": 0, "zoom": 1},
+        "canvasFormat": {"id": "web-design"},
+        "webDesign": {
+            "grid": {"columns": 12, "rowUnit": 72, "rows": []},
+            "zones": [],
+            "sidebar": [
+                {"id": page_id, "label": "Agent Dashboard", "pageId": page_id, "anchorRowId": "row-1", "children": []}
+            ],
+            "pages": [
+                {"id": page_id, "title": "Agent Dashboard", "grid": {"columns": 12, "rowUnit": 72, "rows": []}, "zones": [], "textZones": []}
+            ],
+            "activePageId": page_id,
+            "preview": False,
+        },
+    }
+    put_snapshot = client.put(
+        f"{api_base_url}/workspaces/{workspace_id}/canvas-snapshot",
+        headers=auth_headers,
+        json={"snapshot": snapshot},
+    )
+    put_snapshot.raise_for_status()
+    get_snapshot = client.get(
+        f"{api_base_url}/workspaces/{workspace_id}/canvas-snapshot",
+        headers=auth_headers,
+    )
+    get_snapshot.raise_for_status()
+    stored = get_snapshot.json().get("snapshot") or {}
+    stored_pages = [page.get("id") for page in (stored.get("webDesign") or {}).get("pages", [])]
+    if page_id not in stored_pages:
+        raise RuntimeError("run page missing from persisted canvas snapshot")
+
+    # Run-level undo = delete the run's page (client-side cascade → snapshot save).
+    undo_snapshot = dict(snapshot)
+    undo_snapshot["webDesign"] = {
+        **snapshot["webDesign"],
+        "sidebar": [],
+        "pages": [],
+        "activePageId": None,
+    }
+    put_undo = client.put(
+        f"{api_base_url}/workspaces/{workspace_id}/canvas-snapshot",
+        headers=auth_headers,
+        json={"snapshot": undo_snapshot},
+    )
+    put_undo.raise_for_status()
+    get_after_undo = client.get(
+        f"{api_base_url}/workspaces/{workspace_id}/canvas-snapshot",
+        headers=auth_headers,
+    )
+    get_after_undo.raise_for_status()
+    after_undo = get_after_undo.json().get("snapshot") or {}
+    remaining_pages = [page.get("id") for page in (after_undo.get("webDesign") or {}).get("pages", [])]
+    if page_id in remaining_pages:
+        raise RuntimeError("run page still present in snapshot after undo")
+
+    return {
+        "agent_run_id": run_id,
+        "agent_run_status": final_payload.get("status"),
+        "agent_charts_placed": placed_count,
+        "agent_canvas_ops": len(canvas_ops),
+    }
 
 
 def main() -> int:
@@ -479,6 +634,18 @@ def main() -> int:
             "stream_events": len(stream_events),
             "portal_stream_events": len(portal_events),
         }
+
+        if args.with_agent_canvas:
+            summary.update(
+                verify_agent_canvas_flow(
+                    client,
+                    api_base_url,
+                    auth_headers,
+                    workspace_id=workspace_id,
+                    dataset_table=dataset_table,
+                )
+            )
+
         print(json.dumps(summary, ensure_ascii=False))
 
     return 0

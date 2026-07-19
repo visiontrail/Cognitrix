@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   AlignLeft,
+  Bot,
   Check,
   Eye,
   GripVertical,
@@ -19,7 +20,10 @@ import {
   Heading2,
   ImageDown,
   Plus,
+  RotateCcw,
+  Square,
   Trash2,
+  TriangleAlert,
   Type,
   Users,
 } from "lucide-react";
@@ -31,6 +35,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
+import { retryAgentRunItem, stopAgentRun } from "@/lib/chat/agent-canvas";
+import { AGENT_ERROR_CHART_TYPE } from "@/lib/workspace/agent-canvas-layout";
+import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
+import { toChartAsset } from "@/hooks/use-chat";
+import { useUIStore } from "@/stores/ui-store";
 import { useI18n } from "@/lib/i18n/context";
 import {
   GRID_COLS,
@@ -87,14 +96,50 @@ export function WebDesignCanvas() {
     s.workspaces.find((w) => w.id === activeWorkspaceId)?.role ?? "viewer"
   );
   const canEdit = userWorkspaceRole === "owner" || userWorkspaceRole === "editor";
+  // Soft lock (agent canvas mode): while a run is building a page in this
+  // workspace, user editing is disabled and a banner offers a stop control.
+  const activeAgentRun = useUIStore((s) => s.activeAgentRun);
+  const clearAgentRun = useUIStore((s) => s.clearAgentRun);
+  const agentLocked = Boolean(activeAgentRun && activeAgentRun.workspaceId === activeWorkspaceId);
+  const [stopping, setStopping] = useState(false);
+
+  const handleStopRun = async () => {
+    if (!activeAgentRun || stopping) return;
+    setStopping(true);
+    try {
+      const status = await stopAgentRun(activeAgentRun.runId);
+      // The run finalizes between tool calls; terminal statuses release the
+      // lock here even when no live stream is attached to observe the final.
+      if (status && status !== "running" && status !== "awaiting_approval") {
+        clearAgentRun(activeAgentRun.runId);
+      }
+    } finally {
+      setStopping(false);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 bg-[#f7f4eb] text-[#2f332f] dark:bg-[#111115] dark:text-white">
       <main className="flex min-w-0 flex-1 flex-col">
+        {agentLocked && (
+          <div
+            data-testid="agent-run-banner"
+            className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d97757]/40 bg-[#d97757]/10 px-4 py-2"
+          >
+            <p className="flex items-center gap-2 text-sm font-medium text-[#8a4a2f] dark:text-[#f4c98f]">
+              <Bot className="h-4 w-4 animate-pulse" />
+              {t("workspace.webDesign.agentLockBanner")}
+            </p>
+            <Button variant="outline" size="sm" onClick={handleStopRun} disabled={stopping}>
+              <Square className="h-3.5 w-3.5" />
+              {t("workspace.webDesign.agentLockStop")}
+            </Button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#d8d1c1] bg-[#fffdf7] px-4 py-2 dark:border-white/10 dark:bg-[#1c1c38]/90">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold">{t("workspace.webDesign.title")}</span>
-            {!layout.preview && (
+            {!layout.preview && !agentLocked && (
               <>
                 <AddTextZoneMenu onAdd={addTextZone} t={t} />
                 <span className="hidden text-xs text-[#8b8577] sm:inline dark:text-gray-400">
@@ -127,7 +172,13 @@ export function WebDesignCanvas() {
               )}
               style={{ maxWidth: CANVAS_MAX_WIDTH }}
             >
-              <FluidGridEditor key={activePage.id} page={activePage} nodes={nodes} preview={layout.preview} />
+              <FluidGridEditor
+                key={activePage.id}
+                page={activePage}
+                nodes={nodes}
+                preview={layout.preview}
+                locked={agentLocked}
+              />
             </div>
           </div>
         </div>
@@ -149,10 +200,13 @@ function FluidGridEditor({
   page,
   nodes,
   preview,
+  locked = false,
 }: {
   page: WebDesignPage;
   nodes: WorkspaceNode[];
   preview: boolean;
+  /** Agent-run soft lock: render like preview (no edit affordances) but keep the editor frame. */
+  locked?: boolean;
 }) {
   const { t } = useI18n();
   const moveBlock = useWorkspaceStore((s) => s.moveWebDesignBlock);
@@ -202,7 +256,7 @@ function FluidGridEditor({
 
   const beginDrag = useCallback(
     (event: ReactPointerEvent<HTMLElement>, id: string, mode: DragMode) => {
-      if (preview) return;
+      if (preview || locked) return;
       const item = committedItems.find((entry) => entry.id === id);
       if (!item) return;
       event.preventDefault();
@@ -223,7 +277,7 @@ function FluidGridEditor({
         preview: committedItems.map((entry) => ({ ...entry })),
       });
     },
-    [preview, committedItems, xPx, yPx, wPx, hPx]
+    [preview, locked, committedItems, xPx, yPx, wPx, hPx]
   );
 
   const onDragMove = useCallback(
@@ -286,7 +340,7 @@ function FluidGridEditor({
 
   const handleBlockKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>, item: LayoutItem) => {
-      if (preview || event.target !== event.currentTarget) return;
+      if (preview || locked || event.target !== event.currentTarget) return;
       const step = 1;
       const resizeKeys = event.shiftKey;
       let handled = true;
@@ -310,7 +364,7 @@ function FluidGridEditor({
       }
       if (handled) event.preventDefault();
     },
-    [preview, moveBlock, resizeBlock, removeZone, removeTextZone]
+    [preview, locked, moveBlock, resizeBlock, removeZone, removeTextZone]
   );
 
   const dragging = Boolean(drag);
@@ -378,12 +432,23 @@ function FluidGridEditor({
         const rectPx = isActive && drag
           ? drag.ghost
           : { left: xPx(item.x), top: yPx(item.y), width: wPx(item.w), height: hPx(item.h) };
+        if (node.data.chartType === AGENT_ERROR_CHART_TYPE) {
+          return (
+            <AgentErrorBlock
+              key={zone.id}
+              node={node}
+              rectPx={rectPx}
+              preview={preview || locked}
+              onRemove={() => removeZone(zone.id)}
+            />
+          );
+        }
         return (
           <ChartBlock
             key={zone.id}
             item={item}
             node={node}
-            preview={preview}
+            preview={preview || locked}
             active={isActive}
             rectPx={rectPx}
             chartHeight={hPx(item.h) - CHART_HEADER_PX}
@@ -407,7 +472,7 @@ function FluidGridEditor({
             key={zone.id}
             item={item}
             zone={zone}
-            preview={preview}
+            preview={preview || locked}
             active={isActive}
             rectPx={rectPx}
             onPointerDownMove={(event) => beginDrag(event, zone.id, "move")}
@@ -586,6 +651,98 @@ function ChartBlock({
           onPointerDown={onPointerDownResize}
         />
       )}
+    </section>
+  );
+}
+
+/** Parse `agent-block-<run_id>-<seq>` back into its retry coordinates. */
+function parseAgentBlockId(blockId: string): { runId: string; seq: number } | null {
+  if (!blockId.startsWith("agent-block-")) return null;
+  const rest = blockId.slice("agent-block-".length);
+  const lastDash = rest.lastIndexOf("-");
+  if (lastDash <= 0) return null;
+  const runId = rest.slice(0, lastDash);
+  const seq = Number(rest.slice(lastDash + 1));
+  if (!runId || !Number.isFinite(seq)) return null;
+  return { runId, seq };
+}
+
+/**
+ * Retryable error placeholder for a failed agent-run chart item (design/spec:
+ * canvas-op-streaming). Retry re-executes only that item server-side; on
+ * success the returned op replaces this placeholder in place.
+ */
+function AgentErrorBlock({
+  node,
+  rectPx,
+  preview,
+  onRemove,
+}: {
+  node: WorkspaceNode & { data: ChartNodeData };
+  rectPx: { left: number; top: number; width: number; height: number };
+  preview: boolean;
+  onRemove: () => void;
+}) {
+  const { t } = useI18n();
+  const [retrying, setRetrying] = useState(false);
+  const retryTarget = parseAgentBlockId(node.data.assetId);
+
+  const handleRetry = async () => {
+    if (!retryTarget || retrying) return;
+    setRetrying(true);
+    try {
+      const op = await retryAgentRunItem(retryTarget.runId, retryTarget.seq);
+      if (op && op.opType === "place_chart") {
+        applyAgentCanvasWireOp(op, {
+          toAsset: (rawSpec, meta) =>
+            toChartAsset(rawSpec, {
+              sessionId: "",
+              messageId: retryTarget.runId,
+              prompt: meta.title,
+              assetId: meta.assetId,
+              title: meta.title,
+            }),
+        });
+        toast.success(t("workspace.webDesign.agentError.retrySuccess"));
+      } else {
+        toast.error(t("workspace.webDesign.agentError.retryFailed"));
+      }
+    } catch {
+      toast.error(t("workspace.webDesign.agentError.retryFailed"));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <section
+      data-testid="agent-error-placeholder"
+      aria-label={t("workspace.webDesign.agentError.aria", { title: node.data.title })}
+      className="absolute overflow-hidden rounded-md border border-dashed border-red-300 bg-red-50/70 dark:border-red-500/40 dark:bg-red-950/30"
+      style={blockPositionStyle(rectPx, false)}
+    >
+      <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-center">
+        <TriangleAlert className="h-5 w-5 text-red-400" />
+        <p className="max-w-full truncate text-sm font-medium text-red-700 dark:text-red-300">
+          {node.data.title}
+        </p>
+        <p className="line-clamp-2 max-w-full text-xs text-red-500/90 dark:text-red-400/80">
+          {node.data.spec.subtitle || t("workspace.webDesign.agentError.defaultMessage")}
+        </p>
+        {!preview && (
+          <div className="mt-1 flex items-center gap-1.5">
+            {retryTarget && (
+              <Button size="sm" variant="outline" onClick={handleRetry} disabled={retrying}>
+                <RotateCcw className={cn("h-3.5 w-3.5", retrying && "animate-spin")} />
+                {t("workspace.webDesign.agentError.retry")}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={onRemove}>
+              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+            </Button>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

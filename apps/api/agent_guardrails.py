@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .agent_canvas import CANVAS_TOOL_NAMES, AgentCanvasError, validate_canvas_tool_arguments
 from .config import get_settings
 from .data_policy import forbidden_sensitive_columns
 
@@ -54,6 +55,11 @@ class AgentGuardrails:
         self.max_sql_scan_rows = settings.agent_max_sql_scan_rows
         self.web_search_enabled = bool(settings.web_search_enabled)
         self.max_web_calls_per_turn = int(settings.web_search_max_calls_per_turn)
+        self.agent_canvas_mode_enabled = bool(settings.agent_canvas_mode_enabled)
+        self.agent_mode_max_charts = int(settings.agent_mode_max_charts)
+        # Sections + text blocks share one proportional cap so a drifting model
+        # cannot flood the page with headers even while staying under the chart cap.
+        self.agent_mode_max_blocks = 2 * self.agent_mode_max_charts
         base_tools = (
             "list_tables",
             "describe_table",
@@ -69,10 +75,21 @@ class AgentGuardrails:
         self._allowed_tools = (
             base_tools + WEB_RESEARCH_TOOLS if self.web_search_enabled else base_tools
         )
+        # Canvas tools are admitted only for agent-mode runs (and only when the
+        # feature flag is on); a normal Q&A turn rejects them like unknown tools.
+        self._agent_mode_allowed_tools = (
+            self._allowed_tools + CANVAS_TOOL_NAMES
+            if self.agent_canvas_mode_enabled
+            else self._allowed_tools
+        )
 
     @property
     def allowed_tools(self) -> tuple[str, ...]:
         return self._allowed_tools
+
+    @property
+    def agent_mode_allowed_tools(self) -> tuple[str, ...]:
+        return self._agent_mode_allowed_tools
 
     @staticmethod
     def is_network_tool(tool_name: str) -> bool:
@@ -107,19 +124,50 @@ class AgentGuardrails:
                     message=f"Access to sensitive field '{column}' is not allowed for this role.",
                 )
 
+    def enforce_canvas_chart_budget(self, placed_charts: int) -> None:
+        """Reject a place_chart call once the per-run chart budget is spent."""
+        if placed_charts >= self.agent_mode_max_charts:
+            raise AgentGuardrailError(
+                code="AGENT_MODE_CHART_BUDGET_EXCEEDED",
+                message=(
+                    f"The run's chart budget is exhausted ({self.agent_mode_max_charts} charts). "
+                    "Stop placing charts and call finish_dashboard now."
+                ),
+            )
+
+    def enforce_canvas_block_budget(self, placed_blocks: int) -> None:
+        """Reject a section/text op once the proportional block budget is spent."""
+        if placed_blocks >= self.agent_mode_max_blocks:
+            raise AgentGuardrailError(
+                code="AGENT_MODE_BLOCK_BUDGET_EXCEEDED",
+                message=(
+                    f"The run's section/text budget is exhausted ({self.agent_mode_max_blocks} blocks). "
+                    "Stop adding sections or text and call finish_dashboard now."
+                ),
+            )
+
     def validate_tool_call(
         self,
         *,
         tool_name: str,
         arguments: dict[str, Any],
         context: AgentGuardrailContext,
+        agent_mode: bool = False,
     ) -> None:
         _ = context
-        if tool_name not in self._allowed_tools:
+        allowed = self._agent_mode_allowed_tools if agent_mode else self._allowed_tools
+        if tool_name not in allowed:
             raise AgentGuardrailError(
                 code="TOOL_NOT_ALLOWED",
                 message=f"Tool '{tool_name}' is outside the allowed BI surface.",
             )
+
+        if tool_name in CANVAS_TOOL_NAMES:
+            try:
+                validate_canvas_tool_arguments(tool_name, arguments)
+            except AgentCanvasError as exc:
+                raise AgentGuardrailError(code=exc.code, message=exc.message) from exc
+            return
 
         if tool_name != "execute_readonly_sql":
             return

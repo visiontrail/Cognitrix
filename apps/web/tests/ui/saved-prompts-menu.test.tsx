@@ -26,6 +26,10 @@ vi.mock("../../hooks/use-workspace-columns", () => ({
   useWorkspaceColumns: () => [],
 }));
 
+vi.mock("../../hooks/use-backend-capabilities", () => ({
+  useBackendCapabilities: () => ({ agentCanvasModeEnabled: false, webSearchEnabled: true }),
+}));
+
 vi.mock("../../hooks/use-saved-prompts", () => ({
   useSavedPrompts: () => ({ data: savedPromptsRef.current, isLoading: false, isError: false }),
   useMarkSavedPromptUsed: () => ({ mutate: markUsedMutate }),

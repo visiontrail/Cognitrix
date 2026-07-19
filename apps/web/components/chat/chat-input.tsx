@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { BookMarked, ChevronRight, FileSpreadsheet, Plus, Send, Square, X } from "lucide-react";
+import { BookMarked, ChevronRight, FileSpreadsheet, LayoutDashboard, Plus, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { stopChatResponse, useConfirmIngestionSetup, useSendMessage } from "@/hooks/use-chat";
+import { useBackendCapabilities } from "@/hooks/use-backend-capabilities";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceColumns, type ColumnMentionItem } from "@/hooks/use-workspace-columns";
 import { cn } from "@/lib/utils";
@@ -88,7 +89,23 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const recentPromptsQuery = useSavedPrompts({ limit: 5 }, actionMenuOpen && savedPromptsSubmenuOpen);
   const recentPrompts = recentPromptsQuery.data ?? [];
   const chartOptions = useMemo(() => getQueryChartTypeOptions(locale), [locale]);
+  const capabilities = useBackendCapabilities();
+  // Agent mode is offered only when the backend reports the feature flag; a
+  // disabled deployment renders no toggle at all (agent-canvas-mode spec).
+  const availableOptions = useMemo(
+    () =>
+      GENERATION_OPTIONS.filter(
+        (option) => option.id !== "agent_canvas" || capabilities.agentCanvasModeEnabled
+      ),
+    [capabilities.agentCanvasModeEnabled]
+  );
   const activeOptions = useMemo(() => selectedGenerationOptions(selectedOptions), [selectedOptions]);
+  const canvasFormatId = useWorkspaceStore((s) => s.canvasFormat.id);
+  const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
+  const agentCanvasSelected = selectedOptions.has("agent_canvas");
+  // Agent mode v1 operates on the web-design canvas only: prompt a one-click
+  // switch instead of letting the backend reject the turn.
+  const agentFormatMismatch = agentCanvasSelected && canvasFormatId !== "web-design";
   const columns = useWorkspaceColumns(activeWorkspaceId);
   const approvalOptions = useMemo(
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
@@ -158,6 +175,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const handleSubmit = useCallback(() => {
     const content = composerText.trim();
     if ((!content && !selectedFile) || isSending || inputLockedByApproval) return;
+    if (agentFormatMismatch) return;
     const chartType = resolveSelectedChartType({
       explicitSelection: selectedChartType,
       text: content,
@@ -185,6 +203,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       textareaRef.current?.focus();
     });
   }, [
+    agentFormatMismatch,
     composerText,
     inputLockedByApproval,
     isSending,
@@ -542,6 +561,26 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           </div>
         ) : null}
 
+        {agentFormatMismatch ? (
+          <div
+            data-testid="agent-canvas-format-prompt"
+            className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-comfortable border border-terracotta/30 bg-terracotta/10 px-3 py-2"
+          >
+            <p className="flex items-center gap-1.5 text-caption text-charcoal-warm">
+              <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-terracotta" />
+              {t("chat.agentCanvas.switchFormatPrompt")}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setCanvasFormat({ id: "web-design" })}
+            >
+              {t("chat.agentCanvas.switchFormatAction")}
+            </Button>
+          </div>
+        ) : null}
+
         <div className="flex items-center gap-2">
           <input
             ref={fileInputRef}
@@ -589,7 +628,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                   <FileSpreadsheet className="h-4 w-4 shrink-0 text-stone-gray" />
                   <span>{t("chat.actions.attachFile")}</span>
                 </button>
-                {GENERATION_OPTIONS.map((option) => {
+                {availableOptions.map((option) => {
                   const Icon = option.icon;
                   const checked = selectedOptions.has(option.id);
                   return (

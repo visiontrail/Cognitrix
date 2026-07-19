@@ -17,8 +17,15 @@ from pydantic import BaseModel, Field
 
 from urllib.parse import urlparse
 
+from .agent_canvas import (
+    AgentCanvasError,
+    block_id_for,
+    get_agent_canvas_run_store,
+    validate_canvas_tool_arguments,
+)
 from .agent_logging import format_agent_debug_blocks
 from .audit import get_audit_logger
+from .chart_strategy import ChartStrategyRouter
 from .column_metadata import enrich_column_with_metadata, load_table_column_metadata
 from .config import get_settings
 from .web_research import WebResearchError, fetch_page, search_web
@@ -50,6 +57,7 @@ from .semantic import (
 )
 from .table_catalog import get_table_catalog_service
 from .views import SaveViewInput, ViewStorageError, get_view_storage_service
+from .workspace_state import get_workspace_state_store
 from .workspaces import get_workspace_service
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -132,6 +140,10 @@ class ToolCall(BaseModel):
         "web_search",
         "web_fetch",
         "save_web_research",
+        "add_section",
+        "add_text_block",
+        "place_chart",
+        "finish_dashboard",
     ]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -222,7 +234,12 @@ class ToolCallingService:
             "web_search": self._tool_web_search,
             "web_fetch": self._tool_web_fetch,
             "save_web_research": self._tool_save_web_research,
+            "add_section": self._tool_add_section,
+            "add_text_block": self._tool_add_text_block,
+            "place_chart": self._tool_place_chart,
+            "finish_dashboard": self._tool_finish_dashboard,
         }
+        self.chart_router = ChartStrategyRouter()
 
         self._tool_specs: dict[str, dict[str, Any]] = {
             "list_tables": {"readOnlyHint": True},
@@ -238,6 +255,10 @@ class ToolCallingService:
             "web_search": {"readOnlyHint": True},
             "web_fetch": {"readOnlyHint": True},
             "save_web_research": {"readOnlyHint": False},
+            "add_section": {"readOnlyHint": False},
+            "add_text_block": {"readOnlyHint": False},
+            "place_chart": {"readOnlyHint": False},
+            "finish_dashboard": {"readOnlyHint": False},
         }
 
     def invoke(self, request: ToolCallRequest) -> ToolCallResponse:
@@ -1309,6 +1330,286 @@ class ToolCallingService:
                 exc_info=True,
             )
             return None
+
+    # ------------------------------------------------------------------
+    # Agent canvas tools (add_section / add_text_block / place_chart /
+    # finish_dashboard). Only callable during an agent-mode run: the runtime
+    # injects the `_agent_run` context; without it (or with the feature flag
+    # off) every call is rejected. Every op is appended to the run's op log
+    # BEFORE the tool returns, so a disconnected client can always replay it.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _require_agent_canvas_run(arguments: dict[str, Any]) -> dict[str, Any]:
+        if not get_settings().agent_canvas_mode_enabled:
+            raise ToolExecutionError(
+                code="AGENT_CANVAS_MODE_DISABLED",
+                message="Agent canvas mode is disabled (AGENT_CANVAS_MODE_ENABLED=false).",
+                retryable=False,
+            )
+        run_context = arguments.get("_agent_run")
+        if not isinstance(run_context, dict) or not str(run_context.get("run_id") or "").strip():
+            raise ToolExecutionError(
+                code="AGENT_CANVAS_RUN_REQUIRED",
+                message="Canvas tools are only available during an agent-mode dashboard run.",
+                retryable=False,
+            )
+        return run_context
+
+    @staticmethod
+    def _canvas_model_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in arguments.items() if not key.startswith("_")}
+
+    @staticmethod
+    def _validate_canvas_arguments(tool_name: str, model_arguments: dict[str, Any]) -> None:
+        try:
+            validate_canvas_tool_arguments(tool_name, model_arguments)
+        except AgentCanvasError as exc:
+            raise ToolExecutionError(code=exc.code, message=exc.message, retryable=False) from exc
+
+    def _audit_canvas_op(
+        self,
+        *,
+        context: ToolContext,
+        run_id: str,
+        op_type: str,
+        status: str,
+        duration_ms: int,
+    ) -> None:
+        # Metadata only — never chart titles, SQL, text content, or data values.
+        self._audit_web_event(
+            action="agent_canvas_op",
+            context=context,
+            status=status,
+            detail={
+                "run_id": run_id,
+                "op_type": op_type,
+                "duration_ms": duration_ms,
+            },
+        )
+
+    def _tool_add_section(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        run_context = self._require_agent_canvas_run(arguments)
+        model_arguments = self._canvas_model_arguments(arguments)
+        self._validate_canvas_arguments("add_section", model_arguments)
+
+        run_id = str(run_context["run_id"])
+        page_id = str(run_context.get("page_id") or "")
+        title = str(model_arguments["title"]).strip()[:120]
+        op = get_agent_canvas_run_store().append_op(
+            run_id=run_id,
+            op_type="add_section",
+            payload=lambda seq: {
+                "block_id": block_id_for(run_id, seq),
+                "section_id": block_id_for(run_id, seq),
+                "page_id": page_id,
+                "title": title,
+            },
+        )
+        self._audit_canvas_op(
+            context=context,
+            run_id=run_id,
+            op_type="add_section",
+            status="success",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        return {
+            "status": "ok",
+            "section_id": op["payload"]["section_id"],
+            "op": op,
+        }
+
+    def _tool_add_text_block(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        run_context = self._require_agent_canvas_run(arguments)
+        model_arguments = self._canvas_model_arguments(arguments)
+        self._validate_canvas_arguments("add_text_block", model_arguments)
+
+        run_id = str(run_context["run_id"])
+        page_id = str(run_context.get("page_id") or "")
+        content = str(model_arguments["content"]).strip()[:2000]
+        style = str(model_arguments.get("style") or "body").strip()
+        section_id = str(model_arguments.get("section_id") or "").strip()
+        op = get_agent_canvas_run_store().append_op(
+            run_id=run_id,
+            op_type="add_text_block",
+            payload=lambda seq: {
+                "block_id": block_id_for(run_id, seq),
+                "section_id": section_id,
+                "page_id": page_id,
+                "content": content,
+                "style": style,
+            },
+        )
+        self._audit_canvas_op(
+            context=context,
+            run_id=run_id,
+            op_type="add_text_block",
+            status="success",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        return {
+            "status": "ok",
+            "block_id": op["payload"]["block_id"],
+            "op": op,
+        }
+
+    def _tool_place_chart(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        run_context = self._require_agent_canvas_run(arguments)
+        model_arguments = self._canvas_model_arguments(arguments)
+        self._validate_canvas_arguments("place_chart", model_arguments)
+
+        run_id = str(run_context["run_id"])
+        page_id = str(run_context.get("page_id") or "")
+        workspace_id = str(context.workspace_id or run_context.get("workspace_id") or "").strip()
+        title = str(model_arguments["title"]).strip()[:120]
+        chart_type = str(model_arguments["chart_type"]).strip() or "bar"
+        size_preset = str(model_arguments["size_preset"]).strip()
+        section_id = str(model_arguments.get("section_id") or "").strip()
+        description = str(model_arguments.get("description") or "").strip()
+        replaces_block_id = str(arguments.get("_replaces_block_id") or "").strip() or None
+        store = get_agent_canvas_run_store()
+
+        sql = str(model_arguments.get("sql") or "").strip()
+        try:
+            if sql:
+                max_rows = min(200, int(get_settings().agent_max_sql_rows))
+                query_result = self._tool_execute_readonly_sql(
+                    context, {"sql": sql, "max_rows": max_rows}
+                )
+            else:
+                query_result = self._tool_run_semantic_query(
+                    context,
+                    {
+                        "metric": model_arguments.get("metric"),
+                        "group_by": model_arguments.get("group_by") or [],
+                        "filters": model_arguments.get("filters") or [],
+                    },
+                )
+        except ToolExecutionError as exc:
+            # Failure isolation (design/spec): the failed item becomes a visible,
+            # retryable error placeholder and the run continues with the next item.
+            op = store.append_op(
+                run_id=run_id,
+                op_type="error_placeholder",
+                payload=lambda seq: {
+                    "block_id": replaces_block_id or block_id_for(run_id, seq),
+                    "section_id": section_id,
+                    "page_id": page_id,
+                    "title": title,
+                    "chart_type": chart_type,
+                    "size_preset": size_preset,
+                    "error": {"code": exc.code, "message": exc.message},
+                    "args": model_arguments,
+                },
+            )
+            self._audit_canvas_op(
+                context=context,
+                run_id=run_id,
+                op_type="error_placeholder",
+                status="failed",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
+            return {
+                "status": "error_placeholder",
+                "block_id": op["payload"]["block_id"],
+                "section_id": section_id,
+                "title": title,
+                "error": {"code": exc.code, "message": exc.message},
+                "op": op,
+            }
+
+        rows = [row for row in (query_result.get("rows") or []) if isinstance(row, dict)]
+        spec = self.chart_router.build_spec(
+            metric=title,
+            intent=description or title,
+            rows=rows,
+            group_by=list(model_arguments.get("group_by") or ["segment"]),
+            chart_type=chart_type,
+        )
+        spec["title"] = title
+        meta = spec.setdefault("meta", {})
+        if isinstance(meta, dict):
+            meta.update({"generated_by": "agent_canvas_mode", "run_id": run_id})
+
+        asset_id = f"asset-agent-{run_id[-12:]}-{uuid.uuid4().hex[:8]}"
+        now = _utc_now()
+        asset = {
+            "id": asset_id,
+            "title": title,
+            "chartType": spec.get("chart_type") or chart_type,
+            "spec": {
+                "chartType": spec.get("chart_type") or chart_type,
+                "title": title,
+                "echartsOption": (spec.get("config") or {}).get("option") or {},
+            },
+            "assistantRows": rows,
+            "assistantRowsComplete": True,
+            "sourceMeta": {
+                "sessionId": run_context.get("conversation_id") or "",
+                "messageId": run_id,
+                "prompt": description or title,
+            },
+            "rawSpec": spec,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        if workspace_id:
+            get_workspace_state_store().upsert_chart_asset(
+                workspace_id=workspace_id,
+                user_id=context.user_id,
+                asset_id=asset_id,
+                asset=asset,
+            )
+
+        op = store.append_op(
+            run_id=run_id,
+            op_type="place_chart",
+            payload=lambda seq: {
+                "block_id": replaces_block_id or block_id_for(run_id, seq),
+                "section_id": section_id,
+                "page_id": page_id,
+                "title": title,
+                "chart_type": str(spec.get("chart_type") or chart_type),
+                "size_preset": size_preset,
+                "asset_id": asset_id,
+                "spec": spec,
+                **({"replaces_block_id": replaces_block_id} if replaces_block_id else {}),
+            },
+        )
+        self._audit_canvas_op(
+            context=context,
+            run_id=run_id,
+            op_type="place_chart",
+            status="success",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        # Metadata only back to the model — never the data rows (design D3).
+        return {
+            "status": "placed",
+            "block_id": op["payload"]["block_id"],
+            "section_id": section_id,
+            "title": title,
+            "chart_type": str(spec.get("chart_type") or chart_type),
+            "size_preset": size_preset,
+            "asset_id": asset_id,
+            "row_count": len(rows),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "op": op,
+        }
+
+    def _tool_finish_dashboard(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        _ = context
+        run_context = self._require_agent_canvas_run(arguments)
+        model_arguments = self._canvas_model_arguments(arguments)
+        self._validate_canvas_arguments("finish_dashboard", model_arguments)
+        return {
+            "status": "finished",
+            "run_id": str(run_context["run_id"]),
+            "summary": str(model_arguments["summary"]).strip()[:1000],
+        }
 
     @staticmethod
     def _require_web_search_enabled(settings: Any) -> None:

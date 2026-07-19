@@ -32,6 +32,10 @@ import {
   rowUnitOf,
   type LayoutItem,
 } from "@/lib/workspace/web-design-layout";
+import {
+  AGENT_ERROR_CHART_TYPE,
+  type AgentCanvasStoreOp,
+} from "@/lib/workspace/agent-canvas-layout";
 import type {
   Workspace,
   WorkspaceNode,
@@ -120,6 +124,14 @@ type WorkspaceState = {
   loadSnapshot: (snapshot: WorkspaceSnapshot) => void;
   getSnapshot: () => WorkspaceSnapshot | null;
   setHasUnsavedChanges: (value: boolean) => void;
+  /**
+   * Apply one agent-canvas op onto the run's page in strict seq order.
+   * Idempotent: an op whose block id already exists is skipped (returns false),
+   * except a `place_chart` replacing an error placeholder in place.
+   */
+  applyAgentCanvasOp: (op: AgentCanvasStoreOp) => boolean;
+  /** Run-level undo: delete the run's page (cascade) and its chart nodes. */
+  undoAgentRun: (pageId: string) => void;
 };
 
 function loadPersistedWorkspaceSelection(): PersistedWorkspaceSelection | null {
@@ -786,6 +798,190 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setHasUnsavedChanges: (value) => set({ hasUnsavedChanges: value }),
+
+  applyAgentCanvasOp: (op) => {
+    let applied = false;
+    set((state) => {
+      const layout = ensureWebDesignPages(state.webDesign);
+
+      if (op.type === "create_page") {
+        if ((layout.pages ?? []).some((page) => page.id === op.pageId)) return {};
+        const page: WebDesignPage = {
+          id: op.pageId,
+          title: op.title,
+          grid: createFluidGrid(),
+          zones: [],
+          textZones: [],
+        };
+        const sidebarItem: WebDesignSidebarItem = {
+          id: op.pageId,
+          label: op.title,
+          pageId: op.pageId,
+          anchorRowId: "row-1",
+          children: [],
+        };
+        // Runs always target the web-design format (design D8/D12): stash the
+        // current format's nodes and surface the web-design bucket.
+        const nodesByFormat = { ...state.nodesByFormat, [state.canvasFormat.id]: state.nodes };
+        const edgesByFormat = { ...state.edgesByFormat, [state.canvasFormat.id]: state.edges };
+        applied = true;
+        return {
+          nodes: nodesByFormat["web-design"] ?? [],
+          edges: edgesByFormat["web-design"] ?? [],
+          nodesByFormat,
+          edgesByFormat,
+          canvasFormat: { id: "web-design" },
+          webDesign: {
+            ...layout,
+            sidebar: [...layout.sidebar, sidebarItem],
+            pages: [...(layout.pages ?? []), page],
+            activePageId: op.pageId,
+            grid: page.grid,
+            zones: page.zones,
+            preview: false,
+          },
+          hasUnsavedChanges: true,
+        };
+      }
+
+      const pages = layout.pages ?? [];
+      const page = pages.find((item) => item.id === op.pageId);
+      if (!page) return {};
+      const blockExists =
+        page.zones.some((zone) => zone.id === op.blockId) ||
+        (page.textZones ?? []).some((zone) => zone.id === op.blockId);
+
+      const replacePage = (nextPage: WebDesignPage, extra: Partial<WorkspaceState> = {}) => {
+        const nextPages = pages.map((item) => (item.id === nextPage.id ? nextPage : item));
+        const isActivePage = layout.activePageId === nextPage.id;
+        return {
+          ...extra,
+          webDesign: {
+            ...layout,
+            pages: nextPages,
+            grid: isActivePage ? nextPage.grid : layout.grid,
+            zones: isActivePage ? nextPage.zones : layout.zones,
+          },
+          hasUnsavedChanges: true,
+        };
+      };
+
+      if (op.type === "add_section" || op.type === "add_text_block") {
+        if (blockExists) return {};
+        const style = op.type === "add_section" ? "title" : op.style;
+        const content = op.type === "add_section" ? op.title : op.content;
+        const size = style === "body" ? { w: 12, h: 2 } : { w: 12, h: 1 };
+        const slot = findSlot(pageToLayoutItems(page), size.w, size.h);
+        const zone: WebDesignTextZone = {
+          id: op.blockId,
+          column: slot.x,
+          row: slot.y,
+          colSpan: size.w,
+          rowSpan: size.h,
+          content,
+          style,
+        };
+        applied = true;
+        return replacePage({ ...page, textZones: [...(page.textZones ?? []), zone] });
+      }
+
+      // place_chart / error_placeholder: both add a chart-node-backed zone.
+      const webDesignNodes = [...(state.nodesByFormat["web-design"] ?? [])];
+      const isWebDesignActive = state.canvasFormat.id === "web-design";
+      const existingZone = page.zones.find((zone) => zone.id === op.blockId);
+
+      if (existingZone) {
+        if (op.type !== "place_chart") return {};
+        // Retry success replaces an error placeholder in place: same zone rect,
+        // node data swapped to the real chart.
+        const nodeIndex = webDesignNodes.findIndex((node) => node.id === existingZone.nodeId);
+        const currentNode = nodeIndex >= 0 ? webDesignNodes[nodeIndex] : null;
+        const isPlaceholder =
+          currentNode?.data.type === "chart" &&
+          currentNode.data.chartType === AGENT_ERROR_CHART_TYPE;
+        if (!isPlaceholder) return {};
+        const replacedNode = { ...op.node, id: existingZone.nodeId, position: currentNode.position };
+        webDesignNodes[nodeIndex] = replacedNode;
+        const nextZone = { ...existingZone, chartId: op.chartId };
+        applied = true;
+        return replacePage(
+          {
+            ...page,
+            zones: page.zones.map((zone) => (zone.id === op.blockId ? nextZone : zone)),
+          },
+          {
+            nodesByFormat: { ...state.nodesByFormat, "web-design": webDesignNodes },
+            ...(isWebDesignActive ? { nodes: webDesignNodes } : {}),
+          }
+        );
+      }
+
+      if (blockExists) return {};
+      const slot = findSlot(pageToLayoutItems(page), op.span.w, op.span.h);
+      const zone = {
+        id: op.blockId,
+        nodeId: op.node.id,
+        chartId: op.type === "place_chart" ? op.chartId : op.blockId,
+        column: slot.x,
+        row: slot.y,
+        colSpan: op.span.w,
+        rowSpan: op.span.h,
+      };
+      if (!webDesignNodes.some((node) => node.id === op.node.id)) {
+        webDesignNodes.push(op.node);
+      }
+      applied = true;
+      return replacePage(
+        { ...page, zones: [...page.zones, zone] },
+        {
+          nodesByFormat: { ...state.nodesByFormat, "web-design": webDesignNodes },
+          ...(isWebDesignActive ? { nodes: webDesignNodes } : {}),
+        }
+      );
+    });
+    return applied;
+  },
+
+  undoAgentRun: (pageId) =>
+    set((state) => {
+      const layout = ensureWebDesignPages(state.webDesign);
+      const page = (layout.pages ?? []).find((item) => item.id === pageId);
+      if (!page) return {};
+      const nodeIds = new Set(page.zones.map((zone) => zone.nodeId));
+
+      // Reuse the sidebar-item removal cascade (page + zones), then drop the
+      // page's chart nodes from the web-design bucket. Chart assets stay in
+      // the asset library.
+      const removedPageIds = collectSidebarPageIds(layout.sidebar, pageId);
+      let sidebar = removeSidebarItem(layout.sidebar, pageId);
+      let pages = (layout.pages ?? []).filter((item) => !removedPageIds.has(item.id) && item.id !== pageId);
+      if (!sidebar.length || !pages.length) {
+        sidebar = DEFAULT_WEB_DESIGN_LAYOUT.sidebar;
+        pages = DEFAULT_WEB_DESIGN_LAYOUT.pages ?? [];
+      }
+      const activePageId = pages.some((item) => item.id === layout.activePageId)
+        ? layout.activePageId
+        : pages[0]?.id;
+      const activePage = pages.find((item) => item.id === activePageId) ?? pages[0];
+
+      const webDesignNodes = (state.nodesByFormat["web-design"] ?? []).filter(
+        (node) => !nodeIds.has(node.id)
+      );
+      const isWebDesignActive = state.canvasFormat.id === "web-design";
+      return {
+        nodesByFormat: { ...state.nodesByFormat, "web-design": webDesignNodes },
+        ...(isWebDesignActive ? { nodes: webDesignNodes } : {}),
+        webDesign: {
+          ...layout,
+          sidebar,
+          pages,
+          activePageId: activePage?.id,
+          grid: activePage?.grid ?? DEFAULT_WEB_DESIGN_LAYOUT.grid,
+          zones: activePage?.zones ?? [],
+        },
+        hasUnsavedChanges: true,
+      };
+    }),
 }));
 
 function clamp(value: number, min: number, max: number): number {

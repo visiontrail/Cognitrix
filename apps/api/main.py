@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -579,6 +580,164 @@ async def chat_stream(
     )
 
 
+def _require_agent_canvas_mode_enabled() -> None:
+    if not get_settings().agent_canvas_mode_enabled:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "AGENT_CANVAS_MODE_DISABLED",
+                "message": "Agent canvas mode is disabled",
+            },
+        )
+
+
+def _load_authorized_agent_run(run_id: str, identity: AuthIdentity) -> dict[str, Any]:
+    from .agent_canvas import get_agent_canvas_run_store
+
+    run = get_agent_canvas_run_store().get_run(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "AGENT_CANVAS_RUN_NOT_FOUND", "message": "Unknown run"},
+        )
+    try:
+        get_workspace_service().assert_workspace_access(
+            workspace_id=run["workspace_id"],
+            user_id=identity.user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    return run
+
+
+@app.get("/chat/agent-runs/active")
+async def get_active_agent_run(
+    workspace_id: str,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, Any]:
+    _require_agent_canvas_mode_enabled()
+    normalized_workspace_id = workspace_id.strip()
+    try:
+        get_workspace_service().assert_workspace_access(
+            workspace_id=normalized_workspace_id,
+            user_id=identity.user_id,
+            minimum_role="editor",
+        )
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+    from .agent_canvas_mode import get_agent_canvas_mode_service
+
+    service = get_agent_canvas_mode_service()
+    run = service.get_workspace_run(workspace_id=normalized_workspace_id, user_id=identity.user_id)
+    return {"run": service.describe_run(run) if run is not None else None}
+
+
+@app.get("/chat/agent-runs/{run_id}/ops")
+async def list_agent_run_ops(
+    run_id: str,
+    after_seq: int = 0,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, Any]:
+    _require_agent_canvas_mode_enabled()
+    run = _load_authorized_agent_run(run_id, identity)
+
+    from .agent_canvas import get_agent_canvas_run_store
+
+    ops = get_agent_canvas_run_store().list_ops_after(run_id=run_id, after_seq=after_seq)
+    return {
+        "run_id": run_id,
+        "status": run["status"],
+        "page_id": run["page_id"],
+        "summary": run.get("summary"),
+        "ops": ops,
+    }
+
+
+@app.post("/chat/agent-runs/{run_id}/stop")
+async def stop_agent_run(
+    run_id: str,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, Any]:
+    _require_agent_canvas_mode_enabled()
+    _load_authorized_agent_run(run_id, identity)
+
+    from .agent_canvas_mode import get_agent_canvas_mode_service
+
+    run = get_agent_canvas_mode_service().stop_run(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "AGENT_CANVAS_RUN_NOT_FOUND", "message": "Unknown run"},
+        )
+    return {"run_id": run_id, "status": run["status"]}
+
+
+class AgentRunRetryRequest(BaseModel):
+    seq: int
+
+
+@app.post("/chat/agent-runs/{run_id}/retry")
+async def retry_agent_run_item(
+    run_id: str,
+    request: AgentRunRetryRequest,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, Any]:
+    _require_agent_canvas_mode_enabled()
+    _load_authorized_agent_run(run_id, identity)
+
+    from .agent_canvas_mode import AgentCanvasRetryError, get_agent_canvas_mode_service
+
+    try:
+        result = get_agent_canvas_mode_service().retry_item(
+            run_id=run_id,
+            seq=request.seq,
+            user_id=identity.user_id,
+            project_id=identity.project_id,
+            role=identity.role,
+            department=identity.department,
+            clearance=identity.clearance,
+        )
+    except AgentCanvasRetryError as exc:
+        raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
+    return result
+
+
+@app.get("/chat/agent-runs/{run_id}/tail")
+async def tail_agent_run(
+    run_id: str,
+    after_seq: int = 0,
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> StreamingResponse:
+    _require_agent_canvas_mode_enabled()
+    _load_authorized_agent_run(run_id, identity)
+
+    from .agent_canvas_mode import get_agent_canvas_mode_service
+
+    service = get_agent_canvas_mode_service()
+
+    async def stream() -> Any:
+        event_id = 0
+        async for event_type, payload in service.tail_run(run_id=run_id, after_seq=after_seq):
+            if event_type == "keepalive":
+                yield ": keepalive\n\n"
+                continue
+            event_id += 1
+            data = json.dumps(payload, ensure_ascii=False, default=str)
+            yield f"id: {event_id}\nevent: {event_type}\ndata: {data}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/chat/session/reset")
 async def reset_chat_session(
     request: ChatSessionResetRequest,
@@ -824,6 +983,19 @@ async def healthz() -> dict[str, str]:
         "status": "ok",
         "service": settings.app_name,
         "environment": settings.app_env,
+    }
+
+
+@app.get("/chat/capabilities")
+async def chat_capabilities(
+    identity: AuthIdentity = Depends(require_permission("chat:stream")),
+) -> dict[str, bool]:
+    """Feature flags the chat composer needs to gate optional UI affordances."""
+    _ = identity
+    settings = get_settings()
+    return {
+        "agent_canvas_mode_enabled": bool(settings.agent_canvas_mode_enabled),
+        "web_search_enabled": bool(settings.web_search_enabled),
     }
 
 

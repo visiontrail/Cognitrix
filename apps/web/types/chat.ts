@@ -31,6 +31,11 @@ export type ChatMessage = {
   chartAsset?: ChartAssetReference;
   chartAssets?: ChartAssetReference[];
   multiChartConfirmation?: MultiChartConfirmation;
+  // Agent-canvas-mode: the dashboard outline awaiting (or granted) approval.
+  agentRunOutline?: AgentRunOutline;
+  // Agent-canvas-mode: terminal run summary for the completed/stopped run,
+  // carrying what the undo affordance needs (run page id).
+  agentRun?: AgentRunSummary;
   timestamp: string;
   traceSummary?: TraceSummary;
   // Web sources cited by the assistant (only present when the answer used web
@@ -99,6 +104,54 @@ export type MultiChartConfirmationSubmission = {
   confirmationId: string;
   action: "confirm" | "adjust" | "cancel";
   selectedItems?: Array<{ key: string; label?: string }>;
+};
+
+// ---- Agent canvas mode (long-horizon dashboard generation) ----
+
+export type AgentRunOutlineItem = {
+  key: string;
+  kind: "chart" | "text";
+  title?: string;
+  description?: string;
+  chartType?: string;
+  sizePreset?: string;
+  style?: string;
+  content?: string;
+};
+
+export type AgentRunOutlineSection = {
+  key: string;
+  title: string;
+  items: AgentRunOutlineItem[];
+};
+
+export type AgentRunOutline = {
+  confirmationId: string;
+  runId: string;
+  pageTitle: string;
+  sections: AgentRunOutlineSection[];
+  proposedChartCount: number;
+  maxChartCount: number;
+  expiresAt?: number;
+  reason?: string;
+  truncated?: boolean;
+  // True when the outline was auto-approved (informational card, no buttons).
+  approved?: boolean;
+};
+
+export type AgentRunConfirmationSubmission = {
+  confirmationId: string;
+  action: "confirm" | "cancel";
+  selectedItemKeys?: string[];
+};
+
+export type AgentRunSummary = {
+  runId: string;
+  pageId: string;
+  status: string;
+  placedCount: number;
+  failedCount: number;
+  skippedCount: number;
 };
 
 export type SendMessageResponse = {

@@ -23,6 +23,10 @@ const { mutate, stopChatResponseMock, workspaceColumns } = vi.hoisted(() => ({
   }>,
 }));
 
+vi.mock("../../hooks/use-backend-capabilities", () => ({
+  useBackendCapabilities: () => ({ agentCanvasModeEnabled: false, webSearchEnabled: true }),
+}));
+
 vi.mock("../../hooks/use-chat", () => ({
   useSendMessage: () => ({ mutate }),
   stopChatResponse: stopChatResponseMock,

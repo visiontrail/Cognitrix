@@ -2,6 +2,14 @@ import { create } from "zustand";
 
 export type ActivePanel = "chat" | "workspace" | "both" | "catalog";
 
+// Soft lock while an agent-canvas run is building a page (design D9): the
+// web-design editor disables user editing and shows a banner + stop button.
+export type ActiveAgentRun = {
+  runId: string;
+  pageId: string;
+  workspaceId: string;
+};
+
 type UIState = {
   activePanel: ActivePanel;
   chatSidebarOpen: boolean;
@@ -11,6 +19,7 @@ type UIState = {
   sendingBySession: Record<string, boolean>;
   isSaving: boolean;
   catalogOverlayInWorkspace: boolean;
+  activeAgentRun: ActiveAgentRun | null;
 
   setActivePanel: (panel: ActivePanel) => void;
   setChatSidebarOpen: (open: boolean) => void;
@@ -22,6 +31,9 @@ type UIState = {
   setSessionSending: (sessionId: string, value: boolean) => void;
   setIsSaving: (value: boolean) => void;
   setCatalogOverlayInWorkspace: (value: boolean) => void;
+  setActiveAgentRun: (run: ActiveAgentRun | null) => void;
+  /** Clear the soft lock only if it belongs to the given run. */
+  clearAgentRun: (runId: string) => void;
 };
 
 export const useUIStore = create<UIState>((set) => ({
@@ -33,6 +45,7 @@ export const useUIStore = create<UIState>((set) => ({
   sendingBySession: {},
   isSaving: false,
   catalogOverlayInWorkspace: false,
+  activeAgentRun: null,
 
   setActivePanel: (panel) => set({ activePanel: panel, catalogOverlayInWorkspace: false }),
   setChatSidebarOpen: (open) => set({ chatSidebarOpen: open }),
@@ -56,4 +69,9 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setIsSaving: (value) => set({ isSaving: value }),
   setCatalogOverlayInWorkspace: (value) => set({ catalogOverlayInWorkspace: value }),
+  setActiveAgentRun: (run) => set({ activeAgentRun: run }),
+  clearAgentRun: (runId) =>
+    set((state) =>
+      state.activeAgentRun?.runId === runId ? { activeAgentRun: null } : {}
+    ),
 }));

@@ -39,7 +39,12 @@ import { applyDataLabels } from "@/lib/charts/data-labels";
 import { generationOptionIdsFromPayload } from "@/lib/chat/generation-options";
 import { generateId, isRecord } from "@/lib/utils";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
+import { getAutoApprovePreference, parseAgentCanvasWireOp } from "@/lib/chat/agent-canvas";
+import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
 import type {
+  AgentRunConfirmationSubmission,
+  AgentRunOutline,
+  AgentRunSummary,
   ChatMessage,
   ChatSession,
   MessageSource,
@@ -203,6 +208,8 @@ export function useSendMessage() {
       generationStrategy,
       showDataLabels,
       webSearch,
+      agentCanvas,
+      agentRunConfirmation,
       multiChartConfirmation,
     }: {
       sessionId: string;
@@ -213,6 +220,8 @@ export function useSendMessage() {
       generationStrategy?: "multi_chart";
       showDataLabels?: boolean;
       webSearch?: boolean;
+      agentCanvas?: boolean;
+      agentRunConfirmation?: AgentRunConfirmationSubmission;
       multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
       const workspaceId = getActiveWorkspaceIdOrThrow(t);
@@ -279,6 +288,8 @@ export function useSendMessage() {
           generationStrategy,
           showDataLabels,
           webSearch,
+          agentCanvas,
+          agentRunConfirmation,
           multiChartConfirmation,
           workspaceId,
           signal: abortController.signal,
@@ -523,6 +534,8 @@ async function streamAssistantResponse({
   generationStrategy,
   showDataLabels,
   webSearch,
+  agentCanvas,
+  agentRunConfirmation,
   multiChartConfirmation,
   workspaceId,
   signal,
@@ -535,6 +548,8 @@ async function streamAssistantResponse({
   generationStrategy?: "multi_chart";
   showDataLabels?: boolean;
   webSearch?: boolean;
+  agentCanvas?: boolean;
+  agentRunConfirmation?: AgentRunConfirmationSubmission;
   multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
   signal?: AbortSignal;
@@ -580,10 +595,23 @@ async function streamAssistantResponse({
     multiChartGroupId?: string;
   }> = [];
   let pendingMultiChartConfirmation: MultiChartConfirmation | undefined;
+  let agentRunOutline: AgentRunOutline | undefined;
+  let agentRun: AgentRunSummary | undefined;
   let sources: MessageSource[] | undefined;
   let terminalReason: "final" | "error" | "closed" = "closed";
   let planningStepCounter = 0;
   let toolStepCount = 0;
+  const isAgentCanvasTurn = Boolean(agentCanvas || agentRunConfirmation);
+  const canvasOpDeps = {
+    toAsset: (rawSpec: unknown, meta: { assetId: string; title: string }) =>
+      toChartAsset(rawSpec, {
+        sessionId,
+        messageId,
+        prompt: content,
+        assetId: meta.assetId,
+        title: meta.title,
+      }),
+  };
 
   try {
     const response = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -607,6 +635,18 @@ async function streamAssistantResponse({
         response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),
+        agent_mode: agentCanvas ?? false,
+        canvas_format: agentCanvas
+          ? useWorkspaceStore.getState().canvasFormat.id
+          : null,
+        auto_approve: agentCanvas ? getAutoApprovePreference() : false,
+        agent_run_confirmation: agentRunConfirmation
+          ? {
+              confirmation_id: agentRunConfirmation.confirmationId,
+              action: agentRunConfirmation.action,
+              selected_item_keys: agentRunConfirmation.selectedItemKeys ?? null,
+            }
+          : null,
         multi_chart_confirmation: multiChartConfirmation
           ? {
               confirmation_id: multiChartConfirmation.confirmationId,
@@ -702,6 +742,30 @@ async function streamAssistantResponse({
           pendingMultiChartConfirmation = { ...mapMultiChartConfirmation(payload), showDataLabels };
           useChatStore.getState().setPendingMultiChartConfirmation(sessionId, pendingMultiChartConfirmation);
         }
+        if (payload.confirmation_type === "dashboard_outline") {
+          agentRunOutline = mapAgentRunOutline(payload, { approved: false });
+        }
+        continue;
+      }
+
+      if (streamEvent.event === "outline") {
+        // Auto-approved run: the outline is informational (no approval buttons).
+        agentRunOutline = mapAgentRunOutline(payload, { approved: true });
+        continue;
+      }
+
+      if (streamEvent.event === "canvas_op") {
+        const op = parseAgentCanvasWireOp(payload);
+        if (op) {
+          if (op.opType === "create_page") {
+            useUIStore.getState().setActiveAgentRun({
+              runId: op.runId,
+              pageId: op.pageId,
+              workspaceId,
+            });
+          }
+          applyAgentCanvasWireOp(op, canvasOpDeps);
+        }
         continue;
       }
 
@@ -727,6 +791,23 @@ async function streamAssistantResponse({
         }
         if (payload.status !== "awaiting_confirmation" && payload.status !== "failed") {
           useChatStore.getState().clearPendingMultiChartConfirmation(sessionId);
+        }
+        if (typeof payload.run_id === "string" && payload.run_id) {
+          const status = String(payload.status ?? "");
+          // Any terminal run status releases the canvas soft lock.
+          if (status !== "awaiting_confirmation") {
+            useUIStore.getState().clearAgentRun(payload.run_id);
+          }
+          if (typeof payload.page_id === "string" && payload.page_id) {
+            agentRun = {
+              runId: payload.run_id,
+              pageId: payload.page_id,
+              status,
+              placedCount: asNumber(payload.placed_count),
+              failedCount: asNumber(payload.failed_count),
+              skippedCount: asNumber(payload.skipped_count),
+            };
+          }
         }
         terminalReason = "final";
         continue;
@@ -755,13 +836,22 @@ async function streamAssistantResponse({
   const traceStatus: "ok" | "error" | "incomplete" =
     terminalReason === "final" ? "ok" : terminalReason === "error" ? "error" : "incomplete";
 
-  const generationOptions = generationOptionIdsFromPayload({ generationStrategy, showDataLabels, webSearch });
+  const generationOptions = generationOptionIdsFromPayload({
+    generationStrategy,
+    showDataLabels,
+    webSearch,
+    agentCanvas,
+  });
 
-  const specEvents = groupedSpecs.length > 0
-    ? [...groupedSpecs].sort((a, b) => (a.chartIndex ?? 0) - (b.chartIndex ?? 0))
-    : latestSpec
-      ? [{ rawSpec: latestSpec }]
-      : [];
+  // Agent-canvas turns place charts on the canvas through canvas_op events;
+  // the chat message carries the outline / run summary instead of chart cards.
+  const specEvents = isAgentCanvasTurn
+    ? []
+    : groupedSpecs.length > 0
+      ? [...groupedSpecs].sort((a, b) => (a.chartIndex ?? 0) - (b.chartIndex ?? 0))
+      : latestSpec
+        ? [{ rawSpec: latestSpec }]
+        : [];
   const chartAssets = specEvents
     .map((event) =>
       toChartAsset(event.rawSpec, {
@@ -779,6 +869,8 @@ async function streamAssistantResponse({
     ? t("chat.generatedChart", { title: chartAsset.title })
     : pendingMultiChartConfirmation
       ? t("chat.multiChart.awaitingConfirmation")
+      : agentRunOutline && !agentRun
+        ? t("chat.agentOutline.awaitingConfirmation")
     : t("chat.completed");
   const assistantMessage: ChatMessage = {
     id: messageId,
@@ -800,6 +892,8 @@ async function streamAssistantResponse({
         }))
       : undefined,
     multiChartConfirmation: pendingMultiChartConfirmation,
+    agentRunOutline,
+    agentRun,
     timestamp: new Date().toISOString(),
     traceSummary:
       traceSteps.length > 0
@@ -828,6 +922,42 @@ function computeResultPreview(result: unknown): string {
   }
   const text = typeof result === "string" ? result : JSON.stringify(result) ?? "";
   return text.length > 80 ? text.slice(0, 80) + "…" : text;
+}
+
+function mapAgentRunOutline(
+  payload: Record<string, unknown>,
+  { approved }: { approved: boolean }
+): AgentRunOutline {
+  const sections = Array.isArray(payload.sections)
+    ? payload.sections.filter(isRecord).map((section, sectionIndex) => ({
+        key: String(section.key ?? `s${sectionIndex + 1}`),
+        title: String(section.title ?? ""),
+        items: (Array.isArray(section.items) ? section.items : [])
+          .filter(isRecord)
+          .map((item, itemIndex) => ({
+            key: String(item.key ?? `i${sectionIndex + 1}-${itemIndex + 1}`),
+            kind: item.kind === "text" ? ("text" as const) : ("chart" as const),
+            title: typeof item.title === "string" ? item.title : undefined,
+            description: typeof item.description === "string" ? item.description : undefined,
+            chartType: typeof item.chart_type === "string" ? item.chart_type : undefined,
+            sizePreset: typeof item.size_preset === "string" ? item.size_preset : undefined,
+            style: typeof item.style === "string" ? item.style : undefined,
+            content: typeof item.content === "string" ? item.content : undefined,
+          })),
+      }))
+    : [];
+  return {
+    confirmationId: String(payload.confirmation_id ?? ""),
+    runId: String(payload.run_id ?? ""),
+    pageTitle: String(payload.page_title ?? ""),
+    sections,
+    proposedChartCount: asNumber(payload.proposed_chart_count),
+    maxChartCount: Math.max(1, asNumber(payload.max_chart_count)),
+    expiresAt: typeof payload.expires_at === "number" ? payload.expires_at : undefined,
+    reason: typeof payload.reason === "string" ? payload.reason : undefined,
+    truncated: Boolean(payload.truncated),
+    approved,
+  };
 }
 
 function mapMultiChartConfirmation(payload: Record<string, unknown>): MultiChartConfirmation {
@@ -1909,7 +2039,7 @@ function extractUploadStats(upload: IngestionUploadResult): { sheetCount: number
   return { sheetCount, totalRows };
 }
 
-function toChartAsset(
+export function toChartAsset(
   rawSpec: unknown,
   source: {
     sessionId: string;

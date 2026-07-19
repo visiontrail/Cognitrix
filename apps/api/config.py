@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     agent_max_sql_rows: int = Field(default=200, alias="AGENT_MAX_SQL_ROWS")
     agent_max_sql_scan_rows: int = Field(default=10000, alias="AGENT_MAX_SQL_SCAN_ROWS")
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
+    agent_canvas_mode_enabled: bool = Field(default=False, alias="AGENT_CANVAS_MODE_ENABLED")
+    agent_mode_max_steps: int = Field(default=40, alias="AGENT_MODE_MAX_STEPS")
+    agent_mode_timeout_seconds: float = Field(default=600.0, alias="AGENT_MODE_TIMEOUT_SECONDS")
+    agent_mode_max_charts: int = Field(default=12, alias="AGENT_MODE_MAX_CHARTS")
     web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
     web_search_provider: str = Field(default="bocha", alias="WEB_SEARCH_PROVIDER")
     web_search_api_key: str = Field(default="", alias="WEB_SEARCH_API_KEY")
@@ -105,12 +109,18 @@ class Settings(BaseSettings):
             raise ValueError("API_TIMEOUT_MS must be greater than 0")
         return value
 
-    @field_validator("agent_timeout_seconds", "ingestion_plan_timeout_seconds", "web_fetch_timeout_seconds")
+    @field_validator(
+        "agent_timeout_seconds",
+        "ingestion_plan_timeout_seconds",
+        "web_fetch_timeout_seconds",
+        "agent_mode_timeout_seconds",
+    )
     @classmethod
     def validate_agent_timeout_seconds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError(
-                "AGENT_TIMEOUT_SECONDS / INGESTION_PLAN_TIMEOUT_SECONDS / WEB_FETCH_TIMEOUT_SECONDS must be greater than 0"
+                "AGENT_TIMEOUT_SECONDS / INGESTION_PLAN_TIMEOUT_SECONDS / WEB_FETCH_TIMEOUT_SECONDS / "
+                "AGENT_MODE_TIMEOUT_SECONDS must be greater than 0"
             )
         return value
 
@@ -136,6 +146,8 @@ class Settings(BaseSettings):
         "web_search_max_calls_per_turn",
         "web_fetch_max_bytes",
         "web_fetch_max_chars",
+        "agent_mode_max_steps",
+        "agent_mode_max_charts",
     )
     @classmethod
     def validate_positive_ints(cls, value: int, info) -> int:  # type: ignore[no-untyped-def]

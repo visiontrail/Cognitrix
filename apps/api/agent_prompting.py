@@ -201,6 +201,144 @@ def build_agent_system_prompt(*, web_search_enabled: bool = False) -> str:
     return base
 
 
+_OUTLINE_EXAMPLE = json.dumps(
+    {
+        "title": "销售概览仪表盘",
+        "sections": [
+            {
+                "key": "s1",
+                "title": "整体概况",
+                "items": [
+                    {
+                        "key": "c1",
+                        "kind": "chart",
+                        "title": "总员工数",
+                        "description": "在职员工总数的单值指标",
+                        "chart_type": "single_value",
+                        "size_preset": "kpi",
+                    },
+                    {
+                        "key": "c2",
+                        "kind": "chart",
+                        "title": "各部门人数",
+                        "description": "按部门统计员工数量的柱状图",
+                        "chart_type": "bar",
+                        "size_preset": "half",
+                    },
+                ],
+            },
+            {
+                "key": "s2",
+                "title": "结论",
+                "items": [
+                    {
+                        "key": "t1",
+                        "kind": "text",
+                        "style": "body",
+                        "content": "一句话总结页面要点。",
+                    }
+                ],
+            },
+        ],
+    },
+    ensure_ascii=False,
+    indent=2,
+)
+
+
+def build_agent_canvas_outline_prompt(*, max_charts: int) -> str:
+    """System prompt for the agent-canvas outline (planning) phase.
+
+    Deliberately explicit and example-driven: the DeepSeek gateway follows
+    concrete numbered instructions far more reliably than abstract guidance.
+    """
+    return (
+        "You are Cognitrix's dashboard planning agent.\n"
+        "\n"
+        "## Goal\n"
+        "The user asked for a complete dashboard page. Your ONLY job in this phase is to "
+        "produce a dashboard OUTLINE as JSON — do NOT generate any chart yet.\n"
+        "\n"
+        "## How to work\n"
+        "1. Inspect the available data first: call `list_tables`, then `describe_table` on the "
+        "relevant tables, and `get_metric_catalog` when quantitative metrics are involved.\n"
+        "2. Decide the page structure: 2-4 sections, each with 1-4 chart items and optional "
+        "text items. Order sections from overview to detail.\n"
+        f"3. Use AT MOST {max_charts} chart items in total across all sections.\n"
+        "4. END your response with a JSON block (inside ```json ... ```) matching this exact "
+        "structure:\n"
+        "\n"
+        "```json\n"
+        f"{_OUTLINE_EXAMPLE}\n"
+        "```\n"
+        "\n"
+        "Field rules:\n"
+        "- `title`: the dashboard page title, in the user's language.\n"
+        "- `sections[].key` and `items[].key`: short unique slugs (s1, s2, c1, c2, t1 ...).\n"
+        "- chart items: `kind` = \"chart\", with `title`, one-line `description`, `chart_type` "
+        "(bar, line, pie, area, funnel, single_value, ...), and `size_preset`.\n"
+        "- text items: `kind` = \"text\", with `style` (title | subtitle | body) and `content`.\n"
+        "- `size_preset` meaning: `kpi` = small stat card (use for single_value/gauge), "
+        "`half` = half page width (most charts), `wide` = full width (trends, wide "
+        "comparisons), `full` = full width and tall (dense tables, detailed charts).\n"
+        "- NEVER include coordinates, pixel sizes, or grid positions — layout is automatic.\n"
+        "- Base every chart item on columns and values that actually exist in the inspected "
+        "tables; do not invent fields.\n"
+        "\n"
+        "The JSON block is machine-parsed. Do not add prose after the closing ```."
+    )
+
+
+def build_agent_canvas_execution_prompt(
+    *,
+    outline_json: str,
+    max_charts: int,
+) -> str:
+    """System prompt for the agent-canvas execution phase (approved outline)."""
+    return (
+        "You are Cognitrix's dashboard building agent. The user already APPROVED the "
+        "dashboard outline below. Your job is to build it on the canvas, one tool call "
+        "at a time, following the protocol EXACTLY.\n"
+        "\n"
+        "## Approved outline\n"
+        "```json\n"
+        f"{outline_json}\n"
+        "```\n"
+        "\n"
+        "## Build protocol — follow these steps in order\n"
+        "1. Take the FIRST section from the outline. Call `add_section` with its title. "
+        "Remember the `section_id` the tool returns.\n"
+        "2. For every item inside that section, in order:\n"
+        "   - chart item → call `place_chart` with: `section_id`, the item's `title`, "
+        "`chart_type`, `size_preset`, and the data query (`sql` OR `metric`).\n"
+        "   - text item → call `add_text_block` with `section_id`, `content`, `style`.\n"
+        "3. Repeat steps 1-2 for every remaining section, in outline order.\n"
+        "4. After ALL sections are done, call `finish_dashboard` ONCE with a 1-3 sentence "
+        "summary in the user's language. After it returns, reply with ONE short closing "
+        "sentence and stop. Do NOT output a JSON block.\n"
+        "\n"
+        "## place_chart query rules\n"
+        "- Prefer `sql`: a readonly SELECT where the dimension column is aliased `AS segment` "
+        "and the numeric value is aliased `AS metric_value`. Example:\n"
+        "  SELECT department AS segment, COUNT(*) AS metric_value FROM employees "
+        "GROUP BY department ORDER BY metric_value DESC\n"
+        "- For a single_value/gauge chart, return exactly one row "
+        "(e.g. SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees).\n"
+        "- If you are unsure about a column name or a categorical value, verify it first "
+        "with `describe_table` or `get_distinct_values`, then call `place_chart`.\n"
+        "- The tool result contains metadata only; the chart appears on the user's canvas "
+        "automatically. Never echo data rows.\n"
+        "\n"
+        "## Failure handling\n"
+        "- If `place_chart` returns status `error_placeholder`, the item failed and a retryable "
+        "placeholder was placed. You may fix the query and retry that item AT MOST once; "
+        "otherwise continue with the next item. Never abandon the run because one item failed.\n"
+        f"- Never place more than {max_charts} charts in total.\n"
+        "- NEVER pass coordinates, pixel sizes, or grid positions — layout is automatic.\n"
+        "- `finish_dashboard` is REQUIRED: the run only completes when you call it."
+    )
+
+
 def describe_reasoning_strategy() -> list[str]:
     return [
         "Think about the user's goal before calling any tool.",

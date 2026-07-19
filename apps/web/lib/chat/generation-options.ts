@@ -1,4 +1,4 @@
-import { BarChart3, Globe, Tags, type LucideIcon } from "lucide-react";
+import { BarChart3, Globe, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
 
 /**
  * Declarative registry for the multi-selectable chart-generation options that
@@ -13,7 +13,7 @@ import { BarChart3, Globe, Tags, type LucideIcon } from "lucide-react";
  * `buildGenerationOptionPayload` merges the contributions of the active set.
  */
 
-export type GenerationOptionId = "multi_chart" | "data_labels" | "web_search";
+export type GenerationOptionId = "multi_chart" | "data_labels" | "web_search" | "agent_canvas";
 
 // Visual tone keys; the composer maps these to concrete Tailwind classes.
 export type GenerationOptionTone = "blue" | "terracotta";
@@ -24,6 +24,7 @@ export type GenerationOptionPayload = {
   generationStrategy?: "multi_chart";
   showDataLabels?: boolean;
   webSearch?: boolean;
+  agentCanvas?: boolean;
 };
 
 export type GenerationOption = {
@@ -71,6 +72,18 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
     removeLabelKey: "chat.webSearch.remove",
     hintKey: "chat.inputHintWithWebSearch",
     payload: { webSearch: true },
+  },
+  // Only rendered when the backend reports AGENT_CANVAS_MODE_ENABLED=true
+  // (the composer filters by capability before mapping over the registry).
+  {
+    id: "agent_canvas",
+    icon: LayoutDashboard,
+    tone: "terracotta",
+    menuLabelKey: "chat.actions.agentCanvas",
+    chipLabelKey: "chat.agentCanvas.chip",
+    removeLabelKey: "chat.agentCanvas.remove",
+    hintKey: "chat.inputHintWithAgentCanvas",
+    payload: { agentCanvas: true },
   },
 ];
 

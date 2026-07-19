@@ -1,6 +1,8 @@
 "use client";
 
 import type { ChatMessage } from "@/types/chat";
+import { AgentRunOutlineCard } from "./agent-run-outline-card";
+import { AgentRunSummaryCard } from "./agent-run-summary-card";
 import { ChartMessageCard, MultiChartMessageGroup } from "./chart-message-card";
 import { MultiChartConfirmationBox } from "./multi-chart-confirmation-box";
 import { MessageSources } from "./message-sources";
@@ -186,6 +188,12 @@ export function MessageItem({ message }: { message: ChatMessage }) {
             confirmation={message.multiChartConfirmation}
           />
         )}
+
+        {message.agentRunOutline && !isUser && (
+          <AgentRunOutlineCard sessionId={message.sessionId} outline={message.agentRunOutline} />
+        )}
+
+        {message.agentRun && !isUser && <AgentRunSummaryCard run={message.agentRun} />}
 
         {/* Chart Card */}
         {message.chartAssets && message.chartAssets.length > 1 && !isUser ? (

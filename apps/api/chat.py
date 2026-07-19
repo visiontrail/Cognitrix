@@ -28,6 +28,12 @@ class MultiChartConfirmationPayload(BaseModel):
     selected_items: list[MultiChartConfirmationItem] | None = None
 
 
+class AgentRunConfirmationPayload(BaseModel):
+    confirmation_id: str
+    action: Literal["confirm", "cancel"]
+    selected_item_keys: list[str] | None = None
+
+
 class ChatStreamRequest(BaseModel):
     user_id: str
     project_id: str
@@ -45,6 +51,12 @@ class ChatStreamRequest(BaseModel):
     clearance: int = 0
     last_event_id: int | None = None
     multi_chart_confirmation: MultiChartConfirmationPayload | None = None
+    # Agent canvas mode (AGENT_CANVAS_MODE_ENABLED): long-horizon dashboard
+    # generation onto the canvas the user is looking at.
+    agent_mode: bool = False
+    canvas_format: str | None = None
+    auto_approve: bool = False
+    agent_run_confirmation: AgentRunConfirmationPayload | None = None
 
 
 @dataclass(slots=True)
@@ -196,7 +208,12 @@ class ChatStreamService:
             ):
                 yield _format_sse(event)
 
-        if not request.message and request.multi_chart_confirmation is None:
+        is_agent_canvas_request = bool(request.agent_mode or request.agent_run_confirmation)
+        if (
+            not request.message
+            and request.multi_chart_confirmation is None
+            and not is_agent_canvas_request
+        ):
             if last_event_id is None:
                 generated = self._build_terminal_failure_events(
                     conversation_id=conversation_id,
@@ -208,6 +225,13 @@ class ChatStreamService:
             return
 
         try:
+            if is_agent_canvas_request:
+                async for chunk in self._stream_agent_canvas_events(
+                    request=request,
+                    conversation_id=conversation_id,
+                ):
+                    yield chunk
+                return
             async for event_type, payload in self._stream_agent_events(
                 request=request,
                 conversation_id=conversation_id,
@@ -283,6 +307,54 @@ class ChatStreamService:
             # Update context after stream ends (agent_session_id, etc.)
             # This is best-effort — context is pulled from stored session state
             pass
+
+    async def _stream_agent_canvas_events(
+        self,
+        *,
+        request: ChatStreamRequest,
+        conversation_id: str,
+    ) -> AsyncGenerator[str, None]:
+        """Agent-canvas-mode turns (outline / confirmation / run tail).
+
+        Keepalive ticks are emitted as SSE comments only — they keep proxies
+        from killing multi-minute runs but never enter the replayable event log.
+        """
+        if not self.settings.agent_canvas_mode_enabled:
+            events = [
+                ("error", {
+                    "conversation_id": conversation_id,
+                    "request_id": request.request_id,
+                    "status": "failed",
+                    "code": "AGENT_CANVAS_MODE_DISABLED",
+                    "message": "Agent canvas mode is disabled (AGENT_CANVAS_MODE_ENABLED=false).",
+                }),
+                ("final", {
+                    "conversation_id": conversation_id,
+                    "request_id": request.request_id,
+                    "status": "failed",
+                    "text": "Agent canvas mode is disabled on this server.",
+                }),
+            ]
+            for event in self.sessions.append_events(conversation_id=conversation_id, events=events):
+                yield _format_sse(event)
+            return
+
+        from .agent_canvas_mode import get_agent_canvas_mode_service
+
+        service = get_agent_canvas_mode_service()
+        async for event_type, payload in service.stream_turn(
+            request=request,
+            conversation_id=conversation_id,
+        ):
+            if event_type == "keepalive":
+                yield ": keepalive\n\n"
+                continue
+            created = self.sessions.append_events(
+                conversation_id=conversation_id,
+                events=[(event_type, payload)],
+            )
+            for event in created:
+                yield _format_sse(event)
 
     async def _stream_agent_events(
         self,

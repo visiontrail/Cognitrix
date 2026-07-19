@@ -1,0 +1,667 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+import pandas as pd
+from claude_agent_sdk import ResultMessage
+from fastapi.testclient import TestClient
+
+from apps.api.agent_canvas import (
+    clear_agent_canvas_run_store_cache,
+    get_agent_canvas_run_store,
+)
+from apps.api.agent_canvas_mode import (
+    clear_agent_canvas_mode_service_cache,
+    get_agent_canvas_mode_service,
+)
+from apps.api.config import get_settings
+from apps.api.datasets import get_dataset_service
+from apps.api.main import app
+from apps.api.workspace_state import clear_workspace_state_store_cache, get_workspace_state_store
+from apps.api.workspaces import clear_workspace_service_cache
+from tests.agent_test_utils import read_sse_events, set_agent_env
+from tests.auth_utils import auth_headers
+
+ScriptFn = Callable[..., Awaitable[dict[str, Any] | None]]
+
+
+def _set_canvas_env(monkeypatch, tmp_path: Path, **overrides: str) -> None:
+    monkeypatch.setenv("AGENT_CANVAS_MODE_ENABLED", "true")
+    for key, value in overrides.items():
+        monkeypatch.setenv(key, value)
+    set_agent_env(monkeypatch, tmp_path)
+    clear_agent_canvas_run_store_cache()
+    clear_workspace_state_store_cache()
+    clear_workspace_service_cache()
+    clear_agent_canvas_mode_service_cache()
+
+
+def _create_workspace(client: TestClient, headers: dict[str, str], name: str = "Canvas WS") -> str:
+    response = client.post("/workspaces", json={"name": name}, headers=headers)
+    assert response.status_code == 200, response.text
+    return str(response.json()["workspace_id"])
+
+
+def _seed_workspace_dataset(workspace_id: str, *, user_id: str = "admin", project_id: str = "north") -> None:
+    dataframe = pd.DataFrame(
+        [
+            {"employee_id": "E-001", "department": "HR"},
+            {"employee_id": "E-002", "department": "HR"},
+            {"employee_id": "E-003", "department": "PM"},
+        ]
+    )
+    service = get_dataset_service(get_settings().upload_dir)
+    with service.session_manager.connection(user_id, project_id, workspace_id=workspace_id) as conn:
+        conn.register("seed_df", dataframe)
+        conn.execute('CREATE OR REPLACE TABLE "employees" AS SELECT * FROM seed_df')
+        conn.unregister("seed_df")
+
+
+def _install_scripted_canvas_client(scripts: list[ScriptFn]) -> None:
+    """Fake SDK client that drives the REAL tool pipeline: each script receives
+    an `invoke(tool_name, args)` that goes through guardrails, ToolCallingService,
+    the op log, and SSE emission — exactly like a live provider's tool calls."""
+    service = get_agent_canvas_mode_service()
+    queue = list(scripts)
+
+    class _ScriptedCanvasClient:
+        def __init__(self, *, options: Any) -> None:
+            self.options = options
+            self.prompt = ""
+
+        async def __aenter__(self) -> "_ScriptedCanvasClient":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            return False
+
+        async def query(self, prompt: str, session_id: str = "default") -> None:
+            self.prompt = prompt
+
+        async def receive_response(self):  # type: ignore[no-untyped-def]
+            script = queue.pop(0)
+            invoker = self.options._cognitrix_tool_invoker  # noqa: SLF001 - test seam
+
+            async def invoke(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+                raw = await invoker(tool_name, arguments)
+                text = raw["content"][0]["text"]
+                return json.loads(text)
+
+            final = await script(invoke)
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id="canvas-session",
+                result=json.dumps(final or {}, ensure_ascii=False),
+                structured_output=final,
+            )
+
+    service._sdk_client_factory = _ScriptedCanvasClient  # noqa: SLF001 - test seam
+
+
+OUTLINE = {
+    "title": "员工概览",
+    "sections": [
+        {
+            "key": "s1",
+            "title": "概览",
+            "items": [
+                {
+                    "key": "c1",
+                    "kind": "chart",
+                    "title": "总人数",
+                    "description": "员工总数",
+                    "chart_type": "single_value",
+                    "size_preset": "kpi",
+                },
+                {
+                    "key": "c2",
+                    "kind": "chart",
+                    "title": "部门人数",
+                    "description": "按部门统计",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                },
+                {"key": "t1", "kind": "text", "style": "body", "content": "说明文字"},
+            ],
+        }
+    ],
+}
+
+
+async def _outline_script(invoke) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    await invoke("list_tables", {})
+    return OUTLINE
+
+
+async def _execution_script(invoke) -> None:  # type: ignore[no-untyped-def]
+    section = await invoke("add_section", {"title": "概览"})
+    section_id = section["section_id"]
+    await invoke(
+        "place_chart",
+        {
+            "section_id": section_id,
+            "title": "总人数",
+            "chart_type": "single_value",
+            "size_preset": "kpi",
+            "sql": "SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees",
+        },
+    )
+    await invoke(
+        "place_chart",
+        {
+            "section_id": section_id,
+            "title": "部门人数",
+            "chart_type": "bar",
+            "size_preset": "half",
+            "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+        },
+    )
+    await invoke("add_text_block", {"section_id": section_id, "content": "说明文字", "style": "body"})
+    await invoke("finish_dashboard", {"summary": "已完成 2 个图表。"})
+    return None
+
+
+def _agent_mode_body(workspace_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "conversation_id": "canvas-conv-1",
+        "request_id": f"canvas-req-{time.time_ns()}",
+        "user_id": "admin",
+        "project_id": "north",
+        "workspace_id": workspace_id,
+        "dataset_table": "employees",
+        "message": "生成员工数据仪表盘",
+        "agent_mode": True,
+        "canvas_format": "web-design",
+        **extra,
+    }
+
+
+def test_full_outline_approve_run_completed(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers)
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client([_outline_script, _execution_script])
+
+        # ---- Phase 1: outline pauses for approval; no canvas_op yet ----
+        with client.stream(
+            "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+        ) as response:
+            assert response.status_code == 200
+            outline_events, _ = read_sse_events(response)
+
+        event_names = [item["event"] for item in outline_events]
+        assert "canvas_op" not in event_names
+        confirmation = next(
+            item["data"] for item in outline_events if item["event"] == "confirmation_required"
+        )
+        assert confirmation["confirmation_type"] == "dashboard_outline"
+        assert confirmation["proposed_chart_count"] == 2
+        assert confirmation["sections"][0]["items"][0]["key"] == "c1"
+        final_payload = outline_events[-1]["data"]
+        assert final_payload["status"] == "awaiting_confirmation"
+
+        # ---- Phase 2: approve → detached run streams canvas ops ----
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={
+                "conversation_id": "canvas-conv-1",
+                "request_id": "canvas-req-confirm",
+                "user_id": "admin",
+                "project_id": "north",
+                "workspace_id": workspace_id,
+                "dataset_table": "employees",
+                "message": None,
+                "agent_run_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "confirm",
+                },
+            },
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            run_events, _ = read_sse_events(response)
+
+        canvas_ops = [item["data"] for item in run_events if item["event"] == "canvas_op"]
+        op_types = [op["op_type"] for op in canvas_ops]
+        assert op_types == [
+            "create_page",
+            "add_section",
+            "place_chart",
+            "place_chart",
+            "add_text_block",
+        ]
+        seqs = [op["seq"] for op in canvas_ops]
+        assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+        run_id = canvas_ops[0]["run_id"]
+        page_id = canvas_ops[0]["page_id"]
+        assert page_id == f"agent-{run_id}"
+        for op in canvas_ops:
+            assert op["run_id"] == run_id
+            assert op["payload"]["block_id"]
+
+        spec_events = [item["data"] for item in run_events if item["event"] == "spec"]
+        assert len(spec_events) == 2
+
+        final_payload = run_events[-1]["data"]
+        assert final_payload["status"] == "completed"
+        assert final_payload["placed_count"] == 2
+        assert final_payload["failed_count"] == 0
+        assert final_payload["page_id"] == page_id
+
+        # ---- Server-side state: run record, op log, chart assets ----
+        run = get_agent_canvas_run_store().get_run(run_id)
+        assert run is not None and run["status"] == "completed"
+        assets = get_workspace_state_store().list_chart_assets(
+            workspace_id=workspace_id, user_id="admin"
+        )
+        assert len(assets) == 2
+
+        # ---- Re-attach surface ----
+        active = client.get(
+            "/chat/agent-runs/active", params={"workspace_id": workspace_id}, headers=headers
+        )
+        assert active.status_code == 200
+        described = active.json()["run"]
+        assert described["run_id"] == run_id
+        assert described["status"] == "completed"
+        assert described["last_seq"] == 5
+
+        ops_response = client.get(
+            f"/chat/agent-runs/{run_id}/ops", params={"after_seq": 2}, headers=headers
+        )
+        assert ops_response.status_code == 200
+        tail_ops = ops_response.json()["ops"]
+        assert [op["seq"] for op in tail_ops] == [3, 4, 5]
+
+
+def test_tail_endpoint_replays_ops_and_terminal(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Tail WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client([_outline_script, _execution_script])
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            events, _ = read_sse_events(response)
+        run_id = events[-1]["data"]["run_id"]
+
+        with client.stream(
+            "GET",
+            f"/chat/agent-runs/{run_id}/tail",
+            params={"after_seq": 2},
+            headers=headers,
+        ) as tail_response:
+            assert tail_response.status_code == 200
+            tail_events, _ = read_sse_events(tail_response)
+
+        tail_names = [item["event"] for item in tail_events]
+        assert tail_names[:-1] == ["canvas_op"] * (len(tail_names) - 1)
+        assert tail_names[-1] == "final"
+        assert [item["data"]["seq"] for item in tail_events[:-1]] == [3, 4, 5]
+        assert tail_events[-1]["data"]["status"] == "completed"
+
+
+def test_stop_mid_run_keeps_partial_results(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Stop WS")
+        _seed_workspace_dataset(workspace_id)
+
+        async def stopping_execution(invoke) -> None:  # type: ignore[no-untyped-def]
+            section = await invoke("add_section", {"title": "概览"})
+            await invoke(
+                "place_chart",
+                {
+                    "section_id": section["section_id"],
+                    "title": "总人数",
+                    "chart_type": "single_value",
+                    "size_preset": "kpi",
+                    "sql": "SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees",
+                },
+            )
+            # User presses stop (the endpoint sets the same cancel flag).
+            service = get_agent_canvas_mode_service()
+            run = get_agent_canvas_run_store().get_active_run(
+                workspace_id=workspace_id, user_id="admin"
+            )
+            assert run is not None
+            service.stop_run(run["run_id"])
+            blocked = await invoke(
+                "place_chart",
+                {
+                    "section_id": section["section_id"],
+                    "title": "部门人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            )
+            assert blocked["error"]["code"] == "AGENT_RUN_STOPPED"
+            return None
+
+        _install_scripted_canvas_client([_outline_script, stopping_execution])
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            events, _ = read_sse_events(response)
+
+        final_payload = events[-1]["data"]
+        assert final_payload["status"] == "stopped"
+        assert final_payload["placed_count"] == 1
+
+        run_id = final_payload["run_id"]
+        ops = get_agent_canvas_run_store().list_ops_after(run_id=run_id, after_seq=0)
+        assert [op["op_type"] for op in ops] == ["create_page", "add_section", "place_chart"]
+
+
+def test_disconnect_mid_run_keeps_appending_ops(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Disc WS")
+        _seed_workspace_dataset(workspace_id)
+
+        async def slow_execution(invoke) -> None:  # type: ignore[no-untyped-def]
+            section = await invoke("add_section", {"title": "概览"})
+            section_id = section["section_id"]
+            await invoke(
+                "place_chart",
+                {
+                    "section_id": section_id,
+                    "title": "总人数",
+                    "chart_type": "single_value",
+                    "size_preset": "kpi",
+                    "sql": "SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees",
+                },
+            )
+            # Give the client time to disconnect before the run continues.
+            await asyncio.sleep(0.3)
+            await invoke(
+                "place_chart",
+                {
+                    "section_id": section_id,
+                    "title": "部门人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            )
+            await invoke("finish_dashboard", {"summary": "完成"})
+            return None
+
+        _install_scripted_canvas_client([_outline_script, slow_execution])
+
+        # Disconnect after the first few frames.
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            seen = 0
+            for _line in response.iter_lines():
+                seen += 1
+                if seen >= 8:
+                    break
+
+        # The detached run keeps appending ops and finalizes on its own.
+        run_id: str | None = None
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            active = client.get(
+                "/chat/agent-runs/active", params={"workspace_id": workspace_id}, headers=headers
+            )
+            run = active.json()["run"]
+            if run is not None:
+                run_id = run["run_id"]
+                if run["status"] == "completed":
+                    break
+            time.sleep(0.1)
+
+        assert run_id is not None
+        run = get_agent_canvas_run_store().get_run(run_id)
+        assert run is not None and run["status"] == "completed"
+        ops = get_agent_canvas_run_store().list_ops_after(run_id=run_id, after_seq=0)
+        assert [op["op_type"] for op in ops] == [
+            "create_page",
+            "add_section",
+            "place_chart",
+            "place_chart",
+        ]
+
+
+def test_budget_exhaustion_finalizes_partial(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path, AGENT_MODE_MAX_CHARTS="1")
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Budget WS")
+        _seed_workspace_dataset(workspace_id)
+
+        async def greedy_execution(invoke) -> None:  # type: ignore[no-untyped-def]
+            section = await invoke("add_section", {"title": "概览"})
+            section_id = section["section_id"]
+            first = await invoke(
+                "place_chart",
+                {
+                    "section_id": section_id,
+                    "title": "总人数",
+                    "chart_type": "single_value",
+                    "size_preset": "kpi",
+                    "sql": "SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees",
+                },
+            )
+            assert first["status"] == "placed"
+            second = await invoke(
+                "place_chart",
+                {
+                    "section_id": section_id,
+                    "title": "部门人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            )
+            assert second["error"]["code"] == "AGENT_MODE_CHART_BUDGET_EXCEEDED"
+            await invoke("finish_dashboard", {"summary": "预算内完成"})
+            return None
+
+        _install_scripted_canvas_client([_outline_script, greedy_execution])
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            events, _ = read_sse_events(response)
+
+        final_payload = events[-1]["data"]
+        assert final_payload["status"] == "partial"
+        assert final_payload["code"] == "AGENT_MODE_BUDGET_EXCEEDED"
+        assert final_payload["placed_count"] == 1
+
+
+def test_confirmation_validation_rejects_stale_and_unknown_items(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Confirm WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client([_outline_script])
+
+        with client.stream(
+            "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+        ) as response:
+            outline_events, _ = read_sse_events(response)
+        confirmation = next(
+            item["data"] for item in outline_events if item["event"] == "confirmation_required"
+        )
+
+        def confirm(body_extra: dict[str, Any]) -> list[dict[str, Any]]:
+            with client.stream(
+                "POST",
+                "/chat/stream",
+                json={
+                    "conversation_id": "canvas-conv-1",
+                    "request_id": f"confirm-{time.time_ns()}",
+                    "user_id": "admin",
+                    "project_id": "north",
+                    "workspace_id": workspace_id,
+                    "dataset_table": "employees",
+                    "message": None,
+                    **body_extra,
+                },
+                headers=headers,
+            ) as confirm_response:
+                events, _ = read_sse_events(confirm_response)
+            return events
+
+        # Unknown confirmation id.
+        events = confirm(
+            {"agent_run_confirmation": {"confirmation_id": "dash-unknown", "action": "confirm"}}
+        )
+        assert events[0]["data"]["code"] == "AGENT_CANVAS_CONFIRMATION_MISSING"
+
+        # Unknown selected item keys.
+        events = confirm(
+            {
+                "agent_run_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "confirm",
+                    "selected_item_keys": ["c1", "nonexistent"],
+                }
+            }
+        )
+        assert events[0]["data"]["code"] == "AGENT_CANVAS_CONFIRMATION_ITEM_MISMATCH"
+
+        # Cancel discards the run without any canvas mutation.
+        events = confirm(
+            {
+                "agent_run_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "cancel",
+                }
+            }
+        )
+        assert events[-1]["data"]["status"] == "canceled"
+        run = get_agent_canvas_run_store().get_run_by_confirmation(
+            confirmation["confirmation_id"]
+        )
+        assert run is not None and run["status"] == "canceled"
+        assert get_agent_canvas_run_store().count_ops(run_id=run["run_id"]) == 0
+
+        # A canceled confirmation can no longer start a run (stale).
+        events = confirm(
+            {
+                "agent_run_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "confirm",
+                }
+            }
+        )
+        assert events[0]["data"]["code"] == "AGENT_CANVAS_CONFIRMATION_STALE"
+
+
+def test_deselected_items_are_skipped(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Select WS")
+        _seed_workspace_dataset(workspace_id)
+
+        async def single_chart_execution(invoke) -> None:  # type: ignore[no-untyped-def]
+            service = get_agent_canvas_mode_service()
+            run = get_agent_canvas_run_store().get_active_run(
+                workspace_id=workspace_id, user_id="admin"
+            )
+            assert run is not None
+            approved = (run["outline"] or {}).get("outline") or {}
+            chart_items = [
+                item
+                for section in approved.get("sections", [])
+                for item in section.get("items", [])
+                if item.get("kind") == "chart"
+            ]
+            # Only the selected chart item survived the approval filter.
+            assert [item["key"] for item in chart_items] == ["c2"]
+            _ = service
+            section = await invoke("add_section", {"title": "概览"})
+            await invoke(
+                "place_chart",
+                {
+                    "section_id": section["section_id"],
+                    "title": "部门人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            )
+            await invoke("finish_dashboard", {"summary": "完成"})
+            return None
+
+        _install_scripted_canvas_client([_outline_script, single_chart_execution])
+
+        with client.stream(
+            "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+        ) as response:
+            outline_events, _ = read_sse_events(response)
+        confirmation = next(
+            item["data"] for item in outline_events if item["event"] == "confirmation_required"
+        )
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={
+                "conversation_id": "canvas-conv-1",
+                "request_id": "canvas-req-select",
+                "user_id": "admin",
+                "project_id": "north",
+                "workspace_id": workspace_id,
+                "dataset_table": "employees",
+                "message": None,
+                "agent_run_confirmation": {
+                    "confirmation_id": confirmation["confirmation_id"],
+                    "action": "confirm",
+                    "selected_item_keys": ["c2"],
+                },
+            },
+            headers=headers,
+        ) as response:
+            run_events, _ = read_sse_events(response)
+
+        final_payload = run_events[-1]["data"]
+        assert final_payload["status"] == "completed"
+        assert final_payload["placed_count"] == 1

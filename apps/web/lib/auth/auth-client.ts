@@ -5,6 +5,8 @@ export type UserInfo = {
   email: string;
   display_name: string;
   job_id: number | null;
+  role: string;
+  status: "active" | "suspended";
   last_login_at: string | null;
   available_workspaces: Array<{ workspace_id: string; name: string; role: string }>;
 };
@@ -18,6 +20,8 @@ export type AuthResult = {
     email: string;
     display_name: string;
     job_id: number | null;
+    role: string;
+    status: "active" | "suspended";
   };
 };
 

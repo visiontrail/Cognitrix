@@ -121,6 +121,22 @@ Open **http://127.0.0.1:3000** — upload one of the sample Excel files to start
 
 > See [Local Configuration](#local-configuration) for API keys and provider setup.
 
+### Administration console
+
+Fresh local installations created from `.env.example` include a development superadmin:
+
+- Email: `admin@cognitrix.local`
+- Password: `Admin@123456`
+- Console: `http://127.0.0.1:3000/admin`
+
+Override `AUTH_BOOTSTRAP_ADMIN_EMAIL`, `AUTH_BOOTSTRAP_ADMIN_PASSWORD`, and
+`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL` before first startup, or set them empty to
+disable bootstrap. The documented password is rejected when `APP_ENV=production`.
+The console manages Agent Skills, every declared backend environment setting,
+model provider credentials, registered users, and per-user usage telemetry.
+Secrets are write-only and infrastructure/security settings are labeled when an
+API restart is required.
+
 ---
 
 ## Current Status

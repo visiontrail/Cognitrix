@@ -123,6 +123,20 @@ make dev
 
 ---
 
+## 后台管理
+
+使用 `.env.example` 初始化的全新本地环境会内置一个开发用 superadmin：
+
+- 邮箱：`admin@cognitrix.local`
+- 密码：`Admin@123456`
+- 后台入口：`http://127.0.0.1:3000/admin`
+
+首次启动前可以覆盖 `AUTH_BOOTSTRAP_ADMIN_EMAIL`、
+`AUTH_BOOTSTRAP_ADMIN_PASSWORD` 和 `AUTH_BOOTSTRAP_SUPERADMIN_EMAIL`；把这些值
+设为空即可禁用引导账号。`APP_ENV=production` 时后端会拒绝文档中的默认密码。
+后台支持 Agent Skills、全部已声明后端环境变量、模型与 API Key、注册用户以及
+逐用户使用指标管理。敏感值只写不读，需要重启 API 的配置会在界面中明确标记。
+
 ## 当前进展
 
 - `SPEC_PLAN.md` 中 M0-M9 共 45 个任务已经全部完成，当前工程具备本地运行、Docker 交付、后端/安全/集成/smoke 测试与 Agentic Query 主链路。

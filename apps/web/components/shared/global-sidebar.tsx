@@ -19,6 +19,7 @@ import {
   ChevronUp,
   Check,
   X,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -315,6 +316,16 @@ export function GlobalSidebar() {
               <p className="text-label text-stone-gray truncate">{user?.email ?? ""}</p>
             </div>
             <DropdownMenuSeparator />
+
+            {user?.role === "superadmin" && (
+              <>
+                <DropdownMenuItem onSelect={() => { window.location.href = "/admin"; }}>
+                  <ShieldCheck className="w-4 h-4" />
+                  后台管理
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
 
             {/* Theme submenu */}
             <DropdownMenuSub>

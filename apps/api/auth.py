@@ -39,6 +39,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workspaces:write",
         "workspaces:manage",
         "skills:admin",
+        "admin:control",
         "prompts:read",
         "prompts:write",
     },
@@ -549,6 +550,8 @@ def handle_email_register(request: RegisterRequest, response: Response) -> dict[
             "email": user.email,
             "display_name": user.display_name,
             "job_id": user.job_id,
+            "role": "admin",
+            "status": user.status,
         },
     }
 
@@ -577,6 +580,12 @@ def handle_email_login(request: EmailLoginRequest, response: Response) -> dict[s
         )
         if user.password_hash is None:
             logger.warning("[login] no password_hash for user id=%s", user.id)
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "invalid_credentials", "message": "邮箱或密码错误"},
+            )
+        if user.status != "active":
+            logger.warning("[login] inactive account user_id=%s status=%s", user.id, user.status)
             raise HTTPException(
                 status_code=401,
                 detail={"code": "invalid_credentials", "message": "邮箱或密码错误"},
@@ -628,6 +637,8 @@ def handle_email_login(request: EmailLoginRequest, response: Response) -> dict[s
             "email": user.email_lower,
             "display_name": user.display_name,
             "job_id": user.job_id,
+            "role": effective_role,
+            "status": user.status,
         },
     }
 
@@ -662,6 +673,8 @@ def handle_me(identity: AuthIdentity) -> dict[str, Any]:
         "email": user.email_lower,
         "display_name": user.display_name,
         "job_id": user.job_id,
+        "status": user.status,
+        "role": identity.role,
         "last_login_at": user.last_login_at,
         "available_workspaces": available_workspaces,
     }
@@ -736,6 +749,7 @@ def get_current_identity(
             len(token_str),
         )
         raise HTTPException(status_code=401, detail={"code": exc.code, "message": exc.message}) from exc
+
     except AuthTokenError as exc:
         audit.log(
             event_type="authentication",
@@ -754,6 +768,23 @@ def get_current_identity(
             len(token_str),
         )
         raise HTTPException(status_code=401, detail={"code": exc.code, "message": exc.message}) from exc
+
+    account_status = _get_user_status(identity.user_id)
+    if account_status is not None and account_status != "active":
+        audit.log(
+            event_type="authentication",
+            action="access",
+            status="denied",
+            severity="ALERT",
+            user_id=identity.user_id,
+            project_id=identity.project_id,
+            resource=str(request.url.path),
+            detail={"reason": "account_inactive"},
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "ACCOUNT_INACTIVE", "message": "Authentication is required"},
+        )
 
     override = get_role_directory().get_override(identity.user_id)
     if override:
@@ -826,6 +857,23 @@ def _optional_string(value: Any) -> str | None:
         stripped = value.strip()
         return stripped or None
     return None
+
+
+def _get_user_status(user_id: str) -> str | None:
+    """Return account status when the identity belongs to a registered user.
+
+    Legacy service identities are intentionally absent from the users table and
+    remain supported while LEGACY_SERVICE_LOGIN_ENABLED is enabled.
+    """
+
+    conn = _get_db_conn()
+    try:
+        row = conn.execute("SELECT status FROM users WHERE id = ?", (user_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return str(row["status"]) if row is not None else None
 
 
 def _authorization_header_snapshot(request: Request) -> dict[str, Any]:

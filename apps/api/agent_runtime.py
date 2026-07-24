@@ -36,6 +36,7 @@ from claude_agent_sdk import (
 from .agent_guardrails import AgentGuardrailContext, AgentGuardrailError, AgentGuardrails
 from .agent_logging import format_agent_debug_blocks
 from .agent_prompting import build_agent_system_prompt
+from .admin_control import record_usage_event
 from .audit import get_audit_logger
 from .chart_strategy import ChartStrategyRouter
 from .config import get_settings
@@ -2695,6 +2696,16 @@ class AgentRuntime:
 
         if isinstance(message, ResultMessage):
             run_context.result_message = message
+            usage = getattr(message, "usage", None)
+            if isinstance(usage, dict):
+                record_usage_event(
+                    user_id=run_context.request.user_id,
+                    project_id=run_context.request.project_id,
+                    event_type="model_call",
+                    input_tokens=_usage_int(usage, "input_tokens", "inputTokens"),
+                    output_tokens=_usage_int(usage, "output_tokens", "outputTokens"),
+                    metadata={"model": str(getattr(message, "model", "") or "")},
+                )
             if isinstance(message.structured_output, dict):
                 return message.structured_output
             if message.result:
@@ -2771,6 +2782,20 @@ class AgentRuntime:
                 "tool_name": record.tool_name,
                 "step": record.step,
                 "conversation_id": run_context.request.conversation_id,
+            },
+        )
+        record_usage_event(
+            user_id=run_context.request.user_id,
+            project_id=run_context.request.project_id,
+            event_type="tool_call",
+            status_code=200 if tool_result_payload["status"] == "success" else 500,
+            duration_ms=max(
+                0.0,
+                (float(tool_result_payload["completed_at"]) - float(record.started_at)) * 1000,
+            ),
+            metadata={
+                "tool_name": record.tool_name,
+                "outcome": tool_result_payload["status"],
             },
         )
         return record
@@ -3448,6 +3473,20 @@ def _canonical_sdk_tool_name(tool_name: str) -> str:
     if name.startswith(prefix):
         return name[len(prefix):]
     return name
+
+
+def _usage_int(usage: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        raw = usage.get(key)
+        if isinstance(raw, bool):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            return value
+    return None
 
 
 def _sdk_tool_record_key(tool_name: str, arguments: dict[str, Any]) -> str:

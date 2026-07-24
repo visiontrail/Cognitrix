@@ -59,7 +59,13 @@ function LoginForm() {
     try {
       const result = await apiEmailLogin({ email, password });
       setInMemoryToken(result.access_token, result.expires_at);
-      window.location.href = invite ? `/invites/${invite}` : next;
+      window.location.href = invite
+        ? `/invites/${invite}`
+        : next !== "/"
+          ? next
+          : result.user.role === "superadmin"
+            ? "/admin"
+            : "/";
     } catch (err) {
       setLoading(false);
       setError(err instanceof AuthError ? t("auth.loginError") : t("auth.loginFailed"));
@@ -74,13 +80,19 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-5">
+    <form
+      aria-label="Login"
+      onSubmit={handleSubmit}
+      onKeyDown={handleKeyDown}
+      className="space-y-5"
+    >
       <div className="space-y-1.5">
         <label htmlFor="email" className="block text-label font-medium text-charcoal-warm tracking-wide uppercase">
           {t("auth.emailAddress")}
         </label>
         <Input
           id="email"
+          aria-label={`${t("auth.emailAddress")} / 邮箱`}
           type="email"
           autoComplete="email"
           placeholder="you@example.com"
@@ -98,6 +110,7 @@ function LoginForm() {
         </div>
         <Input
           id="password"
+          aria-label={`${t("auth.password")} / 密码`}
           type="password"
           autoComplete="current-password"
           placeholder="••••••••"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -11,6 +12,11 @@ from starlette.responses import StreamingResponse
 
 from .agentic_ingestion.router import router as ingestion_router
 from .admin_skills import router as admin_skills_router
+from .admin_control import (
+    get_control_store,
+    record_usage_event,
+    router as admin_control_router,
+)
 from .audit import get_audit_logger
 from .auth import (
     AuthIdentity,
@@ -33,7 +39,7 @@ from .auth import (
 from .jobs import router as jobs_router
 from .user_search import router as user_search_router
 from .chat import ChatStreamRequest, get_chat_stream_service
-from .config import get_settings
+from .config import DEFAULT_DEVELOPMENT_ADMIN_PASSWORD, get_settings
 from .data_policy import forbidden_sensitive_columns, redact_rows, redact_structure
 from .datasets import get_dataset_service
 from .public_pages import router as public_pages_router
@@ -77,17 +83,17 @@ app.include_router(saved_prompts_router)
 app.include_router(public_pages_router)
 app.include_router(jobs_router)
 app.include_router(user_search_router)
+app.include_router(admin_control_router)
 
 
 def register_admin_skills_router_if_enabled() -> None:
-    """Mount the /admin/skills router when the feature flag is on.
+    """Mount the /admin/skills management API exactly once.
 
-    Re-callable from tests (after toggling ``AGENT_SKILLS_ENABLED`` and clearing
-    the settings cache) so the route table reflects the current env.
+    Runtime loading remains controlled by ``AGENT_SKILLS_ENABLED``. Keeping the
+    management API mounted lets operators inspect/install skills and then enable
+    loading from the unified control plane.
     """
 
-    if not get_settings().agent_skills_enabled:
-        return
     existing = {getattr(route, "path", "") for route in app.router.routes}
     if any(path.startswith("/admin/skills") for path in existing):
         return
@@ -95,6 +101,35 @@ def register_admin_skills_router_if_enabled() -> None:
 
 
 register_admin_skills_router_if_enabled()
+
+
+@app.middleware("http")
+async def collect_admin_usage(request, call_next):  # type: ignore[no-untyped-def]
+    started = time.perf_counter()
+    response = await call_next(request)
+    identity = getattr(request.state, "identity", None)
+    if identity is not None:
+        duration_ms = (time.perf_counter() - started) * 1000
+        record_usage_event(
+            user_id=identity.user_id,
+            project_id=identity.project_id,
+            event_type="api_request",
+            route=request.url.path,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+        if request.url.path == "/chat/stream":
+            record_usage_event(
+                user_id=identity.user_id,
+                project_id=identity.project_id,
+                event_type="chat_turn",
+                route=request.url.path,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
@@ -210,6 +245,8 @@ async def on_startup() -> None:
     configure_application_logging(settings.log_level)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     apply_migrations()
+    control_store = get_control_store()
+    control_store.cleanup_usage(retention_days=settings.admin_usage_retention_days)
     logger = logging.getLogger("cognitrix")
     logger.info(
         "application_logging_configured level=%s upload_dir=%s",
@@ -237,6 +274,11 @@ async def on_startup() -> None:
         "agentic_ingestion_forced_enabled=true configured_flag=%s",
         settings.agentic_ingestion_enabled,
     )
+    if settings.auth_bootstrap_admin_password == DEFAULT_DEVELOPMENT_ADMIN_PASSWORD:
+        logger.warning(
+            "development_admin_credentials_active email=%s; override or clear bootstrap credentials outside local development",
+            settings.auth_bootstrap_admin_email,
+        )
 
     if settings.agent_skills_enabled:
         from .agent_skills.bootstrap import bootstrap_vendored_xlsx_skill

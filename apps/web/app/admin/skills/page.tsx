@@ -1,12 +1,10 @@
-import AdminSkillsPage from "@/components/admin/admin-skills-page";
+import { redirect } from "next/navigation";
 
-// Page metadata stays deliberately generic: the route is hidden and we do not
-// want non-superadmins (who get a "Not found" 404-style page) to learn its
-// purpose via document.title or any other side-channel.
+// Preserve the old deep link while consolidating administration into one shell.
 export const metadata = {
-  title: "Not found",
+  title: "Cognitrix Control Plane",
 };
 
 export default function Page() {
-  return <AdminSkillsPage />;
+  redirect("/admin#skills");
 }

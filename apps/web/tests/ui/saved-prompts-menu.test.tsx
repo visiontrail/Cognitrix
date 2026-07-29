@@ -71,6 +71,18 @@ describe("ChatInput saved-prompts menu", () => {
     useWorkspaceStore.setState({ activeWorkspaceId: null });
   });
 
+  it("opens saved prompts as a flyout to the right without expanding the actions menu", async () => {
+    const user = userEvent.setup();
+    renderInput();
+
+    await user.click(screen.getByLabelText("Open chat actions"));
+    await user.click(screen.getByRole("menuitem", { name: "Saved prompts" }));
+
+    const submenu = screen.getByRole("menu", { name: "Saved prompts menu" });
+    expect(submenu).toHaveClass("absolute", "left-[calc(100%+0.5rem)]", "w-64");
+    expect(submenu.parentElement).toHaveClass("relative");
+  });
+
   it("opens the create dialog from the menu without mutating the composer draft", async () => {
     const user = userEvent.setup();
     renderInput();

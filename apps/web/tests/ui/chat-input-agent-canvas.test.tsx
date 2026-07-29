@@ -69,7 +69,7 @@ describe("ChatInput agent-canvas option", () => {
 
     await user.click(screen.getByLabelText("Open chat actions"));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Agent build dashboard" }));
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
     expect(screen.getByText("Agent dashboard mode")).toBeInTheDocument();
     expect(screen.queryByTestId("agent-canvas-format-prompt")).not.toBeInTheDocument();
 
@@ -92,7 +92,6 @@ describe("ChatInput agent-canvas option", () => {
 
     await user.click(screen.getByLabelText("Open chat actions"));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Agent build dashboard" }));
-    await user.keyboard("{Escape}");
 
     const prompt = screen.getByTestId("agent-canvas-format-prompt");
     expect(prompt).toBeInTheDocument();

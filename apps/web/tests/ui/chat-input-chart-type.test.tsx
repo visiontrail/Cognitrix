@@ -125,7 +125,7 @@ describe("ChatInput chart type picker", () => {
 
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
     expect(screen.getByText("Multi-chart mode is on for this message. Include the grouping dimension, then press Enter.")).toBeInTheDocument();
-    // The chip (distinct from the still-open menu item) carries the remove control.
+    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove selected strategy" })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Chat Input"), "show headcount by department");
@@ -171,18 +171,12 @@ describe("ChatInput chart type picker", () => {
     render(React.createElement(ChatInput, { sessionId: "session-1" }));
 
     await user.click(screen.getByRole("button", { name: "Open chat actions" }));
-    // The menu stays open between toggles so multiple options can be picked.
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
+    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
 
-    expect(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" })).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
-    expect(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" })).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
+    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
 
     // Both chips are present, and the hint switches to the combined form.
     expect(screen.getByRole("button", { name: "Remove selected strategy" })).toBeInTheDocument();
@@ -210,6 +204,7 @@ describe("ChatInput chart type picker", () => {
 
     await user.click(screen.getByRole("button", { name: "Open chat actions" }));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Multi-chart generation" }));
+    await user.click(screen.getByRole("button", { name: "Open chat actions" }));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Show data labels on chart" }));
 
     // Drop multi-chart via its chip; data labels stays on.

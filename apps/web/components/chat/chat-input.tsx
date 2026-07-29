@@ -614,7 +614,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               <div
                 role="menu"
                 aria-label={t("chat.actions.menuLabel")}
-                className="absolute bottom-[52px] left-0 z-30 w-64 overflow-hidden rounded-comfortable border border-border-cream bg-ivory p-1.5 shadow-xl"
+                className="absolute bottom-[52px] left-0 z-30 w-64 rounded-comfortable border border-border-cream bg-ivory p-1.5 shadow-xl"
               >
                 <button
                   type="button"
@@ -643,8 +643,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                           ? OPTION_TONE_MENU_ACTIVE[option.tone]
                           : "text-near-black hover:bg-parchment focus:bg-parchment"
                       )}
-                      // Keep the menu open so several options can be toggled in one pass.
-                      onClick={() => setSelectedOptions((current) => toggleGenerationOption(current, option.id))}
+                      onClick={() => {
+                        setSelectedOptions((current) => toggleGenerationOption(current, option.id));
+                        setActionMenuOpen(false);
+                      }}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
                       <span>{t(option.menuLabelKey)}</span>
@@ -654,80 +656,84 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
 
                 <div className="my-1 h-px bg-border-cream" />
 
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-haspopup="menu"
-                  aria-expanded={savedPromptsSubmenuOpen}
-                  className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
-                  onClick={() => setSavedPromptsSubmenuOpen((open) => !open)}
-                >
-                  <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
-                  <span className="flex-1">{t("savedPrompts.menu.label")}</span>
-                  <ChevronRight
+                <div className="relative">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={savedPromptsSubmenuOpen}
                     className={cn(
-                      "h-4 w-4 shrink-0 text-stone-gray transition-transform",
-                      savedPromptsSubmenuOpen && "rotate-90"
+                      "flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none",
+                      savedPromptsSubmenuOpen && "bg-parchment"
                     )}
-                  />
-                </button>
+                    onClick={() => setSavedPromptsSubmenuOpen((open) => !open)}
+                  >
+                    <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
+                    <span className="flex-1">{t("savedPrompts.menu.label")}</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-stone-gray" />
+                  </button>
 
-                {savedPromptsSubmenuOpen ? (
-                  <div role="menu" aria-label={t("savedPrompts.menu.submenuLabel")} className="pl-2">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
-                      onClick={() => {
-                        setActionMenuOpen(false);
-                        setEditorState({ open: true, prompt: null });
-                      }}
+                  {savedPromptsSubmenuOpen ? (
+                    <div
+                      role="menu"
+                      aria-label={t("savedPrompts.menu.submenuLabel")}
+                      className="absolute bottom-0 left-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,calc(100vh-2rem))] w-64 overflow-y-auto rounded-comfortable border border-border-cream bg-ivory p-1.5 shadow-xl"
                     >
-                      <Plus className="h-4 w-4 shrink-0 text-stone-gray" />
-                      <span>{t("savedPrompts.menu.create")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
-                      onClick={() => {
-                        setActionMenuOpen(false);
-                        setManagerOpen(true);
-                      }}
-                    >
-                      <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
-                      <span>{t("savedPrompts.menu.manage")}</span>
-                    </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                        onClick={() => {
+                          setActionMenuOpen(false);
+                          setEditorState({ open: true, prompt: null });
+                        }}
+                      >
+                        <Plus className="h-4 w-4 shrink-0 text-stone-gray" />
+                        <span>{t("savedPrompts.menu.create")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-3 rounded-comfortable px-3 py-2 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                        onClick={() => {
+                          setActionMenuOpen(false);
+                          setManagerOpen(true);
+                        }}
+                      >
+                        <BookMarked className="h-4 w-4 shrink-0 text-stone-gray" />
+                        <span>{t("savedPrompts.menu.manage")}</span>
+                      </button>
 
-                    {recentPromptsQuery.isLoading ? (
-                      <p className="px-3 py-2 text-caption text-stone-gray">
-                        {t("savedPrompts.menu.loading")}
-                      </p>
-                    ) : recentPrompts.length === 0 ? (
-                      <p className="px-3 py-2 text-caption text-stone-gray">
-                        {t("savedPrompts.menu.empty")}
-                      </p>
-                    ) : (
-                      <>
-                        <p className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-stone-gray">
-                          {t("savedPrompts.menu.recentLabel")}
+                      {recentPromptsQuery.isLoading ? (
+                        <p className="px-3 py-2 text-caption text-stone-gray">
+                          {t("savedPrompts.menu.loading")}
                         </p>
-                        {recentPrompts.map((prompt) => (
-                          <button
-                            key={prompt.id}
-                            type="button"
-                            role="menuitem"
-                            aria-label={t("savedPrompts.menu.insertAria", { name: prompt.name })}
-                            className="flex w-full items-center gap-2 rounded-comfortable px-3 py-1.5 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
-                            onClick={() => applyPrompt(prompt)}
-                          >
-                            <span className="truncate">{prompt.name}</span>
-                          </button>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                ) : null}
+                      ) : recentPrompts.length === 0 ? (
+                        <p className="px-3 py-2 text-caption text-stone-gray">
+                          {t("savedPrompts.menu.empty")}
+                        </p>
+                      ) : (
+                        <>
+                          <p className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-stone-gray">
+                            {t("savedPrompts.menu.recentLabel")}
+                          </p>
+                          {recentPrompts.map((prompt) => (
+                            <button
+                              key={prompt.id}
+                              type="button"
+                              role="menuitem"
+                              aria-label={t("savedPrompts.menu.insertAria", { name: prompt.name })}
+                              className="flex w-full items-center gap-2 rounded-comfortable px-3 py-1.5 text-left text-body-sm text-near-black hover:bg-parchment focus:bg-parchment focus:outline-none"
+                              onClick={() => applyPrompt(prompt)}
+                            >
+                              <span className="truncate">{prompt.name}</span>
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>

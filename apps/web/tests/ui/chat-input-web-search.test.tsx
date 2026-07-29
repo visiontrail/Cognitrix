@@ -58,12 +58,7 @@ describe("ChatInput web-search option", () => {
     const option = screen.getByRole("menuitemcheckbox", { name: "Search the web" });
     expect(option).toHaveAttribute("aria-checked", "false");
     await user.click(option);
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: "Search the web" }),
-    ).toHaveAttribute("aria-checked", "true");
-
-    // Selected-state chip appears once the menu is dismissed.
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
     expect(screen.getByText("Web search on")).toBeInTheDocument();
 
     const input = screen.getByLabelText("Chat Input");
@@ -83,7 +78,6 @@ describe("ChatInput web-search option", () => {
 
     await user.click(screen.getByLabelText("Open chat actions"));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Search the web" }));
-    await user.keyboard("{Escape}");
     await user.click(screen.getByLabelText("Turn off web search"));
     expect(screen.queryByText("Web search on")).not.toBeInTheDocument();
 

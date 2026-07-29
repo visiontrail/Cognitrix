@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent
 
@@ -397,9 +398,7 @@ class ViewStorageService:
         }
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path)
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:

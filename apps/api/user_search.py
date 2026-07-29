@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .auth import AuthIdentity, get_current_identity
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 router = APIRouter(tags=["users"])
 
@@ -55,9 +56,7 @@ def _get_db_conn() -> sqlite3.Connection:
             db_path = (SQLITE_RELATIVE_BASE / raw_path).resolve()
     else:
         db_path = (settings.upload_dir / "state" / "ai_views.sqlite3").resolve()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite_connect(db_path)
 
 
 @router.get("/users/search")

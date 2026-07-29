@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 # ---------------------------------------------------------------------------
 # Agent canvas mode — run/op persistence and the canvas tool contract.
@@ -302,10 +303,7 @@ class AgentCanvasRunStore:
     # -- schema ------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path, create_parents=True)
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         if self._schema_ready:

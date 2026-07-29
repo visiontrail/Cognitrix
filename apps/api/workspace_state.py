@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from .auth import AuthIdentity, get_current_identity
+from .sqlite_support import connect as sqlite_connect
 from .workspaces import WorkspaceError, get_workspace_service
 
 logger = logging.getLogger("cognitrix.workspace_state")
@@ -107,9 +108,7 @@ class WorkspaceStateStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path)
 
     def _init_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

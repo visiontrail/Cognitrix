@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Cognitrix API", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
     database_url: str = Field(alias="DATABASE_URL")
+    sqlite_busy_timeout_ms: int = Field(default=15000, alias="SQLITE_BUSY_TIMEOUT_MS")
     model_provider_url: str = Field(alias="MODEL_PROVIDER_URL")
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-chat", alias="AI_MODEL")
@@ -114,6 +115,13 @@ class Settings(BaseSettings):
     def validate_api_timeout_ms(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("API_TIMEOUT_MS must be greater than 0")
+        return value
+
+    @field_validator("sqlite_busy_timeout_ms")
+    @classmethod
+    def validate_sqlite_busy_timeout_ms(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("SQLITE_BUSY_TIMEOUT_MS must be greater than 0")
         return value
 
     @field_validator(

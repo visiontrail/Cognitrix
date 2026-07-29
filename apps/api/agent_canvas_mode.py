@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -53,7 +54,6 @@ from .agent_runtime import (
     _canonical_sdk_tool_name,
     _localized_text,
     _normalize_response_locale,
-    _parse_final_answer,
     build_sdk_provider_env,
     get_agent_runtime,
 )
@@ -1069,9 +1069,9 @@ class AgentCanvasModeService:
                     if isinstance(sdk_message.structured_output, dict):
                         final_answer = sdk_message.structured_output
                     elif sdk_message.result:
-                        final_answer = _parse_final_answer(sdk_message.result)
+                        final_answer = _parse_agent_canvas_json(sdk_message.result)
         if final_answer is None and text_blocks:
-            final_answer = _parse_final_answer("\n".join(text_blocks))
+            final_answer = _parse_agent_canvas_json("\n".join(text_blocks))
         return final_answer
 
     async def _invoke_phase_tool(
@@ -1318,6 +1318,37 @@ class AgentCanvasModeService:
 # ---------------------------------------------------------------------------
 # Outline helpers
 # ---------------------------------------------------------------------------
+
+
+def _parse_agent_canvas_json(content: str) -> dict[str, Any] | None:
+    """Extract any JSON object emitted by an agent-canvas phase.
+
+    The shared BI final-answer parser intentionally accepts only single-chart
+    payloads containing ``rows`` or ``chart_type``. Canvas outline payloads
+    contain ``sections`` instead, so they need a shape-neutral parser before
+    ``_normalize_outline`` applies the phase-specific validation.
+    """
+    text = content.strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        candidates.append(fence_match.group(1))
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def _normalize_outline(raw: dict[str, Any], *, max_charts: int) -> dict[str, Any]:

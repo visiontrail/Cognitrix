@@ -35,6 +35,7 @@ from .published_pages import (
     read_chart_data,
     read_manifest,
 )
+from .sqlite_support import connect as sqlite_connect
 
 logger = logging.getLogger("cognitrix.workspaces")
 
@@ -611,7 +612,7 @@ class WorkspaceService:
         agent_sessions_path = (upload_dir / "state" / "agent_sessions.sqlite3").resolve()
         if agent_sessions_path.exists():
             try:
-                _agent_conn = sqlite3.connect(agent_sessions_path)
+                _agent_conn = sqlite_connect(agent_sessions_path, row_factory=None)
                 try:
                     cols = _agent_conn.execute(
                         "PRAGMA table_info(agent_sessions)"
@@ -954,10 +955,7 @@ class WorkspaceService:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return sqlite_connect(self.db_path, foreign_keys=True)
 
     def _allocate_slug(self, conn: sqlite3.Connection, name: str) -> str:
         base = _slugify(name)

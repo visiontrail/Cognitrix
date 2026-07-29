@@ -26,6 +26,7 @@ from .column_metadata import (
 from .config import get_settings
 from .data_policy import filter_schema_columns, redact_rows
 from .datasets import SAFE_IDENTIFIER_RE, get_dataset_service
+from .sqlite_support import connect as sqlite_connect
 from .workspaces import WorkspaceError, get_workspace_service
 
 # `BUSINESS_TYPES` is an advisory vocabulary surfaced to the agent in prompts;
@@ -634,10 +635,7 @@ class TableCatalogService:
             initialize_sqlite_schema(conn)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return sqlite_connect(self.db_path, foreign_keys=True)
 
     def _assert_workspace_exists(self, conn: sqlite3.Connection, *, workspace_id: str) -> None:
         row = conn.execute(

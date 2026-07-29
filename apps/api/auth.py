@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .audit import get_audit_logger
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "superadmin": {
@@ -482,9 +483,7 @@ def _get_db_conn() -> sqlite3.Connection:
     else:
         db_path = (settings.upload_dir / "state" / "ai_views.sqlite3").resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite_connect(db_path)
 
 
 def handle_email_register(request: RegisterRequest, response: Response) -> dict[str, Any]:

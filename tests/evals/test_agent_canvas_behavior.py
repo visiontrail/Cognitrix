@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from apps.api.agent_canvas import SIZE_PRESETS
-from apps.api.agent_canvas_mode import _normalize_outline
+from apps.api.agent_canvas_mode import _normalize_outline, _parse_agent_canvas_json
 from apps.api.agent_prompting import (
     build_agent_canvas_execution_prompt,
     build_agent_canvas_outline_prompt,
@@ -63,6 +63,21 @@ def test_execution_prompt_pins_the_run_protocol() -> None:
 # Outline-normalization evals: what a drifting model actually emits must be
 # normalized into a valid outline (or rejected), never crash the run.
 # ---------------------------------------------------------------------------
+
+
+def test_canvas_json_parser_accepts_live_outline_result_format() -> None:
+    raw = {
+        "title": "员工概览",
+        "sections": [
+            {
+                "title": "概览",
+                "items": [{"kind": "chart", "title": "总人数", "chart_type": "single_value"}],
+            }
+        ],
+    }
+    content = f"大纲如下：\n```json\n{json.dumps(raw, ensure_ascii=False)}\n```"
+
+    assert _parse_agent_canvas_json(content) == raw
 
 
 def test_outline_normalization_repairs_model_drift() -> None:

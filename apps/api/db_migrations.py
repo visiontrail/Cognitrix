@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 logger = logging.getLogger("cognitrix.db_migrations")
 
@@ -58,11 +59,7 @@ def _get_db_path() -> Path:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = OFF")
-    return conn
+    return sqlite_connect(db_path, foreign_keys=False, create_parents=True)
 
 
 def _ensure_migrations_table(conn: sqlite3.Connection) -> None:

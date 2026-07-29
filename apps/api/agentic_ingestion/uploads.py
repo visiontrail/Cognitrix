@@ -17,6 +17,7 @@ import pandas as pd
 from fastapi import UploadFile
 
 from ..config import get_settings
+from ..sqlite_support import connect as sqlite_connect
 from ..workspaces import get_workspace_service
 from .nonstructured_excel import inspect_workbook_structure
 from .schema import initialize_sqlite_schema
@@ -316,10 +317,7 @@ class IngestionUploadInspectionService:
             initialize_sqlite_schema(conn)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return sqlite_connect(self.db_path, foreign_keys=True)
 
     def _assert_workspace_exists(self, conn: sqlite3.Connection, *, workspace_id: str) -> None:
         row = conn.execute(

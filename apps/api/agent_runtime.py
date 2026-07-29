@@ -40,6 +40,7 @@ from .admin_control import record_usage_event
 from .audit import get_audit_logger
 from .chart_strategy import ChartStrategyRouter
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 from .tool_calling import ToolCall, ToolCallRequest, ToolCallResponse, get_tool_calling_service
 
 logger = logging.getLogger("cognitrix.agent")
@@ -804,9 +805,7 @@ class AgentSessionStore:
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path)
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:

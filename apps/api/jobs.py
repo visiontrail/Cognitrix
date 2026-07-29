@@ -9,6 +9,7 @@ from functools import lru_cache
 from fastapi import APIRouter
 
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent
 router = APIRouter(tags=["jobs"])
@@ -22,8 +23,7 @@ async def list_jobs() -> dict[str, Any]:
 
 def _get_jobs() -> list[dict[str, Any]]:
     db_path = _get_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = sqlite_connect(db_path)
     try:
         rows = conn.execute(
             "SELECT id, code, label_zh, label_en, sort_order FROM user_jobs ORDER BY sort_order ASC"

@@ -18,6 +18,7 @@ from threading import Lock
 from typing import Any, Iterable
 
 from ..config import get_settings
+from ..sqlite_support import connect as sqlite_connect
 
 
 class SkillNotFoundError(KeyError):
@@ -112,11 +113,7 @@ class SkillRegistry:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+        return sqlite_connect(self.db_path, foreign_keys=True)
 
     def _ensure_schema(self) -> None:
         with self._lock, self._connect() as conn:

@@ -18,6 +18,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator, model_vali
 
 from .config import get_settings
 from .data_policy import forbidden_sensitive_columns, redact_rows
+from .sqlite_support import connect as sqlite_connect
 
 SQLITE_RELATIVE_BASE = Path(__file__).resolve().parent
 PUBLISHED_SCHEMA_PATH = SQLITE_RELATIVE_BASE / "migrations" / "0004_published_pages_init.sql"
@@ -987,9 +988,7 @@ class PublishedPageStore:
             return CANVAS_KIND_WEB_PAGE
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path)
 
     @staticmethod
     def _serialize(row: sqlite3.Row) -> PublishedPage:

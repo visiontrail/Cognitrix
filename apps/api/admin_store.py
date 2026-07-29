@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from .sqlite_support import connect as sqlite_connect
+
 
 class AdminControlStore:
     """Small, isolated SQLite store for global configuration and usage facts."""
@@ -20,11 +22,7 @@ class AdminControlStore:
         self.ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=10000")
-        return conn
+        return sqlite_connect(self.path)
 
     def ensure_schema(self) -> None:
         with self._lock, self._connect() as conn:

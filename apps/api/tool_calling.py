@@ -55,6 +55,7 @@ from .semantic import (
     get_metric_compiler,
     get_semantic_registry,
 )
+from .sqlite_support import connect as sqlite_connect
 from .table_catalog import get_table_catalog_service
 from .views import SaveViewInput, ViewStorageError, get_view_storage_service
 from .workspace_state import get_workspace_state_store
@@ -1928,8 +1929,7 @@ class ToolCallingService:
             return {}
         try:
             db_path = get_workspace_service().db_path
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
+            with sqlite_connect(db_path) as conn:
                 return load_table_column_metadata(
                     conn,
                     workspace_id=context.workspace_id,

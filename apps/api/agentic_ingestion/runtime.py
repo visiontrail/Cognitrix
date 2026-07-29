@@ -44,6 +44,7 @@ from .models import (
     IngestionExecutionAgentOutput,
     IngestionProposalPayload,
 )
+from ..sqlite_support import connect as sqlite_connect
 from .routing import RouteDecision, select_agent_route
 
 logger = logging.getLogger("cognitrix.ingestion")
@@ -1129,6 +1130,13 @@ class WriteIngestionAgentRuntime:
                         event_type="job_status_updated",
                         payload={"status": "planning", "trigger": "ingestion_plan"},
                     )
+                    # The planning loop below runs for as long as the model takes.
+                    # Land the status transition now so it is visible to other
+                    # requests and, more importantly, so SQLite's write lock is not
+                    # held for the whole run — the failure path compensates through
+                    # _rollback_on_failure rather than relying on an implicit
+                    # rollback of this transaction.
+                    conn.commit()
 
                     # tool_trace_snapshot is hoisted into _run_and_finalize scope so the
                     # rollback path can see it even after `with conn` unwinds.
@@ -4367,11 +4375,21 @@ class WriteIngestionAgentRuntime:
             event_type="tool_use",
             payload={"tool_name": name, "arguments": arguments},
         )
+        # Commit before handing control back to the agent loop.  `conn` lives for
+        # the whole run, and the caller resumes the LLM right after this returns:
+        # an uncommitted write here would hold SQLite's write lock across every
+        # model round-trip, so unrelated requests (login, chat history saves)
+        # would fail with "database is locked".  The failure path compensates
+        # explicitly (_rollback_on_failure), so committing per tool is safe.
+        conn.commit()
         logger.info("ingestion_tool_use job_id=%s tool_name=%s arguments=%s", job_id, name, _compact_json(arguments))
         try:
             result = handler()
         except Exception as exc:
             elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            # Drop whatever the failed handler wrote before recording the error,
+            # so a half-applied tool never lands in the database.
+            conn.rollback()
             error_payload = {
                 "tool_name": name,
                 "error_type": type(exc).__name__,
@@ -4384,6 +4402,7 @@ class WriteIngestionAgentRuntime:
                 event_type="tool_error",
                 payload=error_payload,
             )
+            conn.commit()
             trace.append({"tool_name": name, "arguments": arguments, "error": error_payload})
             logger.warning(
                 "ingestion_tool_error job_id=%s tool_name=%s elapsed_ms=%s error_type=%s error=%s",
@@ -4402,6 +4421,9 @@ class WriteIngestionAgentRuntime:
             event_type="tool_result",
             payload={"tool_name": name, "result": result, "elapsed_ms": elapsed_ms},
         )
+        # Commits the handler's own writes together with this result event, and
+        # releases the write lock before the next model round-trip.
+        conn.commit()
         trace.append(
             {
                 "tool_name": name,
@@ -7038,10 +7060,7 @@ class WriteIngestionAgentRuntime:
     def _connect(self) -> sqlite3.Connection:
         from ..workspaces import get_workspace_service
 
-        conn = sqlite3.connect(get_workspace_service().db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return sqlite_connect(get_workspace_service().db_path, foreign_keys=True)
 
     @staticmethod
     def _serialize_catalog_entry(row: sqlite3.Row) -> dict[str, Any]:

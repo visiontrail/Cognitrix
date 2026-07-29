@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from .audit import get_audit_logger
 from .auth import AuthIdentity, require_permission
 from .config import get_settings
+from .sqlite_support import connect as sqlite_connect
 
 # ---------------------------------------------------------------------------
 # Variable template syntax (Decision 3 in design.md)
@@ -386,9 +387,7 @@ class SavedPromptStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite_connect(self.db_path)
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:

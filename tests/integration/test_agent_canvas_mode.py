@@ -287,6 +287,99 @@ def test_full_outline_approve_run_completed(monkeypatch, tmp_path: Path) -> None
         assert [op["seq"] for op in tail_ops] == [3, 4, 5]
 
 
+def test_corrected_chart_retry_replaces_placeholder_and_clears_failure_count(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    async def outline(invoke) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        await invoke("list_tables", {})
+        return {
+            "title": "员工概览",
+            "sections": [
+                {
+                    "key": "s1",
+                    "title": "概览",
+                    "items": [
+                        {
+                            "key": "c1",
+                            "kind": "chart",
+                            "title": "部门人数",
+                            "description": "按部门统计",
+                            "chart_type": "bar",
+                            "size_preset": "half",
+                        }
+                    ],
+                }
+            ],
+        }
+
+    async def execution(invoke) -> None:  # type: ignore[no-untyped-def]
+        section = await invoke("add_section", {"title": "概览"})
+        chart_args = {
+            "section_id": section["section_id"],
+            "title": "部门人数",
+            "chart_type": "bar",
+            "size_preset": "half",
+        }
+        failed = await invoke(
+            "place_chart",
+            {
+                **chart_args,
+                "sql": (
+                    "SELECT missing_department AS segment, "
+                    "COUNT(*) AS metric_value FROM employees GROUP BY 1"
+                ),
+            },
+        )
+        assert failed["status"] == "error_placeholder"
+        corrected = await invoke(
+            "place_chart",
+            {
+                **chart_args,
+                "sql": (
+                    "SELECT department AS segment, COUNT(*) AS metric_value "
+                    "FROM employees GROUP BY 1"
+                ),
+            },
+        )
+        assert corrected["status"] == "placed"
+        assert corrected["replaced_error_placeholder"] is True
+        await invoke("finish_dashboard", {"summary": "已完成。"})
+        return None
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Retry Replace WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client([outline, execution])
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            events, _ = read_sse_events(response)
+
+    chart_ops = [
+        item["data"]
+        for item in events
+        if item["event"] == "canvas_op"
+        and item["data"]["op_type"] in {"error_placeholder", "place_chart"}
+    ]
+    assert [item["op_type"] for item in chart_ops] == [
+        "error_placeholder",
+        "place_chart",
+    ]
+    assert chart_ops[0]["payload"]["block_id"] == chart_ops[1]["payload"]["block_id"]
+    final_payload = events[-1]["data"]
+    assert final_payload["status"] == "completed"
+    assert final_payload["placed_count"] == 1
+    assert final_payload["failed_count"] == 0
+    assert final_payload["skipped_count"] == 0
+
+
 def test_tail_endpoint_replays_ops_and_terminal(monkeypatch, tmp_path: Path) -> None:
     _set_canvas_env(monkeypatch, tmp_path)
 

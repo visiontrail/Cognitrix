@@ -51,8 +51,12 @@ def test_execution_prompt_pins_the_run_protocol() -> None:
     assert "`finish_dashboard` is REQUIRED" in prompt
     # SQL aliasing contract that ChartStrategyRouter's spec builder relies on.
     assert "AS segment" in prompt and "AS metric_value" in prompt
+    # Uploaded temporal columns are commonly strings; the prompt must pin the
+    # cast needed before DuckDB temporal functions.
+    assert "TRY_CAST(entry_date AS TIMESTAMP)" in prompt
     # Failure isolation: retry at most once, never abandon the run.
     assert "AT MOST once" in prompt
+    assert "automatically replaces the error placeholder" in prompt
     assert "Never abandon the run" in prompt
     # Budgets and geometry rules restated at execution time.
     assert "more than 8 charts" in prompt

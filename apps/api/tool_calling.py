@@ -99,6 +99,20 @@ ALLOWED_DUCKDB_BASE_TYPES = frozenset(
     }
 )
 
+# These failures are properties of the submitted SQL or the current schema.
+# Re-running the identical statement cannot heal them and only burns tool
+# turns that the model could use to correct the query.
+NON_RETRYABLE_DUCKDB_QUERY_ERRORS = frozenset(
+    {
+        "BinderException",
+        "CatalogException",
+        "ConversionException",
+        "InvalidInputException",
+        "ParserException",
+        "SyntaxException",
+    }
+)
+
 TOOLS_REQUIRE_ACTIVE_DATASET = frozenset(
     {
         "query_metrics",
@@ -940,6 +954,10 @@ class ToolCallingService:
                 columns = [column[0] for column in (cursor.description or [])]
                 rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
         except duckdb.Error as exc:
+            error_detail = str(exc).strip()
+            if len(error_detail) > 1200:
+                error_detail = f"{error_detail[:1197]}..."
+            retryable = type(exc).__name__ not in NON_RETRYABLE_DUCKDB_QUERY_ERRORS
             logger.warning(
                 "readonly_sql_execution_failed user_id=%s project_id=%s dataset_table=%s sql=%s error_type=%s error=%s",
                 context.user_id,
@@ -951,8 +969,12 @@ class ToolCallingService:
             )
             raise ToolExecutionError(
                 code="QUERY_EXECUTION_FAILED",
-                message="Failed to execute readonly SQL",
-                retryable=True,
+                message=(
+                    f"Failed to execute readonly SQL: {error_detail}"
+                    if error_detail
+                    else "Failed to execute readonly SQL"
+                ),
+                retryable=retryable,
             ) from exc
 
         safe_rows = redact_rows(rows, role=context.role)
@@ -1470,8 +1492,30 @@ class ToolCallingService:
         size_preset = str(model_arguments["size_preset"]).strip()
         section_id = str(model_arguments.get("section_id") or "").strip()
         description = str(model_arguments.get("description") or "").strip()
-        replaces_block_id = str(arguments.get("_replaces_block_id") or "").strip() or None
         store = get_agent_canvas_run_store()
+        replaces_block_id = str(arguments.get("_replaces_block_id") or "").strip() or None
+        if replaces_block_id is None:
+            # The execution prompt allows one corrected retry after a failed
+            # place_chart call. Treat a repeated call for the same logical item
+            # as that retry and reuse the placeholder id, so the client swaps
+            # the error block in place instead of leaving a duplicate behind.
+            for previous_op in reversed(store.list_ops_after(run_id=run_id, after_seq=0)):
+                previous_payload = previous_op.get("payload") or {}
+                same_item = (
+                    str(previous_payload.get("section_id") or "").strip() == section_id
+                    and str(previous_payload.get("title") or "").strip() == title
+                    and str(previous_payload.get("chart_type") or "").strip() == chart_type
+                    and str(previous_payload.get("size_preset") or "").strip() == size_preset
+                )
+                if not same_item:
+                    continue
+                if previous_op.get("op_type") == "error_placeholder":
+                    replaces_block_id = (
+                        str(previous_payload.get("block_id") or "").strip() or None
+                    )
+                # The newest op for this logical item decides whether there is
+                # still an unresolved placeholder.
+                break
 
         sql = str(model_arguments.get("sql") or "").strip()
         try:
@@ -1597,6 +1641,7 @@ class ToolCallingService:
             "size_preset": size_preset,
             "asset_id": asset_id,
             "row_count": len(rows),
+            "replaced_error_placeholder": replaces_block_id is not None,
             "duration_ms": int((time.perf_counter() - started) * 1000),
             "op": op,
         }

@@ -1336,6 +1336,11 @@ class AgentCanvasModeService:
                     spec = (op.get("payload") or {}).get("spec")
                 if result.get("status") == "placed":
                     exec_ctx.charts_placed += 1
+                    if (
+                        result.get("replaced_error_placeholder")
+                        and exec_ctx.failed_items > 0
+                    ):
+                        exec_ctx.failed_items -= 1
                     if isinstance(spec, dict):
                         asset_id = str(result.get("asset_id") or "")
                         emit(

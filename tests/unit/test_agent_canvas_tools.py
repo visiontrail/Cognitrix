@@ -36,9 +36,9 @@ def _set_canvas_env(monkeypatch, tmp_path: Path, *, enabled: bool = True) -> Non
 def _seed_dataset(*, user_id: str = "admin", project_id: str = "north") -> str:
     dataframe = pd.DataFrame(
         [
-            {"employee_id": "E-001", "department": "HR"},
-            {"employee_id": "E-002", "department": "HR"},
-            {"employee_id": "E-003", "department": "PM"},
+            {"employee_id": "E-001", "department": "HR", "entry_date": "2026-01-02 00:00:00"},
+            {"employee_id": "E-002", "department": "HR", "entry_date": "2026-02-03 00:00:00"},
+            {"employee_id": "E-003", "department": "PM", "entry_date": "2025-03-04 00:00:00"},
         ]
     )
     service = get_dataset_service(get_settings().upload_dir)
@@ -245,6 +245,95 @@ def test_place_chart_failure_appends_error_placeholder(monkeypatch, tmp_path: Pa
         workspace_id=WORKSPACE_ID, user_id="admin"
     )
     assert assets == []
+
+
+def test_corrected_place_chart_retry_replaces_error_placeholder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    _seed_dataset()
+    run = _create_run()
+    item = {
+        "section_id": "sec-1",
+        "title": "今年入职趋势",
+        "chart_type": "line",
+        "size_preset": "half",
+    }
+
+    failed = _invoke(
+        "place_chart",
+        _run_arguments(
+            run,
+            {
+                **item,
+                "sql": (
+                    "SELECT strftime(entry_date, '%Y-%m') AS segment, "
+                    "COUNT(*) AS metric_value FROM employees GROUP BY 1"
+                ),
+            },
+        ),
+        idempotency_key="place-chart-temporal-failure",
+    )
+    failed_result = failed.result or {}
+    assert failed_result["status"] == "error_placeholder"
+    assert "Binder Error" in failed_result["error"]["message"]
+    placeholder_id = failed_result["block_id"]
+
+    corrected = _invoke(
+        "place_chart",
+        _run_arguments(
+            run,
+            {
+                **item,
+                "sql": (
+                    "SELECT SUBSTRING(entry_date, 1, 7) AS segment, "
+                    "COUNT(*) AS metric_value FROM employees "
+                    "WHERE entry_date LIKE '2026%' GROUP BY 1 ORDER BY 1"
+                ),
+            },
+        ),
+        idempotency_key="place-chart-temporal-corrected",
+    )
+    corrected_result = corrected.result or {}
+    assert corrected_result["status"] == "placed"
+    assert corrected_result["block_id"] == placeholder_id
+    assert corrected_result["replaced_error_placeholder"] is True
+    assert corrected_result["row_count"] == 2
+    assert corrected_result["op"]["payload"]["replaces_block_id"] == placeholder_id
+
+    stored_ops = get_agent_canvas_run_store().list_ops_after(
+        run_id=run["run_id"], after_seq=0
+    )
+    assert [item["op_type"] for item in stored_ops] == [
+        "error_placeholder",
+        "place_chart",
+    ]
+
+
+def test_deterministic_readonly_sql_error_is_not_retried_and_has_detail(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    _seed_dataset()
+
+    response = _invoke(
+        "execute_readonly_sql",
+        {
+            "sql": (
+                "SELECT strftime(entry_date, '%Y-%m') AS month "
+                "FROM employees"
+            )
+        },
+        idempotency_key="readonly-temporal-binder-error",
+    )
+
+    assert response.status == "error"
+    assert response.attempts == 1
+    assert response.error is not None
+    assert response.error["code"] == "QUERY_EXECUTION_FAILED"
+    assert response.error["retryable"] is False
+    assert "Binder Error" in response.error["message"]
+    assert "VARCHAR" in response.error["message"]
 
 
 def test_canvas_budget_enforcement(monkeypatch, tmp_path: Path) -> None:

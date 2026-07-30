@@ -452,7 +452,13 @@ def main() -> int:
         if plan_payload.get("status") != "awaiting_user_approval":
             raise RuntimeError(f"unexpected ingestion plan status: {plan_payload}")
 
-        proposal = plan_payload["proposal"]
+        proposal = plan_payload.get("proposal") or plan_payload.get("proposal_json")
+        if proposal is None:
+            proposals = plan_payload.get("proposals") or []
+            if proposals:
+                proposal = proposals[0].get("proposal") or proposals[0].get("proposal_json")
+        if proposal is None:
+            raise RuntimeError(f"ingestion plan response missing proposal payload: {plan_payload}")
         proposal_id = str(plan_payload.get("proposal_id", ""))
         approved_action = str(proposal.get("recommended_action", "new_table"))
         approve_response = client.post(
@@ -607,15 +613,19 @@ def main() -> int:
             },
         )
         publish_response.raise_for_status()
-        published_page_id = str(publish_response.json().get("published_page_id", ""))
+        publish_payload = publish_response.json()
+        published_page_id = str(publish_payload.get("published_page_id", ""))
         if not published_page_id:
             raise RuntimeError("publish response missing published_page_id")
+        public_token = str(publish_payload.get("token", ""))
+        if not public_token:
+            raise RuntimeError("publish response missing public token")
 
-        portal_manifest_response = client.get(f"{api_base_url}/portal/pages/{published_page_id}/manifest")
+        portal_manifest_response = client.get(f"{api_base_url}/public/pages/{public_token}/manifest")
         portal_manifest_response.raise_for_status()
 
         portal_chat_response = client.post(
-            f"{api_base_url}/portal/pages/{published_page_id}/chat",
+            f"{api_base_url}/public/pages/{public_token}/chat",
             json={"message": "summarize the smoke chart", "chart_id": "smoke-chart"},
         )
         portal_chat_response.raise_for_status()

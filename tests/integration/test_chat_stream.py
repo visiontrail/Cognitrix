@@ -26,6 +26,11 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AUTH_SECRET", "test-secret")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    # These tests assert the SSE contract for a dead SDK. Multi-chart planning
+    # probes get_distinct_values *before* the SDK runs, and that observation lets
+    # the runtime recover a grounded answer instead of failing — a real feature,
+    # but it hides the failure path under test, so keep it off here.
+    monkeypatch.setenv("MULTI_CHART_GENERATION_ENABLED", "false")
     get_settings.cache_clear()
     clear_dataset_service_cache()
     clear_semantic_cache()

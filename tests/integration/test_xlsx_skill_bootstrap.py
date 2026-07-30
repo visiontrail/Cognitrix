@@ -16,7 +16,7 @@ import pytest
 
 
 SKILL_MD = """---
-name: anthropic/xlsx
+name: xlsx
 description: Tools for reading and writing Excel workbooks
 version: 1.2.0
 ---
@@ -82,12 +82,17 @@ def _vendor_dir(tmp_path: Path, *, version: str = "1.2.0") -> tuple[Path, bytes]
 def test_first_run_installs_and_assigns_to_write_ingestion_agent(env: Path) -> None:
     from apps.api.agent_skills import get_skill_registry
     from apps.api.agent_skills.agents import WRITE_INGESTION_AGENT
-    from apps.api.agent_skills.bootstrap import bootstrap_vendored_xlsx_skill
+    from apps.api.agent_skills.bootstrap import (
+        ANTHROPIC_XLSX_SKILL_NAME,
+        bootstrap_vendored_xlsx_skill,
+    )
 
     vendor, _ = _vendor_dir(env)
     record = bootstrap_vendored_xlsx_skill(vendor_dir=vendor)
     assert record is not None
-    assert record.name == "anthropic/xlsx"
+    # The registry key is the manifest name; the vendored Anthropic bundle
+    # declares `name: xlsx`, and bootstrap's idempotency check looks that up.
+    assert record.name == ANTHROPIC_XLSX_SKILL_NAME == "xlsx"
 
     reg = get_skill_registry()
     assignments = reg.list_assignments_for_agent(WRITE_INGESTION_AGENT)
@@ -114,7 +119,10 @@ def test_bootstrap_is_idempotent_on_second_run(env: Path) -> None:
 
 def test_sha256_mismatch_does_not_install_and_does_not_crash(env: Path) -> None:
     from apps.api.agent_skills import get_skill_registry
-    from apps.api.agent_skills.bootstrap import bootstrap_vendored_xlsx_skill
+    from apps.api.agent_skills.bootstrap import (
+        ANTHROPIC_XLSX_SKILL_NAME,
+        bootstrap_vendored_xlsx_skill,
+    )
 
     vendor = env / "vendor"
     vendor.mkdir(parents=True, exist_ok=True)
@@ -125,7 +133,7 @@ def test_sha256_mismatch_does_not_install_and_does_not_crash(env: Path) -> None:
 
     record = bootstrap_vendored_xlsx_skill(vendor_dir=vendor)
     assert record is None  # Not installed
-    assert get_skill_registry().get_by_name("anthropic/xlsx") is None
+    assert get_skill_registry().get_by_name(ANTHROPIC_XLSX_SKILL_NAME) is None
 
 
 def test_missing_zip_skips_quietly(env: Path) -> None:

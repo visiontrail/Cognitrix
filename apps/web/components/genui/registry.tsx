@@ -13,7 +13,9 @@ export function GenUIRegistry({ rawSpec, isStreaming = false }: GenUIRegistryPro
 
   if (!rawSpec && isStreaming) {
     return (
-      <div className="space-y-3 p-4">
+      // Same hook as SkeletonPanel in ./state-panels — the streaming placeholder
+      // is addressable wherever it renders.
+      <div className="space-y-3 p-4" data-testid="stream-skeleton">
         <div className="h-4 w-3/4 bg-warm-sand rounded animate-pulse" />
         <div className="h-4 w-full bg-warm-sand rounded animate-pulse" />
         <div className="h-4 w-1/2 bg-warm-sand rounded animate-pulse" />

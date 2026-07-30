@@ -1,6 +1,6 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAutoSaveWorkspace } from "../../hooks/use-workspace";
@@ -48,6 +48,23 @@ function renderWithProviders(ui: React.ReactElement) {
 describe("workspace auto-save", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Auto-save writes the local cache and then PUTs the snapshot to the API.
+    // Without a stubbed fetch the PUT rejects, the mutation never reaches
+    // onSuccess, and hasUnsavedChanges is never cleared.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        // Shape satisfies both the legacy /auth/login exchange and the
+        // canvas-snapshot PUT.
+        json: async () => ({
+          access_token: "test-token",
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }),
+        text: async () => "{}",
+      }))
+    );
     window.localStorage.clear();
     useWorkspaceStore.setState({
       workspaces: [],
@@ -64,6 +81,7 @@ describe("workspace auto-save", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     window.localStorage.clear();
     useWorkspaceStore.setState({
       workspaces: [],
@@ -81,26 +99,27 @@ describe("workspace auto-save", () => {
   it("saves dirty workspace snapshots without a manual save action", async () => {
     renderWithProviders(<AutoSaveHarness />);
 
+    // Still inside the auto-save debounce window (900ms): nothing written yet.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(window.localStorage.getItem(WORKSPACE_SNAPSHOT_STORAGE_KEY)).toBeNull();
+
+    // Move a node, then let the debounce elapse — the save must happen on its
+    // own, with no manual save action.
+    await act(async () => {
       useWorkspaceStore.getState().setNodes([
         {
           ...chartNode,
           position: { x: 120, y: 40 },
         },
       ]);
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1000);
     });
 
-    expect(window.localStorage.getItem(WORKSPACE_SNAPSHOT_STORAGE_KEY)).toBeNull();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400);
-    });
-
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().hasUnsavedChanges).toBe(false);
-    });
+    // The act() above already flushed the debounce, the mutation and its
+    // onSuccess; waitFor would only deadlock against the fake timers here.
+    expect(useWorkspaceStore.getState().hasUnsavedChanges).toBe(false);
 
     const persisted = JSON.parse(window.localStorage.getItem(WORKSPACE_SNAPSHOT_STORAGE_KEY) ?? "{}");
     expect(persisted.snapshots["ws-test"].nodes[0].id).toBe("node-chart");

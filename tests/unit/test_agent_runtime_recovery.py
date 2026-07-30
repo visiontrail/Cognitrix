@@ -41,9 +41,13 @@ def test_recover_final_answer_prefers_sql_result_over_later_distinct_values() ->
         },
     ]
 
+    # Production always passes the resolved response locale (derived from the
+    # request message when the client did not choose one), so a Chinese question
+    # arrives here as zh-CN.
     answer = _recover_final_answer_from_tool_trace(
         tool_trace=tool_trace,
         request_message="按年龄段统计员工人数",
+        locale="zh-CN",
     )
 
     assert answer is not None
@@ -52,7 +56,9 @@ def test_recover_final_answer_prefers_sql_result_over_later_distinct_values() ->
     assert answer["x_key"] == "age_group"
     assert answer["y_key"] == "employee_count"
     assert answer["rows"] == tool_trace[0]["result"]["rows"]
-    assert answer["anomalies"] == "agent_auto_composed_from_tool_result"
+    # The marker was replaced by a localized, user-facing note (it is rendered
+    # into the final answer text as "异常说明: ...").
+    assert answer["anomalies"] == "已基于成功工具结果自动生成。"
 
 
 def test_sdk_options_target_deepseek_anthropic_gateway(monkeypatch, tmp_path) -> None:
@@ -173,6 +179,7 @@ def test_recover_final_answer_prefers_non_empty_semantic_result_over_empty_sql()
     answer = _recover_final_answer_from_tool_trace(
         tool_trace=tool_trace,
         request_message="统计平均年龄",
+        locale="zh-CN",
     )
 
     assert answer is not None

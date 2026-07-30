@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import pandas as pd
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 from fastapi.testclient import TestClient
 
 from apps.api.agent_canvas import (
@@ -591,6 +592,186 @@ def test_confirmation_validation_rejects_stale_and_unknown_items(monkeypatch, tm
             }
         )
         assert events[0]["data"]["code"] == "AGENT_CANVAS_CONFIRMATION_STALE"
+
+
+def _install_failing_canvas_client(
+    *,
+    text: str,
+    is_error: bool,
+    api_error_status: int | None,
+    terminal_reason: str | None = None,
+    subtype: str = "success",
+    num_turns: int = 1,
+    observed_options: list[Any] | None = None,
+) -> None:
+    """Fake SDK client reproducing a provider-level rejection.
+
+    The real SDK does not raise on HTTP 4xx from the gateway: it emits the
+    provider's message as a synthetic assistant TextBlock plus a ResultMessage
+    with is_error=True, so the outline phase sees unparseable text.
+    """
+    service = get_agent_canvas_mode_service()
+    # `api_error_status`/`terminal_reason` only exist on newer claude-agent-sdk
+    # releases (the container runs one, the test venv may not), so attach them
+    # out-of-band rather than pinning the test to one SDK version.
+    result_extras = {"api_error_status": api_error_status, "terminal_reason": terminal_reason}
+
+    def _make_result() -> ResultMessage:
+        message = ResultMessage(
+            subtype=subtype,
+            duration_ms=607,
+            duration_api_ms=0,
+            is_error=is_error,
+            num_turns=num_turns,
+            session_id="canvas-session",
+            result=text,
+            structured_output=None,
+        )
+        for key, value in result_extras.items():
+            setattr(message, key, value)
+        return message
+
+    class _FailingCanvasClient:
+        def __init__(self, *, options: Any) -> None:
+            self.options = options
+            if observed_options is not None:
+                observed_options.append(options)
+
+        async def __aenter__(self) -> "_FailingCanvasClient":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            return False
+
+        async def query(self, prompt: str, session_id: str = "default") -> None:
+            return None
+
+        async def receive_response(self):  # type: ignore[no-untyped-def]
+            yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>")
+            yield _make_result()
+
+    service._sdk_client_factory = _FailingCanvasClient  # noqa: SLF001 - test seam
+
+
+def test_provider_auth_failure_reports_provider_error(monkeypatch, tmp_path: Path, caplog) -> None:
+    """A 401 from the gateway must not masquerade as a bad user prompt."""
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Auth Fail WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_failing_canvas_client(
+            text="Invalid API key · Fix external API key",
+            is_error=True,
+            api_error_status=401,
+            terminal_reason="api_error",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="cognitrix.agent_canvas"):
+            with client.stream(
+                "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+            ) as response:
+                assert response.status_code == 200
+                events, _ = read_sse_events(response)
+
+    error_payload = next(item["data"] for item in events if item["event"] == "error")
+    assert error_payload["code"] == "AGENT_CANVAS_PROVIDER_ERROR"
+    assert "401" in error_payload["message"]
+    assert "Invalid API key" in error_payload["message"]
+    assert events[-1]["data"]["code"] == "AGENT_CANVAS_PROVIDER_ERROR"
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "agent_canvas_provider_error" in logged
+    assert "api_error_status=401" in logged
+    assert "agent_canvas_outline_no_json" in logged
+
+
+def test_outline_without_json_reports_outline_failed(monkeypatch, tmp_path: Path, caplog) -> None:
+    """A model that answers in prose keeps the retry-your-prompt message."""
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="No JSON WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_failing_canvas_client(
+            text="抱歉，我需要更多信息才能规划仪表盘。",
+            is_error=False,
+            api_error_status=None,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="cognitrix.agent_canvas"):
+            with client.stream(
+                "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+            ) as response:
+                events, _ = read_sse_events(response)
+
+    error_payload = next(item["data"] for item in events if item["event"] == "error")
+    assert error_payload["code"] == "AGENT_CANVAS_OUTLINE_FAILED"
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "agent_canvas_no_final_json" in logged
+    assert "抱歉，我需要更多信息才能规划仪表盘。" in logged
+
+
+def test_outline_step_budget_comes_from_settings(monkeypatch, tmp_path: Path) -> None:
+    """The planning turn's max_turns is configurable, not a hard-coded constant."""
+    _set_canvas_env(monkeypatch, tmp_path, AGENT_MODE_OUTLINE_MAX_STEPS="23")
+
+    observed: list[Any] = []
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Budget Cfg WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_failing_canvas_client(
+            text="prose only",
+            is_error=False,
+            api_error_status=None,
+            observed_options=observed,
+        )
+
+        with client.stream(
+            "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+        ) as response:
+            read_sse_events(response)
+
+    assert [options.max_turns for options in observed] == [23]
+    assert get_settings().agent_mode_outline_max_steps == 23
+
+
+def test_outline_max_turns_exhaustion_is_not_a_provider_error(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    """Spending the outline step budget must not read as a bad prompt or a 401."""
+    _set_canvas_env(monkeypatch, tmp_path, AGENT_MODE_OUTLINE_MAX_STEPS="9")
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Max Turns WS")
+        _seed_workspace_dataset(workspace_id)
+        _install_failing_canvas_client(
+            text="我先看看有哪些表……",
+            is_error=True,
+            api_error_status=None,
+            subtype="error_max_turns",
+            num_turns=9,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="cognitrix.agent_canvas"):
+            with client.stream(
+                "POST", "/chat/stream", json=_agent_mode_body(workspace_id), headers=headers
+            ) as response:
+                events, _ = read_sse_events(response)
+
+    error_payload = next(item["data"] for item in events if item["event"] == "error")
+    assert error_payload["code"] == "AGENT_CANVAS_OUTLINE_BUDGET_EXCEEDED"
+    assert "9/9" in error_payload["message"]
+    assert "AGENT_MODE_OUTLINE_MAX_STEPS" in error_payload["message"]
+    assert events[-1]["data"]["code"] == "AGENT_CANVAS_OUTLINE_BUDGET_EXCEEDED"
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "agent_canvas_max_turns_exhausted" in logged
+    assert "agent_canvas_provider_error" not in logged
 
 
 def test_deselected_items_are_skipped(monkeypatch, tmp_path: Path) -> None:

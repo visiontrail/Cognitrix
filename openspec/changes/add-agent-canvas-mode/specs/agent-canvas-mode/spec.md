@@ -63,11 +63,15 @@ The client SHALL offer a user preference to skip the approval pause. The prefere
 - **THEN** the budget is enforced exactly as it would be for an approved run
 
 ### Requirement: Agent-mode runs use dedicated budgets
-Agent-mode runs SHALL be governed by `AGENT_MODE_MAX_STEPS`, `AGENT_MODE_TIMEOUT_SECONDS`, and `AGENT_MODE_MAX_CHARTS`, independent of the existing Q&A limits. Exceeding any budget MUST finalize the run as partial with a typed terminal status, keeping everything already placed.
+Agent-mode runs SHALL be governed by `AGENT_MODE_MAX_STEPS`, `AGENT_MODE_OUTLINE_MAX_STEPS`, `AGENT_MODE_TIMEOUT_SECONDS`, and `AGENT_MODE_MAX_CHARTS`, independent of the existing Q&A limits. Every one of them MUST be operator-tunable through the same configuration surfaces as other settings (env plus the admin control plane), never hard-coded. Exceeding any budget MUST finalize the run as partial with a typed terminal status, keeping everything already placed.
 
 #### Scenario: Q&A limits untouched
 - **WHEN** a non-agent-mode chat turn runs
 - **THEN** it is governed by the existing `AGENT_MAX_TOOL_STEPS` and `AGENT_TIMEOUT_SECONDS` values only
+
+#### Scenario: Outline phase exhausts its step budget
+- **WHEN** the planning turn reaches `AGENT_MODE_OUTLINE_MAX_STEPS` before emitting outline JSON
+- **THEN** the turn fails with code `AGENT_CANVAS_OUTLINE_BUDGET_EXCEEDED`, a message naming the budget, and a log line distinct from a provider rejection — not the generic "rephrase and retry" message
 
 #### Scenario: Budget exhaustion keeps partial results
 - **WHEN** a running agent-mode run exceeds `AGENT_MODE_TIMEOUT_SECONDS`

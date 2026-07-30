@@ -4,14 +4,18 @@ import {
   buildFallbackSessionTitle,
   DEFAULT_SESSION_TITLE,
   normalizeSessionTitle,
+  SESSION_TITLE_MAX_LENGTH,
   shouldAutoGenerateSessionTitle,
 } from "../../lib/chat/session-title";
 
 describe("session title helpers", () => {
   it("normalizes and limits long titles", () => {
-    expect(
-      normalizeSessionTitle('  标题：这是一个特别特别特别特别特别长的会话标题，需要被裁剪  ')
-    ).toBe("这是一个特别特别特别特别特别长的会话标…");
+    const normalized = normalizeSessionTitle(
+      '  标题：这是一个特别特别特别特别特别长的会话标题，需要被裁剪  '
+    );
+    // Padding, the "标题：" prefix, and anything past the limit are dropped.
+    expect(normalized).toBe("这是一个特别特别特别特别特别长的会话标题，需要…");
+    expect(Array.from(normalized).length).toBeLessThanOrEqual(SESSION_TITLE_MAX_LENGTH);
   });
 
   it("builds a short fallback title from the first sentence", () => {

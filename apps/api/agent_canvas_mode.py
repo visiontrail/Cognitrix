@@ -43,6 +43,7 @@ from .agent_canvas import (
     get_agent_canvas_run_store,
 )
 from .agent_guardrails import AgentGuardrailContext, AgentGuardrailError
+from .agent_logging import format_agent_debug_blocks
 from .agent_prompting import (
     build_agent_canvas_execution_prompt,
     build_agent_canvas_outline_prompt,
@@ -58,7 +59,7 @@ from .agent_runtime import (
     get_agent_runtime,
 )
 from .audit import get_audit_logger
-from .config import get_settings
+from .config import Settings, get_settings
 from .tool_calling import ToolCall, ToolCallRequest, ToolCallResponse
 
 logger = logging.getLogger("cognitrix.agent_canvas")
@@ -84,7 +85,6 @@ READONLY_TOOL_NAMES = tuple(
     str(definition["function"]["name"]) for definition in READONLY_TOOL_DEFINITIONS
 )
 
-OUTLINE_MAX_STEPS = 8
 KEEPALIVE_INTERVAL_SECONDS = 15.0
 
 
@@ -139,14 +139,24 @@ class AgentCanvasModeService:
     """
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self.settings = settings
         self.runtime = get_agent_runtime()
         self.guardrails = self.runtime.guardrails
         self.tool_service = self.runtime.tool_service
         self.store = get_agent_canvas_run_store()
         self._active: dict[str, ActiveRunHandle] = {}
         self._sdk_client_factory = ClaudeSDKClient
+
+    @property
+    def settings(self) -> Settings:
+        """Effective settings, read per use rather than frozen at construction.
+
+        The run budgets (`AGENT_MODE_*`) are editable from the admin control
+        plane, which clears only `get_settings`' cache. Snapshotting settings in
+        `__init__` made those edits no-ops until restart; resolving them lazily
+        applies them from the next run onward, while keeping this service's
+        `_active` handles — and therefore stop/tail of in-flight runs — alive.
+        """
+        return get_settings()
 
     # ------------------------------------------------------------------
     # Chat-stream entry point
@@ -228,6 +238,7 @@ class AgentCanvasModeService:
         )
 
         outline_queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+        outline_failure: dict[str, Any] = {}
 
         async def _run_outline() -> dict[str, Any] | None:
             try:
@@ -235,6 +246,7 @@ class AgentCanvasModeService:
                     agent_request=agent_request,
                     base=base,
                     emit=lambda event: outline_queue.put_nowait(event),
+                    failure=outline_failure,
                 )
             finally:
                 outline_queue.put_nowait(None)
@@ -256,15 +268,8 @@ class AgentCanvasModeService:
                     pass
 
         if outline is None:
-            for _item in _error_final(
-                base,
-                code="AGENT_CANVAS_OUTLINE_FAILED",
-                message=_localized_text(
-                    locale,
-                    en="Could not produce a valid dashboard outline. Please rephrase and retry.",
-                    zh="未能生成有效的仪表盘大纲，请调整描述后重试。",
-                ),
-            ):
+            code, message = _outline_failure_event(outline_failure, locale)
+            for _item in _error_final(base, code=code, message=message):
                 yield _item
             return
 
@@ -418,6 +423,7 @@ class AgentCanvasModeService:
         agent_request: AgentRequest,
         base: dict[str, Any],
         emit: Any,
+        failure: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         system_text = "\n\n".join(
             [
@@ -426,6 +432,24 @@ class AgentCanvasModeService:
             ]
         )
         state = {"final": None}
+        outline_max_turns = int(self.settings.agent_mode_outline_max_steps)
+        logger.info(
+            "agent_canvas_outline_start conversation_id=%s request_id=%s\n%s",
+            agent_request.conversation_id,
+            agent_request.request_id,
+            format_agent_debug_blocks(
+                ai_input={
+                    "conversation_id": agent_request.conversation_id,
+                    "request_id": agent_request.request_id,
+                    "workspace_id": agent_request.workspace_id,
+                    "dataset_table": agent_request.dataset_table,
+                    "message": agent_request.message,
+                    "max_charts": int(self.settings.agent_mode_max_charts),
+                    "outline_max_turns": outline_max_turns,
+                    "readonly_tools": list(READONLY_TOOL_NAMES),
+                },
+            ),
+        )
 
         async def invoke(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return await self._invoke_phase_tool(
@@ -444,32 +468,54 @@ class AgentCanvasModeService:
             tool_definitions=READONLY_TOOL_DEFINITIONS,
             allowed_tools=READONLY_TOOL_NAMES,
             invoke=invoke,
-            max_turns=OUTLINE_MAX_STEPS,
+            max_turns=outline_max_turns,
             agent_request=agent_request,
         )
+        diagnostics: dict[str, Any] = {}
         try:
             timeout = min(180.0, float(self.settings.agent_mode_timeout_seconds))
             raw = await asyncio.wait_for(
-                self._run_sdk_conversation(options=options, message=agent_request.message),
+                self._run_sdk_conversation(
+                    options=options,
+                    message=agent_request.message,
+                    phase="outline",
+                    diagnostics=diagnostics,
+                ),
                 timeout=timeout,
             )
         except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
             logger.warning(
-                "agent_canvas_outline_failed conversation_id=%s error=%s",
+                "agent_canvas_outline_failed conversation_id=%s error_type=%s error=%s",
                 agent_request.conversation_id,
+                type(exc).__name__,
                 exc,
+                exc_info=True,
             )
+            if failure is not None:
+                failure.update(
+                    {"reason": "exception", "error_type": type(exc).__name__, "error": str(exc)}
+                )
             return None
         if raw is None:
+            logger.warning(
+                "agent_canvas_outline_no_json conversation_id=%s diagnostics=%s",
+                agent_request.conversation_id,
+                json.dumps(diagnostics, ensure_ascii=False, default=str),
+            )
+            if failure is not None:
+                failure.update({"reason": "no_json", **diagnostics})
             return None
         try:
             return _normalize_outline(raw, max_charts=int(self.settings.agent_mode_max_charts))
         except ValueError as exc:
             logger.warning(
-                "agent_canvas_outline_invalid conversation_id=%s error=%s",
+                "agent_canvas_outline_invalid conversation_id=%s error=%s raw_outline=%s",
                 agent_request.conversation_id,
                 exc,
+                _truncate_for_log(json.dumps(raw, ensure_ascii=False, default=str)),
             )
+            if failure is not None:
+                failure.update({"reason": "invalid_outline", "error": str(exc)})
             return None
 
     # ------------------------------------------------------------------
@@ -573,11 +619,14 @@ class AgentCanvasModeService:
                 zh="现在开始按已批准的大纲和构建协议逐项生成仪表盘。",
             )
 
+            exec_diagnostics: dict[str, Any] = {}
             sdk_task = asyncio.ensure_future(
                 self._run_sdk_conversation(
                     options=options,
                     message=message,
                     collect_text=exec_ctx.text_blocks,
+                    phase="execution",
+                    diagnostics=exec_diagnostics,
                 )
             )
             cancel_task = asyncio.ensure_future(exec_ctx.handle.cancel_event.wait())
@@ -591,8 +640,18 @@ class AgentCanvasModeService:
                 try:
                     await sdk_task
                 except Exception as exc:  # noqa: BLE001 - partial results are kept
-                    logger.warning("agent_canvas_execution_error run_id=%s error=%s", run_id, exc)
+                    logger.warning(
+                        "agent_canvas_execution_error run_id=%s error_type=%s error=%s",
+                        run_id,
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
                     failure_code = "AGENT_CANVAS_EXECUTION_FAILED"
+                if exec_diagnostics.get("is_error") or exec_diagnostics.get("api_error_status"):
+                    # Provider rejected the call; the SDK reported it as data, not
+                    # as an exception, so the branch above never fires.
+                    failure_code = failure_code or "AGENT_CANVAS_PROVIDER_ERROR"
                 if exec_ctx.handle.cancel_event.is_set():
                     status = RUN_STATUS_STOPPED
                 elif exec_ctx.budget_exhausted:
@@ -1052,10 +1111,20 @@ class AgentCanvasModeService:
         options: ClaudeAgentOptions,
         message: str,
         collect_text: list[str] | None = None,
+        phase: str = "unknown",
+        diagnostics: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Run one SDK conversation; returns the parsed final JSON if any."""
+        """Run one SDK conversation; returns the parsed final JSON if any.
+
+        Provider-level failures (bad key, quota, unknown model) do NOT raise:
+        the SDK reports them as a synthetic assistant text block plus an errored
+        ``ResultMessage``. Without recording that here, an HTTP 401 is
+        indistinguishable from a model that merely forgot the JSON block — both
+        surface as ``None`` and, before this, as zero log lines.
+        """
         final_answer: dict[str, Any] | None = None
         text_blocks: list[str] = []
+        result_info: dict[str, Any] = {}
         async with self._sdk_client_factory(options=options) as client:
             await client.query(message)
             async for sdk_message in client.receive_response():
@@ -1066,12 +1135,63 @@ class AgentCanvasModeService:
                             if collect_text is not None:
                                 collect_text.append(block.text)
                 elif isinstance(sdk_message, ResultMessage):
+                    result_info = _result_message_info(sdk_message)
                     if isinstance(sdk_message.structured_output, dict):
                         final_answer = sdk_message.structured_output
                     elif sdk_message.result:
                         final_answer = _parse_agent_canvas_json(sdk_message.result)
+        joined = "\n".join(text_blocks)
         if final_answer is None and text_blocks:
-            final_answer = _parse_agent_canvas_json("\n".join(text_blocks))
+            final_answer = _parse_agent_canvas_json(joined)
+        if diagnostics is not None:
+            diagnostics.update(result_info)
+            diagnostics["raw_text"] = _truncate_for_log(joined)
+            diagnostics["parsed_json"] = final_answer is not None
+        if str(result_info.get("subtype") or "") == "error_max_turns":
+            # Reported as is_error by the SDK, but the cause is our own turn
+            # budget — log it as such so it is not mistaken for a 401/quota.
+            logger.warning(
+                "agent_canvas_max_turns_exhausted phase=%s num_turns=%s duration_ms=%s "
+                "parsed_json=%s model_text=%s",
+                phase,
+                result_info.get("num_turns"),
+                result_info.get("duration_ms"),
+                final_answer is not None,
+                _truncate_for_log(joined, limit=600),
+            )
+        elif result_info.get("is_error") or result_info.get("api_error_status"):
+            logger.warning(
+                "agent_canvas_provider_error phase=%s api_error_status=%s terminal_reason=%s "
+                "subtype=%s num_turns=%s duration_ms=%s provider_text=%s",
+                phase,
+                result_info.get("api_error_status"),
+                result_info.get("terminal_reason"),
+                result_info.get("subtype"),
+                result_info.get("num_turns"),
+                result_info.get("duration_ms"),
+                _truncate_for_log(joined, limit=600),
+            )
+        elif final_answer is None:
+            logger.warning(
+                "agent_canvas_no_final_json phase=%s subtype=%s stop_reason=%s num_turns=%s "
+                "duration_ms=%s text_chars=%d model_text=%s",
+                phase,
+                result_info.get("subtype"),
+                result_info.get("stop_reason"),
+                result_info.get("num_turns"),
+                result_info.get("duration_ms"),
+                len(joined),
+                _truncate_for_log(joined),
+            )
+        else:
+            logger.info(
+                "agent_canvas_phase_result phase=%s subtype=%s num_turns=%s duration_ms=%s keys=%s",
+                phase,
+                result_info.get("subtype"),
+                result_info.get("num_turns"),
+                result_info.get("duration_ms"),
+                sorted(final_answer.keys())[:12],
+            )
         return final_answer
 
     async def _invoke_phase_tool(
@@ -1509,6 +1629,105 @@ def _default_summary(*, status: str, locale: str, placed: int, failed: int) -> s
         locale,
         en="Dashboard generation failed before any content was placed.",
         zh="仪表盘生成失败，尚未放置任何内容。",
+    )
+
+
+_LOG_TEXT_LIMIT = 2000
+
+
+def _truncate_for_log(text: str, *, limit: int = _LOG_TEXT_LIMIT) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...<truncated {len(value) - limit} chars>"
+
+
+def _result_message_info(message: ResultMessage) -> dict[str, Any]:
+    """Flatten the fields of a ResultMessage that explain *why* a phase ended."""
+    info: dict[str, Any] = {}
+    for attribute in (
+        "subtype",
+        "is_error",
+        "num_turns",
+        "duration_ms",
+        "stop_reason",
+        "api_error_status",
+        "terminal_reason",
+    ):
+        value = getattr(message, attribute, None)
+        if value is not None:
+            info[attribute] = value
+    return info
+
+
+def _outline_failure_event(failure: dict[str, Any], locale: str) -> tuple[str, str]:
+    """Map an outline failure onto the client-visible error code and message.
+
+    A provider rejection (bad key, quota, unknown model) is an operator problem,
+    not a prompt problem — telling the user to "rephrase and retry" sends them
+    down the wrong path, so those get their own code and carry the HTTP status.
+    """
+    if str(failure.get("subtype") or "") == "error_max_turns":
+        # The model spent its whole turn budget exploring and never emitted the
+        # outline JSON. That is an operator-tunable budget, not a bad prompt and
+        # not a provider fault — checked first because the SDK also flags this
+        # ResultMessage as is_error=True.
+        turns = failure.get("num_turns")
+        limit = int(get_settings().agent_mode_outline_max_steps)
+        used = f"{turns}/{limit}" if turns is not None else str(limit)
+        return (
+            "AGENT_CANVAS_OUTLINE_BUDGET_EXCEEDED",
+            _localized_text(
+                locale,
+                en=(
+                    f"Dashboard planning used its entire step budget ({used}) before an outline "
+                    "was ready. Narrow the request, or raise AGENT_MODE_OUTLINE_MAX_STEPS."
+                ),
+                zh=(
+                    f"仪表盘大纲规划用尽了步数预算（{used}）仍未产出大纲。"
+                    "请缩小需求范围，或调高 AGENT_MODE_OUTLINE_MAX_STEPS。"
+                ),
+            ),
+        )
+    status = failure.get("api_error_status")
+    if status or failure.get("is_error"):
+        detail = _truncate_for_log(str(failure.get("raw_text") or ""), limit=200)
+        status_text = str(status or failure.get("terminal_reason") or "unknown")
+        return (
+            "AGENT_CANVAS_PROVIDER_ERROR",
+            _localized_text(
+                locale,
+                en=(
+                    f"The model provider rejected the request (status {status_text}). "
+                    f"Check the API key and model configuration. Provider said: {detail}"
+                    if detail
+                    else f"The model provider rejected the request (status {status_text}). "
+                    "Check the API key and model configuration."
+                ),
+                zh=(
+                    f"模型服务调用失败（状态 {status_text}），请检查 API Key 与模型配置。"
+                    f"服务返回：{detail}"
+                    if detail
+                    else f"模型服务调用失败（状态 {status_text}），请检查 API Key 与模型配置。"
+                ),
+            ),
+        )
+    if failure.get("error_type") in {"TimeoutError", "CancelledError"}:
+        return (
+            "AGENT_CANVAS_OUTLINE_TIMEOUT",
+            _localized_text(
+                locale,
+                en="Dashboard planning timed out before an outline was ready. Retry, or narrow the request.",
+                zh="仪表盘大纲规划超时，请重试或缩小需求范围。",
+            ),
+        )
+    return (
+        "AGENT_CANVAS_OUTLINE_FAILED",
+        _localized_text(
+            locale,
+            en="Could not produce a valid dashboard outline. Please rephrase and retry.",
+            zh="未能生成有效的仪表盘大纲，请调整描述后重试。",
+        ),
     )
 
 

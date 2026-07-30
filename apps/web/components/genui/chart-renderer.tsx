@@ -3,6 +3,7 @@
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { buildGaugeFallbackOption, buildSingleValueFallbackOption } from "@/lib/charts/kpi-options";
 import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
+import { EmptyPanel } from "./state-panels";
 import { useI18n } from "@/lib/i18n/context";
 import { isRecord } from "@/lib/utils";
 import type { ChartSpec, ChartType, KnownChartType } from "@/types/chart";
@@ -17,6 +18,11 @@ type LegacyGenUISpec = {
 
 export function ChartRenderer({ spec }: { spec: LegacyGenUISpec }) {
   const { t } = useI18n();
+  // `empty` is the backend's explicit "no displayable data" chart type, which is
+  // a different state from a spec we cannot render.
+  if (normalizeChartType(spec.chart_type) === "empty") {
+    return <EmptyPanel />;
+  }
   const mapped = mapLegacySpec(spec);
   if (!mapped) {
     return (

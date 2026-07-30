@@ -299,6 +299,11 @@ def test_agent_chat_stream_replays_agent_events(monkeypatch, tmp_path: Path) -> 
 def test_agent_runtime_returns_failure_on_runtime_error(
     monkeypatch, tmp_path: Path
 ) -> None:
+    # A chart request like this one is a multi-chart candidate, which would pause
+    # for confirmation before the SDK is ever reached. This test is about the
+    # AGENT_SDK_FAILED path, so take multi-chart planning out of the way
+    # (set_agent_env clears the settings/service caches afterwards).
+    monkeypatch.setenv("MULTI_CHART_GENERATION_ENABLED", "false")
     set_agent_env(monkeypatch, tmp_path)
 
     with TestClient(app) as client:

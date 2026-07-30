@@ -1065,7 +1065,10 @@ def test_agent_runtime_surfaces_llm_summary_after_failed_tool_observation(
             user_id="alice",
             project_id="north",
             dataset_table="employees_wide",
-            message="hi",
+            # Chinese question: the model answers in Chinese below, and the
+            # runtime rewrites answers that do not match the resolved response
+            # locale — an English question here would repair the summary away.
+            message="请分析一下员工数据",
             role="viewer",
             department="HR",
             clearance=1,

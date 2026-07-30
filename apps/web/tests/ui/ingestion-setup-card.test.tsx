@@ -4,6 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { IngestionSetupCard } from "../../components/workspace/ingestion-setup-card";
+import { DEFAULT_LOCALE, DICTIONARY } from "../../lib/i18n/dictionary";
+
+// Read the copy from the dictionary: the card is localized, and wording edits
+// (e.g. "Human Label" -> "Display Name") should not break this test.
+const copy = DICTIONARY[DEFAULT_LOCALE];
 
 const DEFAULT_SEED = {
   businessType: "roster" as const,
@@ -22,11 +27,11 @@ describe("IngestionSetupCard", () => {
     const onConfirm = vi.fn();
     render(<IngestionSetupCard initialSeed={DEFAULT_SEED} onConfirm={onConfirm} />);
 
-    await userEvent.clear(screen.getByLabelText("Human Label"));
-    await userEvent.type(screen.getByLabelText("Human Label"), "  Employee Master  ");
-    await userEvent.clear(screen.getByLabelText("Table Purpose"));
-    await userEvent.type(screen.getByLabelText("Table Purpose"), "  Stores workforce master data.  ");
-    await userEvent.click(screen.getByRole("button", { name: "Apply Setup" }));
+    await userEvent.clear(screen.getByLabelText(copy["ingestion.setup.humanLabel"]));
+    await userEvent.type(screen.getByLabelText(copy["ingestion.setup.humanLabel"]), "  Employee Master  ");
+    await userEvent.clear(screen.getByLabelText(copy["ingestion.setup.purpose"]));
+    await userEvent.type(screen.getByLabelText(copy["ingestion.setup.purpose"]), "  Stores workforce master data.  ");
+    await userEvent.click(screen.getByRole("button", { name: copy["ingestion.setup.apply"] }));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm).toHaveBeenCalledWith(
@@ -52,9 +57,9 @@ describe("IngestionSetupCard", () => {
       />
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Apply Setup" }));
+    await userEvent.click(screen.getByRole("button", { name: copy["ingestion.setup.apply"] }));
 
     expect(onConfirm).not.toHaveBeenCalled();
-    expect(screen.getByText("Human label is required.")).toBeInTheDocument();
+    expect(screen.getByText(copy["ingestion.setup.validation.humanLabelRequired"])).toBeInTheDocument();
   });
 });

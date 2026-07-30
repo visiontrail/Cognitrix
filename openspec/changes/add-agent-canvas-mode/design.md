@@ -103,7 +103,7 @@ While a run is active for the visible workspace, the web-design editor disables 
 
 ### D10. Budgets, flags, and enforcement
 
-New settings (all parsed in `config.py`): `AGENT_CANVAS_MODE_ENABLED` (default `false`), `AGENT_MODE_MAX_STEPS` (default `40`), `AGENT_MODE_TIMEOUT_SECONDS` (default `600`), `AGENT_MODE_MAX_CHARTS` (default `12`). Guardrails enforce per-run caps: at most `AGENT_MODE_MAX_CHARTS` successful `place_chart` calls, a proportional cap on sections/text blocks, and the step/time budgets pass into `ClaudeAgentOptions.max_turns` / the run watchdog for agent-mode runs only. Existing Q&A limits are untouched.
+New settings (all parsed in `config.py`): `AGENT_CANVAS_MODE_ENABLED` (default `false`), `AGENT_MODE_MAX_STEPS` (default `40`), `AGENT_MODE_OUTLINE_MAX_STEPS` (default `16`, the planning turn's own `max_turns`), `AGENT_MODE_TIMEOUT_SECONDS` (default `600`), `AGENT_MODE_MAX_CHARTS` (default `12`). Guardrails enforce per-run caps: at most `AGENT_MODE_MAX_CHARTS` successful `place_chart` calls, a proportional cap on sections/text blocks, and the step/time budgets pass into `ClaudeAgentOptions.max_turns` / the run watchdog for agent-mode runs only. Existing Q&A limits are untouched.
 
 ### D11. RBAC and audit
 

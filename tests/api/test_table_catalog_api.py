@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from pathlib import Path
 
 import duckdb
@@ -20,6 +19,7 @@ from apps.api.tool_calling import clear_tool_calling_service_cache
 from apps.api.views import clear_view_storage_service_cache
 from apps.api.workspaces import clear_workspace_service_cache
 from tests.auth_utils import auth_headers, expect_error_code
+from tests.catalog_fixtures import insert_catalog_entry as _insert_catalog_entry
 
 
 def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
@@ -38,57 +38,6 @@ def _set_minimal_env(monkeypatch, tmp_path: Path) -> None:
     clear_view_storage_service_cache()
     clear_workspace_service_cache()
     clear_table_catalog_service_cache()
-
-
-def _insert_catalog_entry(
-    db_path: Path,
-    *,
-    workspace_id: str,
-    table_name: str,
-    human_label: str,
-    business_type: str = "other",
-    write_mode: str = "new_table",
-    time_grain: str = "none",
-    primary_keys: list[str] | None = None,
-    match_columns: list[str] | None = None,
-    is_active_target: bool = False,
-    description: str = "",
-    created_by: str = "alice",
-) -> str:
-    catalog_id = uuid.uuid4().hex
-    now = "2026-01-01T00:00:00+00:00"
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute(
-            """
-            INSERT INTO table_catalog (
-                id, workspace_id, table_name, human_label, business_type,
-                write_mode, time_grain, primary_keys, match_columns,
-                is_active_target, description, created_by, updated_by,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                catalog_id,
-                workspace_id,
-                table_name,
-                human_label,
-                business_type,
-                write_mode,
-                time_grain,
-                json.dumps(primary_keys or []),
-                json.dumps(match_columns or []),
-                int(is_active_target),
-                description,
-                created_by,
-                created_by,
-                now,
-                now,
-            ),
-        )
-        conn.commit()
-    return catalog_id
 
 
 def test_table_catalog_list_patch_delete_and_active_target(monkeypatch, tmp_path: Path) -> None:

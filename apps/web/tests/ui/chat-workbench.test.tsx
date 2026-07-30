@@ -91,7 +91,9 @@ describe("Chat workbench streaming UI", () => {
 
     await screen.findByText("I will inspect schema and then query safely.");
     await screen.findByText("Query completed for metric attrition_rate.");
-    expect(screen.getByText("Attrition Rate")).toBeInTheDocument();
+    // Charts render through the ECharts surface, so the title lives in the chart
+    // option rather than in the DOM — assert the chart itself was mounted.
+    expect(await screen.findByTestId("echarts-chart")).toBeInTheDocument();
     expect(screen.getByTestId("tool-status")).toHaveTextContent("describe_table");
     expect(screen.getByTestId("tool-status")).toHaveTextContent("agent-session-1");
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -145,7 +147,7 @@ describe("Chat workbench streaming UI", () => {
     await userEvent.type(screen.getByLabelText("Chat Input"), "show headcount");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    await screen.findByText("Headcount");
+    await screen.findByTestId("echarts-chart");
     await userEvent.click(screen.getByRole("button", { name: "Save & Share" }));
 
     await screen.findByText("Share Link:");
@@ -199,7 +201,7 @@ describe("Chat workbench streaming UI", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("restored question")).toBeInTheDocument();
       expect(screen.getByText("restored message")).toBeInTheDocument();
-      expect(screen.getByText("Restored KPI")).toBeInTheDocument();
+      expect(screen.getByTestId("echarts-chart")).toBeInTheDocument();
       expect(screen.getByTestId("tool-status")).toHaveTextContent("describe_table");
       expect(screen.getByTestId("tool-status")).toHaveTextContent("agent-session-restored");
     });

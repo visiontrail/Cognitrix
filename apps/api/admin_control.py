@@ -749,6 +749,13 @@ def _setting_description(key: str) -> str:
         "AGENT_SKILLS_ENABLED": "Enable validated Agent Skill loading at runtime",
         "AUTH_REGISTRATION_ENABLED": "Allow new users to self-register",
         "ADMIN_USAGE_RETENTION_DAYS": "Number of days to retain usage events",
+        "AGENT_MODE_MAX_STEPS": "Agent canvas mode: tool-step budget for the execution phase",
+        "AGENT_MODE_OUTLINE_MAX_STEPS": (
+            "Agent canvas mode: tool-step budget for the outline planning turn "
+            "(too low ends the turn with no outline)"
+        ),
+        "AGENT_MODE_TIMEOUT_SECONDS": "Agent canvas mode: wall-clock budget for one run",
+        "AGENT_MODE_MAX_CHARTS": "Agent canvas mode: maximum charts placed in one run",
     }
     return descriptions.get(key, key.replace("_", " ").title())
 

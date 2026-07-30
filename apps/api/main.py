@@ -239,6 +239,59 @@ def configure_application_logging(level_name: str) -> None:
         app_logger.propagate = True
 
 
+_OFFICIAL_ANTHROPIC_HOSTS = {"api.anthropic.com"}
+
+
+def _log_agent_sdk_provider_config(logger: logging.Logger, settings: Any) -> None:
+    """Log the endpoint/model/credential the agent SDK will actually use.
+
+    Every SDK-backed runtime resolves its provider from env, and shells that run
+    Claude Code export ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN — which
+    docker-compose interpolation prefers over the project `.env`. The resulting
+    "third-party key against api.anthropic.com" produces an HTTP 401 that the
+    SDK reports as ordinary assistant text, so it must be visible here.
+    """
+    from urllib.parse import urlparse
+
+    from .agent_runtime import build_sdk_provider_env
+
+    env, model = build_sdk_provider_env(settings)
+    base_url = env.get("ANTHROPIC_BASE_URL", "")
+    token = env.get("ANTHROPIC_AUTH_TOKEN", "")
+    if settings.anthropic_auth_token.strip():
+        auth_source = "ANTHROPIC_AUTH_TOKEN"
+    elif settings.ai_api_key.strip():
+        auth_source = "AI_API_KEY"
+    else:
+        auth_source = "none"
+    key_kind = "anthropic" if token.startswith("sk-ant-") else ("third_party" if token else "missing")
+    logger.info(
+        "agent_sdk_provider_config base_url=%s model=%s auth_source=%s key_kind=%s key_len=%d",
+        base_url or "(SDK default)",
+        model or "(SDK default)",
+        auth_source,
+        key_kind,
+        len(token),
+    )
+    if not token:
+        logger.warning(
+            "agent_sdk_provider_no_credential — set ANTHROPIC_AUTH_TOKEN (or AI_API_KEY); "
+            "every agent turn will fail with an authentication error until then"
+        )
+        return
+    host = (urlparse(base_url).hostname or "").lower() if base_url else "api.anthropic.com"
+    if host in _OFFICIAL_ANTHROPIC_HOSTS and key_kind == "third_party":
+        logger.warning(
+            "agent_sdk_provider_mismatch base_url=%s model=%s key_kind=third_party — a non-Anthropic "
+            "key is pointed at the official Anthropic endpoint, so every agent turn will fail with "
+            "HTTP 401. If this container was started from a shell that exports ANTHROPIC_BASE_URL, "
+            "that value overrode the project .env; unset it or set ANTHROPIC_BASE_URL explicitly "
+            "(e.g. https://api.deepseek.com/anthropic).",
+            base_url or "(SDK default)",
+            model or "(SDK default)",
+        )
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     settings = get_settings()
@@ -264,6 +317,7 @@ async def on_startup() -> None:
         settings.web_search_enabled,
         settings.web_search_provider,
     )
+    _log_agent_sdk_provider_config(logger, settings)
     if settings.web_search_enabled and not settings.web_search_api_key.strip():
         logger.warning(
             "web_search_enabled_without_api_key provider=%s — every web_search/"

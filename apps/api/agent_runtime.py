@@ -2783,20 +2783,6 @@ class AgentRuntime:
                 "conversation_id": run_context.request.conversation_id,
             },
         )
-        record_usage_event(
-            user_id=run_context.request.user_id,
-            project_id=run_context.request.project_id,
-            event_type="tool_call",
-            status_code=200 if tool_result_payload["status"] == "success" else 500,
-            duration_ms=max(
-                0.0,
-                (float(tool_result_payload["completed_at"]) - float(record.started_at)) * 1000,
-            ),
-            metadata={
-                "tool_name": record.tool_name,
-                "outcome": tool_result_payload["status"],
-            },
-        )
         return record
 
     def _record_sdk_tool_result(
@@ -2847,6 +2833,22 @@ class AgentRuntime:
         )
         run_context.tool_trace.append({"event": "tool_result", **tool_result_payload})
         record.tool_result_emitted = True
+        # Usage is recorded here, not on the tool_use side: only the result knows
+        # the outcome and the wall-clock duration of the call.
+        record_usage_event(
+            user_id=run_context.request.user_id,
+            project_id=run_context.request.project_id,
+            event_type="tool_call",
+            status_code=200 if tool_result_payload["status"] == "success" else 500,
+            duration_ms=max(
+                0.0,
+                (float(tool_result_payload["completed_at"]) - float(record.started_at)) * 1000,
+            ),
+            metadata={
+                "tool_name": record.tool_name,
+                "outcome": tool_result_payload["status"],
+            },
+        )
         get_audit_logger().log(
             event_type="agent",
             action="agent_post_tool_use",

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
     agent_canvas_mode_enabled: bool = Field(default=False, alias="AGENT_CANVAS_MODE_ENABLED")
     agent_mode_max_steps: int = Field(default=40, alias="AGENT_MODE_MAX_STEPS")
+    agent_mode_outline_max_steps: int = Field(default=16, alias="AGENT_MODE_OUTLINE_MAX_STEPS")
     agent_mode_timeout_seconds: float = Field(default=600.0, alias="AGENT_MODE_TIMEOUT_SECONDS")
     agent_mode_max_charts: int = Field(default=12, alias="AGENT_MODE_MAX_CHARTS")
     web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
@@ -162,6 +163,7 @@ class Settings(BaseSettings):
         "web_fetch_max_bytes",
         "web_fetch_max_chars",
         "agent_mode_max_steps",
+        "agent_mode_outline_max_steps",
         "agent_mode_max_charts",
         "admin_usage_retention_days",
     )

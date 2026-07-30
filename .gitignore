@@ -17,6 +17,7 @@ apps/api/.env
 .env
 
 apps/api/data/
+apps/api/uploads/
 infra/docker/.docker-data/
 
 .DS_Store

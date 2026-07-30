@@ -135,6 +135,43 @@ def test_setting_update_validation_persistence_and_reset(
     assert [row["action"] for row in history["history"][:2]] == ["reset", "set"]
 
 
+def test_agent_mode_outline_budget_is_tunable_and_reaches_the_canvas_service(
+    admin_client: tuple[TestClient, dict[str, str]]
+) -> None:
+    """An override of the outline budget must apply without an API restart.
+
+    The canvas-mode service used to snapshot Settings in its constructor, so a
+    control-plane edit stayed invisible until the process was restarted.
+    """
+    from apps.api.agent_canvas_mode import get_agent_canvas_mode_service
+
+    client, headers = admin_client
+    listed = client.get("/admin/control/settings?category=agent", headers=headers).json()
+    item = next(row for row in listed["settings"] if row["key"] == "AGENT_MODE_OUTLINE_MAX_STEPS")
+    assert item["value"] == 16
+    assert item["type"] == "integer"
+    assert item["restart_required"] is False
+
+    service = get_agent_canvas_mode_service()
+    assert service.settings.agent_mode_outline_max_steps == 16
+
+    rejected = client.patch(
+        "/admin/control/settings/AGENT_MODE_OUTLINE_MAX_STEPS",
+        headers=headers,
+        json={"value": 0},
+    )
+    assert rejected.status_code == 422
+
+    updated = client.patch(
+        "/admin/control/settings/AGENT_MODE_OUTLINE_MAX_STEPS",
+        headers=headers,
+        json={"value": 24},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["value"] == 24
+    assert service.settings.agent_mode_outline_max_steps == 24
+
+
 def test_empty_secret_keeps_existing_and_clear_is_explicit(
     admin_client: tuple[TestClient, dict[str, str]]
 ) -> None:

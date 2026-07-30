@@ -93,7 +93,9 @@ def test_chart_strategy_builds_funnel_with_inside_value_labels() -> None:
     series = option["series"][0]
     assert series["type"] == "funnel"
     assert series["label"]["position"] == "inside"
-    assert series["label"]["formatter"] == "{b}\n{c}"
+    # Funnel labels carry the conversion share as well as the raw value, matching
+    # the tooltip formatter ("{b}: {c} ({d}%)").
+    assert series["label"]["formatter"] == "{b}\n{c} ({d}%)"
     assert series["labelLine"] == {"show": False}
 
 

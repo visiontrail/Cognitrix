@@ -23,6 +23,7 @@ from apps.api.views import clear_view_storage_service_cache
 from apps.api.workspaces import clear_workspace_service_cache
 from tests.agentic_ingestion_fakes import install_mock_ingestion_agents
 from tests.auth_utils import auth_headers, expect_error_code
+from tests.catalog_fixtures import insert_catalog_entry
 
 
 def _set_minimal_env(monkeypatch, tmp_path: Path, *, ingestion_enabled: bool) -> None:
@@ -119,23 +120,20 @@ def _prepare_approval_job(
     headers: dict[str, str],
     *,
     workspace_id: str,
+    db_path: Path,
 ) -> tuple[str, str]:
-    catalog_response = client.post(
-        f"/workspaces/{workspace_id}/catalog",
-        headers=headers,
-        json={
-            "table_name": "employee_roster",
-            "human_label": "Employee Roster",
-            "business_type": "roster",
-            "write_mode": "update_existing",
-            "time_grain": "none",
-            "primary_keys": ["employee_id"],
-            "match_columns": ["employee_id"],
-            "is_active_target": True,
-            "description": "Primary roster table",
-        },
+    insert_catalog_entry(
+        db_path,
+        workspace_id=workspace_id,
+        table_name="employee_roster",
+        human_label="Employee Roster",
+        business_type="roster",
+        write_mode="update_existing",
+        primary_keys=["employee_id"],
+        match_columns=["employee_id"],
+        is_active_target=True,
+        description="Primary roster table",
     )
-    assert catalog_response.status_code == 200
 
     upload_payload = _create_upload(client, headers, workspace_id=workspace_id)
     job_id = upload_payload["job_id"]
@@ -161,7 +159,9 @@ def test_ingestion_approve_and_execute_persist_receipt(monkeypatch, tmp_path: Pa
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
         workspace_id = _create_workspace(client, owner_headers, name="Execution Workspace")
-        job_id, proposal_id = _prepare_approval_job(client, owner_headers, workspace_id=workspace_id)
+        job_id, proposal_id = _prepare_approval_job(
+            client, owner_headers, workspace_id=workspace_id, db_path=tmp_path / "workspace-state.db"
+        )
 
         approve_response = client.post(
             "/ingestion/approve",
@@ -244,17 +244,14 @@ def test_execute_syncs_catalog_after_business_intent_import(monkeypatch, tmp_pat
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
         workspace_id = _create_workspace(client, owner_headers, name="Catalog Sync Workspace")
 
-        catalog_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employee_roster",
-                "human_label": "Employee Roster",
-                "business_type": "roster",
-                "description": "Stores employee master uploads.",
-            },
+        insert_catalog_entry(
+            tmp_path / "workspace-state.db",
+            workspace_id=workspace_id,
+            table_name="employee_roster",
+            human_label="Employee Roster",
+            business_type="roster",
+            description="Stores employee master uploads.",
         )
-        assert catalog_response.status_code == 200
 
         upload_payload = _create_upload(client, owner_headers, workspace_id=workspace_id)
         plan_response = client.post(
@@ -336,22 +333,18 @@ def test_ingestion_execute_handles_numeric_timestamp_values(monkeypatch, tmp_pat
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
         workspace_id = _create_workspace(client, owner_headers, name="Execution Timestamp Workspace")
-        catalog_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employee_roster_ts",
-                "human_label": "Employee Roster Timestamp",
-                "business_type": "roster",
-                "write_mode": "update_existing",
-                "time_grain": "none",
-                "primary_keys": ["employee_id"],
-                "match_columns": ["employee_id"],
-                "is_active_target": True,
-                "description": "Timestamp casting regression guard",
-            },
+        insert_catalog_entry(
+            tmp_path / "workspace-state.db",
+            workspace_id=workspace_id,
+            table_name="employee_roster_ts",
+            human_label="Employee Roster Timestamp",
+            business_type="roster",
+            write_mode="update_existing",
+            primary_keys=["employee_id"],
+            match_columns=["employee_id"],
+            is_active_target=True,
+            description="Timestamp casting regression guard",
         )
-        assert catalog_response.status_code == 200
 
         runtime = WriteIngestionAgentRuntime()
         duckdb_path = runtime._workspace_duckdb_path(workspace_id=workspace_id)  # noqa: SLF001
@@ -436,7 +429,9 @@ def test_ingestion_execute_requires_approval(monkeypatch, tmp_path: Path) -> Non
     with TestClient(app) as client:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
         workspace_id = _create_workspace(client, owner_headers, name="Execution Guard Workspace")
-        job_id, proposal_id = _prepare_approval_job(client, owner_headers, workspace_id=workspace_id)
+        job_id, proposal_id = _prepare_approval_job(
+            client, owner_headers, workspace_id=workspace_id, db_path=tmp_path / "workspace-state.db"
+        )
 
         execute_response = client.post(
             "/ingestion/execute",
@@ -466,7 +461,9 @@ def test_ingestion_approve_workspace_role_guard(monkeypatch, tmp_path: Path) -> 
         # Viewer membership is no longer a valid role; bob stays a non-member.
         assert add_member_response.status_code == 422
 
-        job_id, proposal_id = _prepare_approval_job(client, owner_headers, workspace_id=workspace_id)
+        job_id, proposal_id = _prepare_approval_job(
+            client, owner_headers, workspace_id=workspace_id, db_path=tmp_path / "workspace-state.db"
+        )
         approve_response = client.post(
             "/ingestion/approve",
             json={

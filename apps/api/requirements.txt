@@ -7,7 +7,10 @@ pandas>=2.3.0,<2.4
 openpyxl==3.1.5
 PyYAML==6.0.2
 sqlglot==26.21.0
-claude-agent-sdk>=0.0.1,<1.0
+# 0.2.x is required: the runtimes read ResultMessage.api_error_status /
+# terminal_reason, which 0.1.x does not have. Keep the floor and the local venv
+# in step with the container so tests exercise the same message shapes.
+claude-agent-sdk>=0.2.128,<0.3
 anthropic>=0.40.0,<1.0
 httpx>=0.27,<1.0
 trafilatura>=1.8,<2.1

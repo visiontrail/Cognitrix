@@ -9,11 +9,14 @@ export function normalizeSessionTitle(
   title: string,
   fallback: string = DEFAULT_SESSION_TITLE
 ): string {
+  // Trim before stripping the "Title:" / "标题：" prefix — anchored at ^, the
+  // prefix pattern misses whenever the model pads the title with whitespace.
   const cleaned = String(title ?? "")
     .replace(/\s+/g, " ")
-    .replace(/^(title|标题)\s*[:：-]\s*/i, "")
     .trim()
-    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "");
+    .replace(/^(title|标题)\s*[:：-]\s*/i, "")
+    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
+    .trim();
   const resolved = cleaned || fallback.trim() || DEFAULT_SESSION_TITLE;
   const characters = Array.from(resolved);
   if (characters.length <= SESSION_TITLE_MAX_LENGTH) {

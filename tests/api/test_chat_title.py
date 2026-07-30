@@ -22,11 +22,13 @@ def test_chat_title_endpoint_returns_generated_title(monkeypatch, tmp_path: Path
     _set_minimal_env(monkeypatch, tmp_path)
 
     class _FakeTitleService:
-        def __init__(self) -> None:
-            self.prompts: list[str] = []
+        """Mirrors SessionTitleService.generate_title, including the locale kwarg."""
 
-        def generate_title(self, prompt: str) -> tuple[str, str]:
-            self.prompts.append(prompt)
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def generate_title(self, prompt: str, *, locale: str = "en") -> tuple[str, str]:
+            self.calls.append((prompt, locale))
             return "员工离职趋势分析", "ai"
 
     fake_service = _FakeTitleService()
@@ -47,10 +49,12 @@ def test_chat_title_endpoint_returns_generated_title(monkeypatch, tmp_path: Path
                 "user_id": "alice",
                 "project_id": "north",
                 "prompt": "请帮我分析最近 12 个月不同部门的离职趋势和波动原因",
+                "locale": "zh-CN",
             },
             headers=headers,
         )
 
     assert response.status_code == 200
     assert response.json() == {"title": "员工离职趋势分析", "source": "ai"}
-    assert fake_service.prompts == ["请帮我分析最近 12 个月不同部门的离职趋势和波动原因"]
+    # The requested locale must reach the title service, not just the prompt.
+    assert fake_service.calls == [("请帮我分析最近 12 个月不同部门的离职趋势和波动原因", "zh-CN")]

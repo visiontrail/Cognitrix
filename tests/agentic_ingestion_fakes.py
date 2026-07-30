@@ -54,8 +54,10 @@ def install_failing_planning_agent(  # type: ignore[no-untyped-def]
         requested_by: str,
         conversation_id: str | None,
         message: str | None,
+        tool_trace_sink: list[dict[str, Any]] | None = None,
     ) -> tuple[IngestionAgentPlanOutput, list[dict[str, Any]]]:
         _ = (self, conn, workspace_id, job_id, upload_id, requested_by, conversation_id, message)
+        _ = tool_trace_sink
         raise IngestionPlanningError(code=code, message=failure_message, status_code=status_code)
 
     monkeypatch.setattr(WriteIngestionAgentRuntime, "_run_planning_agent_loop", _raise)
@@ -71,9 +73,12 @@ def _mock_run_planning_agent_loop(
     requested_by: str,
     conversation_id: str | None,
     message: str | None,
+    tool_trace_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[IngestionAgentPlanOutput, list[dict[str, Any]]]:
     _ = (requested_by, conversation_id, message)
-    tool_trace: list[dict[str, Any]] = []
+    # Mirror the real loop: when the caller supplies a sink it owns the trace and
+    # uses it for rollback/recovery even if this call raises, so append in place.
+    tool_trace: list[dict[str, Any]] = tool_trace_sink if tool_trace_sink is not None else []
     upload_info = self._run_tool(  # noqa: SLF001
         conn=conn,
         job_id=job_id,

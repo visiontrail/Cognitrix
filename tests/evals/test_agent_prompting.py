@@ -102,6 +102,11 @@ def test_agent_prompting_long_tail_queries_complete(monkeypatch, tmp_path: Path)
         },
     ]
 
+    # This eval scores the single-answer contract (grounded answer carrying 口径 /
+    # 异常说明). "按地区看离职人数趋势" is also a valid multi-chart candidate, and
+    # that flow pauses for confirmation instead of answering — it has its own
+    # coverage in tests/integration/test_multi_chart_generation.py.
+    monkeypatch.setenv("MULTI_CHART_GENERATION_ENABLED", "false")
     set_agent_env(monkeypatch, tmp_path / "agent")
     with TestClient(app) as agent_client:
         agent_table = upload_dataset(

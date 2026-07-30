@@ -16,8 +16,39 @@ else
   exit 1
 fi
 
+# Compose interpolation prefers the invoking shell's environment over the
+# project .env. Shells that run Anthropic tooling export ANTHROPIC_BASE_URL,
+# ANTHROPIC_AUTH_TOKEN and API_TIMEOUT_MS, which silently replaced the values in
+# .env and pointed the container's agent SDK at the wrong endpoint (every agent
+# turn then failed with HTTP 401, reported by the SDK as ordinary model text).
+# The .env file is the single source of truth for the stack, so drop these from
+# the environment handed to compose.
+HOST_ENV_SHADOWED_VARS=(
+  ANTHROPIC_BASE_URL
+  ANTHROPIC_AUTH_TOKEN
+  ANTHROPIC_API_KEY
+  ANTHROPIC_MODEL
+  ANTHROPIC_DEFAULT_HAIKU_MODEL
+  ANTHROPIC_SMALL_FAST_MODEL
+  API_TIMEOUT_MS
+)
+
+warn_shadowed_host_env() {
+  local var
+  for var in "${HOST_ENV_SHADOWED_VARS[@]}"; do
+    if [[ -n "${!var:-}" ]]; then
+      echo "[docker] Ignoring host env ${var}; the value in .env is used instead." >&2
+    fi
+  done
+}
+
 compose() {
-  "${COMPOSE[@]}" -f "${COMPOSE_FILE}" "$@"
+  local unset_args=()
+  local var
+  for var in "${HOST_ENV_SHADOWED_VARS[@]}"; do
+    unset_args+=(-u "${var}")
+  done
+  env "${unset_args[@]}" "${COMPOSE[@]}" -f "${COMPOSE_FILE}" "$@"
 }
 
 require_docker() {
@@ -33,6 +64,7 @@ require_docker() {
 }
 
 ensure_env_file() {
+  warn_shadowed_host_env
   if [[ ! -f "${ENV_FILE}" ]]; then
     if [[ ! -f "${ENV_TEMPLATE}" ]]; then
       echo "[docker] Missing env template: ${ENV_TEMPLATE}" >&2

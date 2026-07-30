@@ -20,6 +20,7 @@ from apps.api.table_catalog import clear_table_catalog_service_cache
 from apps.api.tool_calling import clear_tool_calling_service_cache
 from apps.api.views import clear_view_storage_service_cache
 from apps.api.workspaces import clear_workspace_service_cache
+from tests.catalog_fixtures import insert_catalog_entry
 from tests.auth_utils import auth_headers, expect_error_code
 from tests.agentic_ingestion_fakes import install_failing_planning_agent, install_mock_planning_agent
 
@@ -164,22 +165,18 @@ def test_ingestion_plan_persists_proposal(monkeypatch, tmp_path: Path) -> None:
         owner_headers = auth_headers(client, user_id="alice", project_id="north", role="admin")
         workspace_id = _create_workspace(client, owner_headers, name="Plan Proposal Workspace")
 
-        catalog_response = client.post(
-            f"/workspaces/{workspace_id}/catalog",
-            headers=owner_headers,
-            json={
-                "table_name": "employee_roster",
-                "human_label": "Employee Roster",
-                "business_type": "roster",
-                "write_mode": "update_existing",
-                "time_grain": "none",
-                "primary_keys": ["employee_id"],
-                "match_columns": ["employee_id"],
-                "is_active_target": True,
-                "description": "Primary roster table",
-            },
+        insert_catalog_entry(
+            tmp_path / "workspace-state.db",
+            workspace_id=workspace_id,
+            table_name="employee_roster",
+            human_label="Employee Roster",
+            business_type="roster",
+            write_mode="update_existing",
+            primary_keys=["employee_id"],
+            match_columns=["employee_id"],
+            is_active_target=True,
+            description="Primary roster table",
         )
-        assert catalog_response.status_code == 200
 
         upload_payload = _create_upload(client, owner_headers, workspace_id=workspace_id)
         plan_response = client.post(

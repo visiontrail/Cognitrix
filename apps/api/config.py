@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     agent_timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
     agent_canvas_mode_enabled: bool = Field(default=False, alias="AGENT_CANVAS_MODE_ENABLED")
     agent_mode_max_steps: int = Field(default=40, alias="AGENT_MODE_MAX_STEPS")
-    agent_mode_outline_max_steps: int = Field(default=16, alias="AGENT_MODE_OUTLINE_MAX_STEPS")
+    agent_mode_outline_max_steps: int = Field(default=24, alias="AGENT_MODE_OUTLINE_MAX_STEPS")
     agent_mode_timeout_seconds: float = Field(default=600.0, alias="AGENT_MODE_TIMEOUT_SECONDS")
     agent_mode_max_charts: int = Field(default=12, alias="AGENT_MODE_MAX_CHARTS")
+    agent_mode_max_pages: int = Field(default=6, alias="AGENT_MODE_MAX_PAGES")
     web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
     web_search_provider: str = Field(default="bocha", alias="WEB_SEARCH_PROVIDER")
     web_search_api_key: str = Field(default="", alias="WEB_SEARCH_API_KEY")
@@ -70,7 +71,10 @@ class Settings(BaseSettings):
     password_min_length: int = Field(default=8, alias="PASSWORD_MIN_LENGTH")
     access_token_ttl_min: int = Field(default=120, alias="ACCESS_TOKEN_TTL_MIN")
     invite_link_ttl_days: int = Field(default=14, alias="INVITE_LINK_TTL_DAYS")
-    legacy_service_login_enabled: bool = Field(default=True, alias="LEGACY_SERVICE_LOGIN_ENABLED")
+    # Credential-free service-token login. Off by default and ignored entirely
+    # when APP_ENV=production: the endpoint issues a token for any role the
+    # caller asks for, so an exposed instance would hand out `superadmin`.
+    legacy_service_login_enabled: bool = Field(default=False, alias="LEGACY_SERVICE_LOGIN_ENABLED")
     auth_bootstrap_admin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_EMAIL")
     auth_bootstrap_admin_password: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_PASSWORD")
     auth_bootstrap_superadmin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_SUPERADMIN_EMAIL")
@@ -171,6 +175,7 @@ class Settings(BaseSettings):
         "agent_mode_max_steps",
         "agent_mode_outline_max_steps",
         "agent_mode_max_charts",
+        "agent_mode_max_pages",
         "admin_usage_retention_days",
     )
     @classmethod

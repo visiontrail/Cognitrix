@@ -19,12 +19,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--web-base-url", default="http://127.0.0.1:3000")
     parser.add_argument("--timeout-seconds", type=int, default=90)
-    # Legacy service-token auth
+    # Legacy service-token auth. POST /auth/login mints a token for any role
+    # without a credential, so it is disabled by default and refused outright
+    # when APP_ENV=production; only a dev instance that opts in via
+    # LEGACY_SERVICE_LOGIN_ENABLED=true can serve --legacy-login.
+    parser.add_argument("--legacy-login", action="store_true")
     parser.add_argument("--user-id", default="smoke-hr")
     parser.add_argument("--project-id", default="smoke-project")
     parser.add_argument("--role", default="hr")
-    # New email/password auth (used when --email is provided)
-    parser.add_argument("--email", default="")
+    # Email/password auth — the default path.
+    parser.add_argument("--email", default="smoke@cognitrix.local")
     parser.add_argument("--password", default="SmokePwd123!")
     # Section 12 — exercise the vendored xlsx skill path end-to-end. Requires
     # AGENT_SKILLS_ENABLED=true on the API and that the bootstrap has
@@ -351,7 +355,7 @@ def main() -> int:
         wait_for_http_ok(client, f"{api_base_url}/healthz", args.timeout_seconds)
         wait_for_http_ok(client, web_base_url, args.timeout_seconds)
 
-        if args.email:
+        if not args.legacy_login:
             # New email+password flow
             smoke_email = args.email
             smoke_password = args.password

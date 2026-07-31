@@ -230,7 +230,12 @@ On startup the API will create the admin user if no password-auth users exist ye
 - `PASSWORD_MIN_LENGTH=8` — minimum password length
 - `ACCESS_TOKEN_TTL_MIN=120` — JWT TTL in minutes
 - `INVITE_LINK_TTL_DAYS=14` — default invite link TTL
-- `LEGACY_SERVICE_LOGIN_ENABLED=true` — keep `POST /auth/login` service-token path (dev only)
+- `LEGACY_SERVICE_LOGIN_ENABLED` — keep the `POST /auth/login` service-token path (default: `false`).
+  That endpoint takes no credential and issues a token for whatever `role` the request names, so
+  an instance that answers it grants `superadmin` to anyone who can reach the port. It is honoured
+  only outside production: when `APP_ENV=production` the route returns 404 regardless of the flag
+  (`_legacy_service_login_available()` in `main.py`). The smoke flow uses email/password by default;
+  `--legacy-login` opts back into the old path against a dev instance that enabled it.
 - `APP_URL=http://localhost:3000` — used in invite link generation
 - `PUBLIC_BASE_URL` — base origin for public publish links (`/p/{token}`); empty by default, falling back to the request origin then `APP_URL`
 

@@ -328,6 +328,18 @@ async def on_startup() -> None:
         "agentic_ingestion_forced_enabled=true configured_flag=%s",
         settings.agentic_ingestion_enabled,
     )
+    if settings.legacy_service_login_enabled:
+        if settings.app_env.strip().lower() == "production":
+            logger.warning(
+                "legacy_service_login_ignored_in_production — POST /auth/login stays "
+                "disabled; it mints a token for any requested role without credentials"
+            )
+        else:
+            logger.warning(
+                "legacy_service_login_enabled app_env=%s — POST /auth/login issues a "
+                "token for any requested role without credentials; never expose this instance",
+                settings.app_env,
+            )
     if settings.auth_bootstrap_admin_password == DEFAULT_DEVELOPMENT_ADMIN_PASSWORD:
         logger.warning(
             "development_admin_credentials_active email=%s; override or clear bootstrap credentials outside local development",
@@ -364,8 +376,41 @@ async def auth_me(identity: AuthIdentity = Depends(get_current_identity)) -> dic
     return handle_me(identity)
 
 
+def _legacy_service_login_available(settings: Any) -> bool:
+    """Whether the credential-free service-token endpoint may answer.
+
+    The endpoint mints a token for whatever `role` the caller names, without
+    any credential, so an exposed instance hands out `superadmin` to anyone who
+    can reach it. It exists only to keep local development and the smoke flow
+    working, so it is off by default and can never be turned on in production —
+    the flag is honoured outside production only.
+    """
+
+    if settings.app_env.strip().lower() == "production":
+        return False
+    return bool(settings.legacy_service_login_enabled)
+
+
 @app.post("/auth/login")
 async def auth_login(request: LoginRequest) -> dict[str, Any]:
+    settings = get_settings()
+    if not _legacy_service_login_available(settings):
+        get_audit_logger().log(
+            event_type="authentication",
+            action="legacy_service_login",
+            status="denied",
+            severity="ALERT",
+            user_id=request.user_id.strip() or "unknown",
+            project_id=request.project_id.strip() or "unknown",
+            detail={"reason": "endpoint_disabled", "requested_role": request.role},
+        )
+        # Undifferentiated 404: a disabled endpoint should not advertise that it
+        # exists, nor that a different configuration would make it answer.
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Not Found"},
+        )
+
     if not request.user_id.strip() or not request.project_id.strip():
         raise HTTPException(
             status_code=422,
@@ -747,7 +792,12 @@ async def list_agent_run_ops(
         "status": run["status"],
         "page_id": run["page_id"],
         "summary": run.get("summary"),
-        "ops": ops,
+        # Each op carries its own page: a multi-page run must replay onto the
+        # same pages it was built on, not collapse back onto the run root.
+        "ops": [
+            {**op, "page_id": str((op.get("payload") or {}).get("page_id") or run["page_id"])}
+            for op in ops
+        ],
     }
 
 

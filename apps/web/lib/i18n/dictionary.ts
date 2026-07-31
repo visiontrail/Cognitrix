@@ -51,7 +51,7 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "chat.inputPlaceholder": "Ask about trends, distributions, comparisons, KPIs, or any business question…",
     "chat.inputHint": "Press Enter to send, Shift+Enter for new line",
     "chat.inputHintWithAttachment":
-      "Press Enter to send. You can attach one .xlsx file and add requirements. Type # to view available charts. Type @ to reference a column.",
+      "Press Enter to send. Drag one .xlsx file here (or use +) and add requirements. Type # to view available charts. Type @ to reference a column.",
     "chat.inputHintWithChartType": "Selected chart_type: {{chartType}}. Press Enter to send.",
     "chat.inputHintWithMultiChart": "Multi-chart mode is on for this message. Include the grouping dimension, then press Enter.",
     "chat.inputHintWithDataLabels": "Data labels are on for this message — the chart will print each value directly on the bars, slices, or points.",
@@ -153,6 +153,21 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "savedPrompts.manager.close": "Close",
     "savedPrompts.manager.variableCount": "{{count}} variables",
 
+    "chat.attachment.dropTitle": "Drop the Excel file to import it",
+    "chat.attachment.dropHint": "One .xlsx workbook at a time · up to {{maxSizeMb}} MB",
+    "chat.attachment.dropBlockedTitle": "Can't add a file right now",
+    "chat.attachment.dropBlockedHint":
+      "Wait for the current answer or finish the pending import confirmation, then drop the file again.",
+    "chat.attachment.singleFileOnly":
+      "One Excel file per message. Kept \"{{fileName}}\" and skipped {{ignoredCount}} other file(s) — import them one after another.",
+    "chat.attachment.unsupportedType":
+      "\"{{fileName}}\" isn't supported. Only {{allowed}} workbooks can be imported.",
+    "chat.attachment.tooLarge":
+      "\"{{fileName}}\" is over the {{maxSizeMb}} MB limit. Split the workbook or remove unused sheets, then try again.",
+    "chat.attachment.busy": "The assistant is still answering — wait for it to finish before adding a file.",
+    "chat.attachment.pendingIngestion":
+      "Finish the current import confirmation before adding another file.",
+    "chat.attachment.noSession": "Start a conversation first, then drop the Excel file.",
     "chat.attachFile": "Attach file",
     "chat.send": "Send",
     "chat.stop": "Stop response",
@@ -811,7 +826,7 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "chat.inputPlaceholder": "例如：按部门统计人数、离职趋势、薪酬分布、项目进度…",
     "chat.inputHint": "回车发送，Shift+回车换行",
     "chat.inputHintWithAttachment":
-      "回车发送。可附加一个 .xlsx 文件并填写要求。输入 # 可查看可用图表。输入 @ 可引用数据列。",
+      "回车发送。可直接把一个 .xlsx 文件拖到对话区（或点 + 选择）并填写要求。输入 # 可查看可用图表。输入 @ 可引用数据列。",
     "chat.inputHintWithChartType": "已选择 chart_type：{{chartType}}。回车发送。",
     "chat.inputHintWithMultiChart": "本条消息已开启多图生成模式。请写明拆分维度后回车发送。",
     "chat.inputHintWithDataLabels": "本条消息已开启数据标签——图表会把每个数值直接显示在柱子、扇区或数据点上。",
@@ -913,6 +928,18 @@ export const DICTIONARY: Record<Locale, DictionaryMap> = {
     "savedPrompts.manager.close": "关闭",
     "savedPrompts.manager.variableCount": "{{count}} 个变量",
 
+    "chat.attachment.dropTitle": "松开鼠标即可导入该 Excel 文件",
+    "chat.attachment.dropHint": "每次只能导入 1 个 .xlsx 文件 · 不超过 {{maxSizeMb}} MB",
+    "chat.attachment.dropBlockedTitle": "当前无法添加文件",
+    "chat.attachment.dropBlockedHint": "请等本轮回答结束、或先完成待确认的导入流程，再拖入文件。",
+    "chat.attachment.singleFileOnly":
+      "每条消息只能导入 1 个 Excel 文件。已保留「{{fileName}}」，忽略其余 {{ignoredCount}} 个文件，请逐个导入。",
+    "chat.attachment.unsupportedType": "「{{fileName}}」暂不支持，目前只能导入 {{allowed}} 文件。",
+    "chat.attachment.tooLarge":
+      "「{{fileName}}」超过 {{maxSizeMb}} MB 上限。请拆分工作簿或删除无用 Sheet 后重试。",
+    "chat.attachment.busy": "助手正在回答，请等本轮结束后再添加文件。",
+    "chat.attachment.pendingIngestion": "请先完成当前的导入确认，再添加新的文件。",
+    "chat.attachment.noSession": "请先新建或选择一个对话，再拖入 Excel 文件。",
     "chat.attachFile": "选择文件",
     "chat.send": "发送",
     "chat.stop": "停止生成",

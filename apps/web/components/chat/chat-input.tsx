@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import { BookMarked, ChevronRight, FileSpreadsheet, LayoutDashboard, Plus, Send, Square, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -33,6 +34,7 @@ import { SavedPromptsManager } from "@/components/chat/saved-prompts/saved-promp
 import { useMarkSavedPromptUsed, useSavedPrompts } from "@/hooks/use-saved-prompts";
 import { capabilitiesToGenerationOptions, insertAtSelection } from "@/lib/saved-prompts/template";
 import type { SavedPrompt } from "@/lib/saved-prompts/types";
+import { ALLOWED_ATTACHMENT_EXTENSIONS, selectChatAttachment } from "@/lib/chat/attachment";
 
 // Concrete Tailwind classes per generation-option tone. Kept as full literal
 // strings (not interpolated) so the JIT compiler always emits them.
@@ -66,7 +68,10 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // Attachment lives in the store so the panel-wide drop zone and this chip
+  // describe the same single pending workbook.
+  const selectedFile = useChatStore((s) => s.composerAttachment);
+  const setSelectedFile = useChatStore((s) => s.setComposerAttachment);
   const [customApprovalInput, setCustomApprovalInput] = useState(false);
   const [selectedChartType, setSelectedChartType] = useState<QueryChartType | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<Set<GenerationOptionId>>(() => new Set());
@@ -135,7 +140,17 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       return;
     }
     setCustomApprovalInput(false);
-  }, [pendingApproval, pendingSetup]);
+  }, [pendingApproval, pendingSetup, setSelectedFile]);
+
+  // The attachment is store-level (shared with the panel drop zone), so drop it
+  // when the user switches conversations instead of silently carrying a workbook
+  // into a different session. Panel switches keep it (the session is unchanged).
+  const lastSessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    if (lastSessionIdRef.current === sessionId) return;
+    lastSessionIdRef.current = sessionId;
+    setSelectedFile(null);
+  }, [sessionId, setSelectedFile]);
 
   useEffect(() => {
     if (!actionMenuOpen) return;
@@ -213,6 +228,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     sendMessage,
     sessionId,
     setComposerText,
+    setSelectedFile,
   ]);
 
   const handleStop = useCallback(() => {
@@ -585,10 +601,24 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept={`${ALLOWED_ATTACHMENT_EXTENSIONS.join(",")},application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`}
             className="hidden"
             onChange={(event) => {
-              setSelectedFile(event.target.files?.[0] ?? null);
+              // Same rules as the drop zone: one workbook, .xlsx, within size cap.
+              const { file, notice } = selectChatAttachment(Array.from(event.target.files ?? []));
+              if (notice) {
+                const message = t(notice.key, notice.params);
+                if (notice.level === "error") {
+                  toast.error(message);
+                } else {
+                  toast.warning(message);
+                }
+              }
+              if (file) {
+                setSelectedFile(file);
+              }
+              // Allow re-picking the same file after a rejection.
+              event.target.value = "";
             }}
             disabled={isSending}
           />

@@ -5,12 +5,15 @@ import { useChatMessages, useCreateSession } from "@/hooks/use-chat";
 import { MessageList } from "./message-list";
 import { ChatInput } from "./chat-input";
 import { ChatEmptyState } from "./chat-empty-state";
-import { PanelLeftOpen, MessageSquarePlus, LayoutDashboard } from "lucide-react";
+import { PanelLeftOpen, MessageSquarePlus, LayoutDashboard, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/lib/i18n/context";
+import { useChatAttachmentDropZone } from "@/hooks/use-chat-attachment-drop";
+import { MAX_ATTACHMENT_MB } from "@/lib/chat/attachment";
+import { cn } from "@/lib/utils";
 
 export function ChatPanel() {
   const { t } = useI18n();
@@ -28,9 +31,10 @@ export function ChatPanel() {
   const isCanvasVisible = activePanel === "both";
 
   const { isLoading } = useChatMessages(activeSessionId);
+  const { isDragActive, isBlocked, dropHandlers } = useChatAttachmentDropZone(activeSessionId);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full" data-testid="chat-drop-zone" {...dropHandlers}>
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-border-cream bg-ivory shrink-0">
         <div className="flex items-center gap-2">
@@ -91,6 +95,36 @@ export function ChatPanel() {
 
       {/* Input */}
       {activeSessionId && <ChatInput sessionId={activeSessionId} />}
+
+      {/* Drag-and-drop overlay: one workbook per turn (backend accepts a single
+          file per ingestion job), so the copy states the limit up front. */}
+      {isDragActive ? (
+        <div
+          data-testid="chat-drop-overlay"
+          className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-ivory/85 backdrop-blur-[2px]"
+        >
+          <div
+            className={cn(
+              "flex flex-col items-center gap-2 rounded-generous border-2 border-dashed px-8 py-6 text-center",
+              isBlocked
+                ? "border-stone-gray/50 bg-parchment"
+                : "border-terracotta/60 bg-parchment"
+            )}
+          >
+            <FileSpreadsheet
+              className={cn("h-7 w-7", isBlocked ? "text-stone-gray" : "text-terracotta")}
+            />
+            <p className="text-body-sm font-medium text-near-black">
+              {isBlocked ? t("chat.attachment.dropBlockedTitle") : t("chat.attachment.dropTitle")}
+            </p>
+            <p className="text-caption text-stone-gray">
+              {isBlocked
+                ? t("chat.attachment.dropBlockedHint")
+                : t("chat.attachment.dropHint", { maxSizeMb: MAX_ATTACHMENT_MB })}
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

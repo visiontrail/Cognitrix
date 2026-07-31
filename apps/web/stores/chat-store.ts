@@ -31,6 +31,12 @@ type ChatState = {
   pendingMultiChartBySession: Record<string, MultiChartConfirmation | undefined>;
   isComposing: boolean;
   composerText: string;
+  /**
+   * Single pending workbook for the composer. Lives in the store (not in
+   * `ChatInput`) so the panel-wide drag-and-drop zone and the composer chip
+   * stay in sync. Never persisted — a `File` handle is session-scoped.
+   */
+  composerAttachment: File | null;
   traceByMessageId: Record<string, MessageTrace>;
 
   setSessions: (sessions: ChatSession[]) => void;
@@ -62,6 +68,7 @@ type ChatState = {
   ) => void;
   renameSession: (sessionId: string, title: string) => void;
   setComposerText: (text: string) => void;
+  setComposerAttachment: (file: File | null) => void;
   setIsComposing: (value: boolean) => void;
 
   startTrace: (messageId: string, startedAt: number) => void;
@@ -238,6 +245,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingMultiChartBySession: {},
   isComposing: false,
   composerText: "",
+  composerAttachment: null,
   traceByMessageId: {},
 
   setSessions: (sessions) =>
@@ -536,6 +544,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   setComposerText: (text) => set({ composerText: text }),
+  setComposerAttachment: (file) => set({ composerAttachment: file }),
   setIsComposing: (value) => set({ isComposing: value }),
 
   startTrace: (messageId, startedAt) =>

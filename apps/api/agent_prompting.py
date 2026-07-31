@@ -203,40 +203,84 @@ def build_agent_system_prompt(*, web_search_enabled: bool = False) -> str:
 
 _OUTLINE_EXAMPLE = json.dumps(
     {
-        "title": "销售概览仪表盘",
-        "sections": [
+        "title": "人力概览仪表盘",
+        "pages": [
             {
-                "key": "s1",
-                "title": "整体概况",
-                "items": [
+                "key": "p1",
+                "title": "总览",
+                "sections": [
                     {
-                        "key": "c1",
-                        "kind": "chart",
-                        "title": "总员工数",
-                        "description": "在职员工总数的单值指标",
-                        "chart_type": "single_value",
-                        "size_preset": "kpi",
+                        "key": "s1",
+                        "title": "整体概况",
+                        "level": 1,
+                        "items": [
+                            {
+                                "key": "c1",
+                                "kind": "chart",
+                                "title": "总员工数",
+                                "description": "在职员工总数的单值指标",
+                                "chart_type": "single_value",
+                                "size_preset": "kpi",
+                            },
+                            {
+                                "key": "c2",
+                                "kind": "chart",
+                                "title": "各部门人数",
+                                "description": "按部门统计员工数量的柱状图",
+                                "chart_type": "bar",
+                                "size_preset": "half",
+                            },
+                        ],
                     },
                     {
-                        "key": "c2",
-                        "kind": "chart",
-                        "title": "各部门人数",
-                        "description": "按部门统计员工数量的柱状图",
-                        "chart_type": "bar",
-                        "size_preset": "half",
+                        "key": "s2",
+                        "title": "结论",
+                        "level": 1,
+                        "items": [
+                            {
+                                "key": "t1",
+                                "kind": "text",
+                                "style": "body",
+                                "content": "一句话总结页面要点。",
+                            }
+                        ],
                     },
                 ],
             },
             {
-                "key": "s2",
-                "title": "结论",
-                "items": [
+                "key": "p2",
+                "title": "平台组",
+                "sections": [
                     {
-                        "key": "t1",
-                        "kind": "text",
-                        "style": "body",
-                        "content": "一句话总结页面要点。",
-                    }
+                        "key": "s3",
+                        "title": "人员结构",
+                        "level": 1,
+                        "items": [
+                            {
+                                "key": "c3",
+                                "kind": "chart",
+                                "title": "平台组学历分布",
+                                "description": "平台组按学历统计人数",
+                                "chart_type": "pie",
+                                "size_preset": "half",
+                            }
+                        ],
+                    },
+                    {
+                        "key": "s4",
+                        "title": "年龄结构",
+                        "level": 2,
+                        "items": [
+                            {
+                                "key": "c4",
+                                "kind": "chart",
+                                "title": "平台组年龄分布",
+                                "description": "平台组按年龄段统计人数",
+                                "chart_type": "bar",
+                                "size_preset": "half",
+                            }
+                        ],
+                    },
                 ],
             },
         ],
@@ -246,35 +290,68 @@ _OUTLINE_EXAMPLE = json.dumps(
 )
 
 
-def build_agent_canvas_outline_prompt(*, max_charts: int) -> str:
+def build_agent_canvas_outline_prompt(*, max_charts: int, max_pages: int = 1) -> str:
     """System prompt for the agent-canvas outline (planning) phase.
 
     Deliberately explicit and example-driven: the DeepSeek gateway follows
     concrete numbered instructions far more reliably than abstract guidance.
     """
+    multi_page = max_pages > 1
+    page_rules = (
+        (
+            "2. Decide how many PAGES the dashboard needs. Each page is its own entry in "
+            "the canvas page sidebar.\n"
+            "   - Use ONE page when the request is a single coherent overview.\n"
+            "   - Use MULTIPLE pages when the request breaks down by an entity — phrases "
+            "like \"各个部门\", \"每个区域\", \"per team\", \"by product line\", \"分别统计\" "
+            "mean one page per entity value. Call `get_distinct_values` on that column "
+            "FIRST to learn the real values, then give each value its own page, plus a "
+            "leading overview page that compares them.\n"
+            f"   - Use AT MOST {max_pages} pages in total. If the entity has more values "
+            f"than that, keep the overview page plus the {max_pages - 1} largest values "
+            "and say so in a text item.\n"
+            "3. Inside each page, plan 1-4 sections. A section may be a sub-section of the "
+            "one before it: set `level` to 2 (default is 1).\n"
+            "4. Give each section 1-4 chart items and optional text items, ordered from "
+            "overview to detail.\n"
+            f"5. Use AT MOST {max_charts} chart items in total across ALL pages.\n"
+            "6. END your response with a JSON block (inside ```json ... ```) matching this "
+            "exact structure:\n"
+        )
+        if multi_page
+        else (
+            "2. Decide the page structure: 2-4 sections, each with 1-4 chart items and "
+            "optional text items. A section may be a sub-section of the one before it: set "
+            "`level` to 2 (default is 1). Order sections from overview to detail.\n"
+            f"3. Use AT MOST {max_charts} chart items in total.\n"
+            "4. END your response with a JSON block (inside ```json ... ```) matching this "
+            "exact structure:\n"
+        )
+    )
     return (
         "You are Cognitrix's dashboard planning agent.\n"
         "\n"
         "## Goal\n"
-        "The user asked for a complete dashboard page. Your ONLY job in this phase is to "
+        "The user asked for a complete dashboard. Your ONLY job in this phase is to "
         "produce a dashboard OUTLINE as JSON — do NOT generate any chart yet.\n"
         "\n"
         "## How to work\n"
         "1. Inspect the available data first: call `list_tables`, then `describe_table` on the "
         "relevant tables, and `get_metric_catalog` when quantitative metrics are involved.\n"
-        "2. Decide the page structure: 2-4 sections, each with 1-4 chart items and optional "
-        "text items. Order sections from overview to detail.\n"
-        f"3. Use AT MOST {max_charts} chart items in total across all sections.\n"
-        "4. END your response with a JSON block (inside ```json ... ```) matching this exact "
-        "structure:\n"
+        f"{page_rules}"
         "\n"
         "```json\n"
         f"{_OUTLINE_EXAMPLE}\n"
         "```\n"
         "\n"
         "Field rules:\n"
-        "- `title`: the dashboard page title, in the user's language.\n"
-        "- `sections[].key` and `items[].key`: short unique slugs (s1, s2, c1, c2, t1 ...).\n"
+        "- `title`: the dashboard title, in the user's language.\n"
+        "- `pages[]`: the ordered pages. `pages[].title` is the sidebar label, in the "
+        "user's language. Even a single-page dashboard uses this `pages` array.\n"
+        "- `pages[].key`, `sections[].key` and `items[].key`: short unique slugs "
+        "(p1, s1, c1, t1 ...). Keys must be unique across the whole outline.\n"
+        "- `sections[].level`: 1 for a section heading, 2 for a sub-section nested under "
+        "the preceding level-1 section.\n"
         "- chart items: `kind` = \"chart\", with `title`, one-line `description`, `chart_type` "
         "(bar, line, pie, area, funnel, single_value, ...), and `size_preset`.\n"
         "- text items: `kind` = \"text\", with `style` (title | subtitle | body) and `content`.\n"
@@ -283,7 +360,7 @@ def build_agent_canvas_outline_prompt(*, max_charts: int) -> str:
         "comparisons), `full` = full width and tall (dense tables, detailed charts).\n"
         "- NEVER include coordinates, pixel sizes, or grid positions — layout is automatic.\n"
         "- Base every chart item on columns and values that actually exist in the inspected "
-        "tables; do not invent fields.\n"
+        "tables; do not invent fields or entity values.\n"
         "\n"
         "The JSON block is machine-parsed. Do not add prose after the closing ```."
     )
@@ -293,6 +370,7 @@ def build_agent_canvas_execution_prompt(
     *,
     outline_json: str,
     max_charts: int,
+    max_pages: int = 1,
 ) -> str:
     """System prompt for the agent-canvas execution phase (approved outline)."""
     return (
@@ -306,16 +384,26 @@ def build_agent_canvas_execution_prompt(
         "```\n"
         "\n"
         "## Build protocol — follow these steps in order\n"
-        "1. Take the FIRST section from the outline. Call `add_section` with its title. "
-        "Remember the `section_id` the tool returns.\n"
-        "2. For every item inside that section, in order:\n"
+        "1. The outline's FIRST page already exists and is the current page — do NOT call "
+        "`add_page` for it. Build it completely before moving on.\n"
+        "2. Take the next section of the current page. Call `add_section` with its title "
+        "and its `level` (1, or 2 for a sub-section). Remember the returned `section_id`.\n"
+        "3. For every item inside that section, in order:\n"
         "   - chart item → call `place_chart` with: `section_id`, the item's `title`, "
         "`chart_type`, `size_preset`, and the data query (`sql` OR `metric`).\n"
         "   - text item → call `add_text_block` with `section_id`, `content`, `style`.\n"
-        "3. Repeat steps 1-2 for every remaining section, in outline order.\n"
-        "4. After ALL sections are done, call `finish_dashboard` ONCE with a 1-3 sentence "
+        "4. Repeat steps 2-3 for every remaining section of the current page.\n"
+        "5. Only when the current page is FULLY built, call `add_page` with the next "
+        "page's title. That page becomes the current page; go back to step 2. Never call "
+        "`add_page` twice in a row, and never place a chart for a page you have not opened "
+        f"yet. At most {max_pages} pages exist in a run, including the first one.\n"
+        "6. After ALL pages are done, call `finish_dashboard` ONCE with a 1-3 sentence "
         "summary in the user's language. After it returns, reply with ONE short closing "
         "sentence and stop. Do NOT output a JSON block.\n"
+        "\n"
+        "Every tool result carries a `progress` object with `current_page`, "
+        "`pages_created`, `sections_placed` and `charts_placed` — use it to know exactly "
+        "where you are; there is no tool to read the canvas back.\n"
         "\n"
         "## place_chart query rules\n"
         "- Prefer `sql`: a readonly SELECT where the dimension column is aliased `AS segment` "

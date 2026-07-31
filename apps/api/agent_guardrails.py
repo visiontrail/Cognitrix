@@ -60,6 +60,7 @@ class AgentGuardrails:
         # Sections + text blocks share one proportional cap so a drifting model
         # cannot flood the page with headers even while staying under the chart cap.
         self.agent_mode_max_blocks = 2 * self.agent_mode_max_charts
+        self.agent_mode_max_pages = int(settings.agent_mode_max_pages)
         base_tools = (
             "list_tables",
             "describe_table",
@@ -132,6 +133,21 @@ class AgentGuardrails:
                 message=(
                     f"The run's chart budget is exhausted ({self.agent_mode_max_charts} charts). "
                     "Stop placing charts and call finish_dashboard now."
+                ),
+            )
+
+    def enforce_canvas_page_budget(self, created_pages: int) -> None:
+        """Reject an add_page call once the per-run page budget is spent.
+
+        `created_pages` counts the run's root page, so a budget of N allows N
+        sidebar entries in total.
+        """
+        if created_pages >= self.agent_mode_max_pages:
+            raise AgentGuardrailError(
+                code="AGENT_MODE_PAGE_BUDGET_EXCEEDED",
+                message=(
+                    f"The run's page budget is exhausted ({self.agent_mode_max_pages} pages). "
+                    "Keep building on the current page, then call finish_dashboard."
                 ),
             )
 

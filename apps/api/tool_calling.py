@@ -20,7 +20,9 @@ from urllib.parse import urlparse
 from .agent_canvas import (
     AgentCanvasError,
     block_id_for,
+    child_page_id_for,
     get_agent_canvas_run_store,
+    normalize_section_level,
     validate_canvas_tool_arguments,
 )
 from .agent_logging import format_agent_debug_blocks
@@ -155,6 +157,7 @@ class ToolCall(BaseModel):
         "web_search",
         "web_fetch",
         "save_web_research",
+        "add_page",
         "add_section",
         "add_text_block",
         "place_chart",
@@ -249,6 +252,7 @@ class ToolCallingService:
             "web_search": self._tool_web_search,
             "web_fetch": self._tool_web_fetch,
             "save_web_research": self._tool_save_web_research,
+            "add_page": self._tool_add_page,
             "add_section": self._tool_add_section,
             "add_text_block": self._tool_add_text_block,
             "place_chart": self._tool_place_chart,
@@ -270,6 +274,7 @@ class ToolCallingService:
             "web_search": {"readOnlyHint": True},
             "web_fetch": {"readOnlyHint": True},
             "save_web_research": {"readOnlyHint": False},
+            "add_page": {"readOnlyHint": False},
             "add_section": {"readOnlyHint": False},
             "add_text_block": {"readOnlyHint": False},
             "place_chart": {"readOnlyHint": False},
@@ -1411,6 +1416,63 @@ class ToolCallingService:
             },
         )
 
+    @staticmethod
+    def _canvas_current_page_id(run_context: dict[str, Any]) -> str:
+        """The page new sections land on: the run's cursor, kept by the runtime."""
+        return str(run_context.get("page_id") or "")
+
+    def _canvas_page_for_section(
+        self, *, run_id: str, run_context: dict[str, Any], section_id: str
+    ) -> str:
+        """Resolve which page a chart/text block belongs to.
+
+        The referenced section's own op wins over the run's current-page cursor:
+        a model that opens the next page before placing the last chart of the
+        previous one would otherwise scatter blocks across pages.
+        """
+        if section_id:
+            resolved = get_agent_canvas_run_store().find_page_for_block(
+                run_id=run_id, block_id=section_id
+            )
+            if resolved:
+                return resolved
+        return self._canvas_current_page_id(run_context)
+
+    def _tool_add_page(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        run_context = self._require_agent_canvas_run(arguments)
+        model_arguments = self._canvas_model_arguments(arguments)
+        self._validate_canvas_arguments("add_page", model_arguments)
+
+        run_id = str(run_context["run_id"])
+        root_page_id = str(run_context.get("root_page_id") or run_context.get("page_id") or "")
+        title = str(model_arguments["title"]).strip()[:120]
+        op = get_agent_canvas_run_store().append_op(
+            run_id=run_id,
+            op_type="create_page",
+            payload=lambda seq: {
+                "block_id": block_id_for(run_id, seq),
+                "page_id": child_page_id_for(run_id, seq),
+                # Nesting under the run's root page keeps run-level undo a single
+                # cascade delete and groups the run in the page sidebar.
+                "parent_page_id": root_page_id,
+                "title": title,
+            },
+        )
+        self._audit_canvas_op(
+            context=context,
+            run_id=run_id,
+            op_type="create_page",
+            status="success",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        return {
+            "status": "ok",
+            "page_id": op["payload"]["page_id"],
+            "title": title,
+            "op": op,
+        }
+
     def _tool_add_section(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
         run_context = self._require_agent_canvas_run(arguments)
@@ -1418,8 +1480,9 @@ class ToolCallingService:
         self._validate_canvas_arguments("add_section", model_arguments)
 
         run_id = str(run_context["run_id"])
-        page_id = str(run_context.get("page_id") or "")
+        page_id = self._canvas_current_page_id(run_context)
         title = str(model_arguments["title"]).strip()[:120]
+        level = normalize_section_level(model_arguments.get("level")) or 1
         op = get_agent_canvas_run_store().append_op(
             run_id=run_id,
             op_type="add_section",
@@ -1428,6 +1491,7 @@ class ToolCallingService:
                 "section_id": block_id_for(run_id, seq),
                 "page_id": page_id,
                 "title": title,
+                "level": level,
             },
         )
         self._audit_canvas_op(
@@ -1440,6 +1504,8 @@ class ToolCallingService:
         return {
             "status": "ok",
             "section_id": op["payload"]["section_id"],
+            "page_id": page_id,
+            "level": level,
             "op": op,
         }
 
@@ -1450,10 +1516,12 @@ class ToolCallingService:
         self._validate_canvas_arguments("add_text_block", model_arguments)
 
         run_id = str(run_context["run_id"])
-        page_id = str(run_context.get("page_id") or "")
         content = str(model_arguments["content"]).strip()[:2000]
         style = str(model_arguments.get("style") or "body").strip()
         section_id = str(model_arguments.get("section_id") or "").strip()
+        page_id = self._canvas_page_for_section(
+            run_id=run_id, run_context=run_context, section_id=section_id
+        )
         op = get_agent_canvas_run_store().append_op(
             run_id=run_id,
             op_type="add_text_block",
@@ -1485,13 +1553,15 @@ class ToolCallingService:
         self._validate_canvas_arguments("place_chart", model_arguments)
 
         run_id = str(run_context["run_id"])
-        page_id = str(run_context.get("page_id") or "")
         workspace_id = str(context.workspace_id or run_context.get("workspace_id") or "").strip()
         title = str(model_arguments["title"]).strip()[:120]
         chart_type = str(model_arguments["chart_type"]).strip() or "bar"
         size_preset = str(model_arguments["size_preset"]).strip()
         section_id = str(model_arguments.get("section_id") or "").strip()
         description = str(model_arguments.get("description") or "").strip()
+        page_id = self._canvas_page_for_section(
+            run_id=run_id, run_context=run_context, section_id=section_id
+        )
         store = get_agent_canvas_run_store()
         replaces_block_id = str(arguments.get("_replaces_block_id") or "").strip() or None
         if replaces_block_id is None:

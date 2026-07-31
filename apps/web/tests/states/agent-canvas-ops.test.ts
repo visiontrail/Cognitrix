@@ -57,6 +57,47 @@ const RUN_OPS: AgentCanvasWireOp[] = [
   wireOp(5, "add_text_block", { block_id: blockId(5), style: "body", content: "说明" }),
 ];
 
+const SECOND_PAGE_ID = `agent-${RUN_ID}-p4`;
+
+function wireOpOnPage(
+  seq: number,
+  opType: AgentCanvasWireOp["opType"],
+  pageId: string,
+  payload: Record<string, unknown>
+): AgentCanvasWireOp {
+  return { runId: RUN_ID, seq, opType, pageId, payload };
+}
+
+/** A run that opens a second page mid-flight (one page per department). */
+const MULTI_PAGE_OPS: AgentCanvasWireOp[] = [
+  wireOp(1, "create_page", { page_id: PAGE_ID, parent_page_id: "", title: "总览" }),
+  wireOp(2, "add_section", { block_id: blockId(2), title: "整体", level: 1 }),
+  wireOp(3, "place_chart", {
+    block_id: blockId(3),
+    title: "总人数",
+    size_preset: "kpi",
+    asset_id: "asset-total",
+    spec: {},
+  }),
+  wireOpOnPage(4, "create_page", SECOND_PAGE_ID, {
+    page_id: SECOND_PAGE_ID,
+    parent_page_id: PAGE_ID,
+    title: "HR",
+  }),
+  wireOpOnPage(5, "add_section", SECOND_PAGE_ID, {
+    block_id: blockId(5),
+    title: "人员结构",
+    level: 2,
+  }),
+  wireOpOnPage(6, "place_chart", SECOND_PAGE_ID, {
+    block_id: blockId(6),
+    title: "HR 人数",
+    size_preset: "half",
+    asset_id: "asset-hr",
+    spec: {},
+  }),
+];
+
 function runPage(): WebDesignPage {
   const page = (useWorkspaceStore.getState().webDesign.pages ?? []).find(
     (item) => item.id === PAGE_ID
@@ -202,6 +243,59 @@ describe("agent canvas op application", () => {
     const assetIds = useAssetStore.getState().assets.map((asset) => asset.id);
     expect(assetIds).toContain("asset-1");
     expect(assetIds).toContain("asset-2");
+  });
+
+  it("creates one nested sidebar page per add_page op", () => {
+    for (const op of MULTI_PAGE_OPS) {
+      expect(applyAgentCanvasWireOp(op, deps)).toBe(true);
+    }
+    const layout = useWorkspaceStore.getState().webDesign;
+    const pageIds = (layout.pages ?? []).map((page) => page.id);
+    expect(pageIds).toContain(PAGE_ID);
+    expect(pageIds).toContain(SECOND_PAGE_ID);
+
+    // The run's root page is a top-level sidebar entry; later pages nest under it.
+    const rootItem = layout.sidebar.find((item) => item.id === PAGE_ID);
+    expect(rootItem).toBeDefined();
+    expect(rootItem?.children.map((child) => child.id)).toEqual([SECOND_PAGE_ID]);
+    expect(rootItem?.children[0]?.label).toBe("HR");
+    expect(layout.sidebar.some((item) => item.id === SECOND_PAGE_ID)).toBe(false);
+    // The canvas follows the agent onto the page it is filling.
+    expect(layout.activePageId).toBe(SECOND_PAGE_ID);
+
+    // Blocks land on the page their op names, not on the run root.
+    const secondPage = (layout.pages ?? []).find((page) => page.id === SECOND_PAGE_ID);
+    expect(secondPage?.zones.map((zone) => zone.id)).toEqual([blockId(6)]);
+    expect((secondPage?.textZones ?? []).map((zone) => zone.id)).toEqual([blockId(5)]);
+    expect(runPage().zones.map((zone) => zone.id)).toEqual([blockId(3)]);
+  });
+
+  it("renders a level-2 section as a sub-heading", () => {
+    for (const op of MULTI_PAGE_OPS) {
+      applyAgentCanvasWireOp(op, deps);
+    }
+    const rootSection = (runPage().textZones ?? []).find((zone) => zone.id === blockId(2));
+    expect(rootSection?.style).toBe("title");
+    const secondPage = (useWorkspaceStore.getState().webDesign.pages ?? []).find(
+      (page) => page.id === SECOND_PAGE_ID
+    );
+    const subSection = (secondPage?.textZones ?? []).find((zone) => zone.id === blockId(5));
+    expect(subSection?.style).toBe("subtitle");
+  });
+
+  it("undoAgentRun removes every page of a multi-page run", () => {
+    for (const op of MULTI_PAGE_OPS) {
+      applyAgentCanvasWireOp(op, deps);
+    }
+    useWorkspaceStore.getState().undoAgentRun(PAGE_ID);
+
+    const state = useWorkspaceStore.getState();
+    const pageIds = (state.webDesign.pages ?? []).map((page) => page.id);
+    expect(pageIds).not.toContain(PAGE_ID);
+    expect(pageIds).not.toContain(SECOND_PAGE_ID);
+    // Nodes from BOTH pages are gone; assets stay in the library.
+    expect(state.nodesByFormat["web-design"] ?? []).toHaveLength(0);
+    expect(useAssetStore.getState().assets.map((asset) => asset.id)).toContain("asset-hr");
   });
 
   it("soft lock is set per run and cleared on terminal status", () => {

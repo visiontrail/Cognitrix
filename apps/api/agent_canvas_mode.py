@@ -41,6 +41,7 @@ from .agent_canvas import (
     TEXT_STYLES,
     block_id_for,
     get_agent_canvas_run_store,
+    normalize_section_level,
 )
 from .agent_guardrails import AgentGuardrailContext, AgentGuardrailError
 from .agent_logging import format_agent_debug_blocks
@@ -127,6 +128,11 @@ class CanvasExecutionContext:
     tool_steps: int = 0
     text_blocks: list[str] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
+    # Multi-page runs: `current_page_id` is the cursor every add_section lands
+    # on; `pages` is the ordered (page_id, title) log used for the semantic
+    # shadow and the run summary.
+    current_page_id: str = ""
+    pages: list[tuple[str, str]] = field(default_factory=list)
 
 
 class AgentCanvasModeService:
@@ -427,7 +433,10 @@ class AgentCanvasModeService:
     ) -> dict[str, Any] | None:
         system_text = "\n\n".join(
             [
-                build_agent_canvas_outline_prompt(max_charts=int(self.settings.agent_mode_max_charts)),
+                build_agent_canvas_outline_prompt(
+                    max_charts=int(self.settings.agent_mode_max_charts),
+                    max_pages=int(self.settings.agent_mode_max_pages),
+                ),
                 *self._context_sections(agent_request),
             ]
         )
@@ -445,6 +454,7 @@ class AgentCanvasModeService:
                     "dataset_table": agent_request.dataset_table,
                     "message": agent_request.message,
                     "max_charts": int(self.settings.agent_mode_max_charts),
+                    "max_pages": int(self.settings.agent_mode_max_pages),
                     "outline_max_turns": outline_max_turns,
                     "readonly_tools": list(READONLY_TOOL_NAMES),
                 },
@@ -506,7 +516,11 @@ class AgentCanvasModeService:
                 failure.update({"reason": "no_json", **diagnostics})
             return None
         try:
-            return _normalize_outline(raw, max_charts=int(self.settings.agent_mode_max_charts))
+            return _normalize_outline(
+                raw,
+                max_charts=int(self.settings.agent_mode_max_charts),
+                max_pages=int(self.settings.agent_mode_max_pages),
+            )
         except ValueError as exc:
             logger.warning(
                 "agent_canvas_outline_invalid conversation_id=%s error=%s raw_outline=%s",
@@ -540,6 +554,7 @@ class AgentCanvasModeService:
             handle=handle,
             outline=outline,
             charts_total=int(outline.get("chart_count") or 0),
+            current_page_id=str(run["page_id"]),
         )
         get_audit_logger().log(
             event_type="agent",
@@ -571,23 +586,33 @@ class AgentCanvasModeService:
         try:
             # First op of every run: create the fresh page (design D8). Ops are
             # persisted before the live push, so replay always sees them.
+            root_page_title = str(
+                _outline_root_page_title(exec_ctx.outline)
+                or exec_ctx.outline.get("title")
+                or "Dashboard"
+            )
             page_op = self.store.append_op(
                 run_id=run_id,
                 op_type="create_page",
                 payload=lambda seq: {
                     "block_id": block_id_for(run_id, seq),
                     "page_id": run["page_id"],
-                    "title": str(exec_ctx.outline.get("title") or "Dashboard"),
+                    # The root page has no parent; `add_page` nests every later
+                    # page under it so run-level undo stays one cascade.
+                    "parent_page_id": "",
+                    "title": root_page_title,
                 },
             )
+            exec_ctx.pages.append((str(run["page_id"]), root_page_title))
             exec_ctx.handle.broadcast(("canvas_op", self._op_event(base, run, page_op)))
 
-            outline_json = json.dumps(exec_ctx.outline, ensure_ascii=False, indent=2)
+            outline_json = _outline_prompt_json(exec_ctx.outline)
             system_text = "\n\n".join(
                 [
                     build_agent_canvas_execution_prompt(
                         outline_json=outline_json,
                         max_charts=int(self.settings.agent_mode_max_charts),
+                        max_pages=int(self.settings.agent_mode_max_pages),
                     ),
                     *self._context_sections(exec_ctx.request),
                 ]
@@ -701,6 +726,7 @@ class AgentCanvasModeService:
                 locale=exec_ctx.locale,
                 placed=exec_ctx.charts_placed,
                 failed=exec_ctx.failed_items,
+                pages=len(exec_ctx.pages),
             )
             summary = {
                 "status": status,
@@ -708,6 +734,7 @@ class AgentCanvasModeService:
                 "placed": exec_ctx.charts_placed,
                 "failed": exec_ctx.failed_items,
                 "skipped": skipped,
+                "pages": len(exec_ctx.pages),
                 "duration_ms": duration_ms,
             }
             if failure_code:
@@ -726,6 +753,7 @@ class AgentCanvasModeService:
                     "op_count": self.store.count_ops(run_id=run_id),
                     "chart_count": exec_ctx.charts_placed,
                     "failed_count": exec_ctx.failed_items,
+                    "page_count": len(exec_ctx.pages),
                     "duration_ms": duration_ms,
                 },
             )
@@ -738,6 +766,7 @@ class AgentCanvasModeService:
                 "placed_count": exec_ctx.charts_placed,
                 "failed_count": exec_ctx.failed_items,
                 "skipped_count": skipped,
+                "page_count": len(exec_ctx.pages),
                 "duration_ms": duration_ms,
                 "tool_steps": exec_ctx.tool_steps,
             }
@@ -1283,6 +1312,8 @@ class AgentCanvasModeService:
                     )
                 if canonical == "place_chart":
                     self.guardrails.enforce_canvas_chart_budget(exec_ctx.charts_placed)
+                elif canonical == "add_page":
+                    self.guardrails.enforce_canvas_page_budget(len(exec_ctx.pages))
                 elif canonical in {"add_section", "add_text_block"}:
                     self.guardrails.enforce_canvas_block_budget(exec_ctx.blocks_placed)
         except AgentGuardrailError as exc:
@@ -1298,7 +1329,10 @@ class AgentCanvasModeService:
         if exec_ctx is not None and canonical in CANVAS_TOOL_NAMES:
             invoke_arguments["_agent_run"] = {
                 "run_id": exec_ctx.run["run_id"],
-                "page_id": exec_ctx.run["page_id"],
+                # `page_id` is the *current* page cursor, not the run root: new
+                # sections must land on the page opened by the last add_page.
+                "page_id": exec_ctx.current_page_id or exec_ctx.run["page_id"],
+                "root_page_id": exec_ctx.run["page_id"],
                 "workspace_id": exec_ctx.run["workspace_id"],
                 "conversation_id": exec_ctx.request.conversation_id,
             }
@@ -1356,6 +1390,11 @@ class AgentCanvasModeService:
                         )
                 elif result.get("status") == "error_placeholder":
                     exec_ctx.failed_items += 1
+            elif canonical == "add_page":
+                page_id = str(result.get("page_id") or "")
+                if page_id:
+                    exec_ctx.current_page_id = page_id
+                    exec_ctx.pages.append((page_id, str(result.get("title") or "")))
             elif canonical == "add_section":
                 exec_ctx.blocks_placed += 1
                 exec_ctx.sections.append(str((op or {}).get("payload", {}).get("title") or ""))
@@ -1375,6 +1414,15 @@ class AgentCanvasModeService:
                 "charts_placed": exec_ctx.charts_placed,
                 "charts_total": exec_ctx.charts_total,
                 "failed_items": exec_ctx.failed_items,
+                "pages_created": [title for _page_id, title in exec_ctx.pages if title],
+                "current_page": next(
+                    (
+                        title
+                        for page_id, title in reversed(exec_ctx.pages)
+                        if page_id == exec_ctx.current_page_id
+                    ),
+                    "",
+                ),
             }
 
         return _observation(result, status="success")
@@ -1383,13 +1431,19 @@ class AgentCanvasModeService:
     def _op_event(
         base: dict[str, Any], run: dict[str, Any], op: dict[str, Any]
     ) -> dict[str, Any]:
+        payload = op.get("payload") or {}
+        # The op's own page wins: a multi-page run puts blocks on pages other
+        # than the run root, and replay must land them exactly where they were
+        # first placed. Falls back to the root for ops written before add_page
+        # existed (their payload has no page_id).
+        page_id = str(payload.get("page_id") or "") or str(run["page_id"])
         return {
             **base,
             "run_id": run["run_id"],
             "seq": int(op["seq"]),
             "op_type": str(op["op_type"]),
-            "page_id": run["page_id"],
-            "payload": op.get("payload") or {},
+            "page_id": page_id,
+            "payload": payload,
         }
 
     def _terminal_payload(self, base: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
@@ -1403,6 +1457,7 @@ class AgentCanvasModeService:
             "placed_count": int(summary.get("placed") or 0),
             "failed_count": int(summary.get("failed") or 0),
             "skipped_count": int(summary.get("skipped") or 0),
+            "page_count": int(summary.get("pages") or 1),
         }
 
     def _outline_payload(
@@ -1423,10 +1478,17 @@ class AgentCanvasModeService:
             "canvas_format": run["canvas_format"],
             "page_title": outline.get("title") or "Dashboard",
             "sections": outline.get("sections") or [],
+            "pages": [
+                {"key": page["key"], "title": page["title"]}
+                for page in _outline_pages(outline)
+            ],
             "proposed_chart_count": int(outline.get("chart_count") or 0),
+            "proposed_page_count": len(_outline_pages(outline)),
             "max_chart_count": int(self.settings.agent_mode_max_charts),
+            "max_page_count": int(self.settings.agent_mode_max_pages),
             "expires_at": expires_at,
             "truncated": bool(outline.get("truncated")),
+            "pages_truncated": bool(outline.get("pages_truncated")),
             "reason": _localized_text(
                 locale,
                 en="Review the dashboard outline; deselect any chart you do not need.",
@@ -1476,10 +1538,60 @@ def _parse_agent_canvas_json(content: str) -> dict[str, Any] | None:
     return None
 
 
-def _normalize_outline(raw: dict[str, Any], *, max_charts: int) -> dict[str, Any]:
+def _outline_pages_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Accept both outline shapes and return a uniform list of raw pages.
+
+    New shape: `{"pages": [{"title", "sections": [...]}, ...]}` — one page per
+    top-level subject, which is what makes multiple sidebar entries possible.
+    Legacy shape: a bare `{"sections": [...]}`, treated as a single page titled
+    after the dashboard. Older models (and older stored outlines) keep working.
+    """
+    pages_raw = raw.get("pages")
+    if isinstance(pages_raw, list) and pages_raw:
+        pages: list[dict[str, Any]] = []
+        for index, page_raw in enumerate(pages_raw, start=1):
+            if not isinstance(page_raw, dict):
+                continue
+            sections = page_raw.get("sections")
+            pages.append(
+                {
+                    "key": str(page_raw.get("key") or f"p{index}").strip() or f"p{index}",
+                    "title": str(page_raw.get("title") or "").strip(),
+                    "sections": sections if isinstance(sections, list) else [],
+                }
+            )
+        if pages:
+            return pages
     sections_raw = raw.get("sections")
-    if not isinstance(sections_raw, list) or not sections_raw:
+    return [
+        {
+            "key": "p1",
+            "title": str(raw.get("title") or "").strip(),
+            "sections": sections_raw if isinstance(sections_raw, list) else [],
+        }
+    ]
+
+
+def _normalize_outline(
+    raw: dict[str, Any], *, max_charts: int, max_pages: int = 1
+) -> dict[str, Any]:
+    pages_raw = _outline_pages_raw(raw)
+    if not any(page["sections"] for page in pages_raw):
         raise ValueError("outline has no sections")
+
+    dashboard_title = str(raw.get("title") or "Dashboard").strip() or "Dashboard"
+    effective_max_pages = max(1, int(max_pages))
+    pages_truncated = len(pages_raw) > effective_max_pages
+    if pages_truncated:
+        # Keep every planned section, but fold the overflow onto the last page
+        # the budget allows: clipping structure is recoverable, dropping the
+        # user's content is not.
+        kept = pages_raw[: effective_max_pages - 1] if effective_max_pages > 1 else []
+        tail_sections: list[Any] = []
+        for page in pages_raw[max(0, effective_max_pages - 1) :]:
+            tail_sections.extend(page["sections"])
+        tail = pages_raw[max(0, effective_max_pages - 1)]
+        pages_raw = [*kept, {**tail, "sections": tail_sections}]
 
     used_keys: set[str] = set()
 
@@ -1493,68 +1605,145 @@ def _normalize_outline(raw: dict[str, Any], *, max_charts: int) -> dict[str, Any
     sections: list[dict[str, Any]] = []
     chart_count = 0
     truncated = False
-    for section_index, section_raw in enumerate(sections_raw, start=1):
-        if not isinstance(section_raw, dict):
-            continue
-        items_raw = section_raw.get("items")
-        items: list[dict[str, Any]] = []
-        for item_index, item_raw in enumerate(items_raw if isinstance(items_raw, list) else [], start=1):
-            if not isinstance(item_raw, dict):
+    section_index = 0
+    page_titles: dict[str, str] = {}
+    for page_index, page_raw in enumerate(pages_raw, start=1):
+        page_key = unique_key(page_raw.get("key"), f"p{page_index}")
+        page_title = (
+            page_raw.get("title")
+            or (dashboard_title if page_index == 1 else f"Page {page_index}")
+        )
+        page_titles[page_key] = str(page_title)
+        for section_raw in page_raw["sections"]:
+            section_index += 1
+            if not isinstance(section_raw, dict):
                 continue
-            kind = str(item_raw.get("kind") or "chart").strip().lower()
-            if kind == "chart":
-                title = str(item_raw.get("title") or "").strip()
-                if not title:
+            items_raw = section_raw.get("items")
+            items: list[dict[str, Any]] = []
+            for item_index, item_raw in enumerate(
+                items_raw if isinstance(items_raw, list) else [], start=1
+            ):
+                if not isinstance(item_raw, dict):
                     continue
-                if chart_count >= max_charts:
-                    truncated = True
-                    continue
-                chart_count += 1
-                size_preset = str(item_raw.get("size_preset") or "").strip()
-                chart_type = str(item_raw.get("chart_type") or "bar").strip() or "bar"
-                if size_preset not in SIZE_PRESETS:
-                    size_preset = "kpi" if chart_type in {"single_value", "gauge"} else "half"
-                items.append(
+                kind = str(item_raw.get("kind") or "chart").strip().lower()
+                if kind == "chart":
+                    title = str(item_raw.get("title") or "").strip()
+                    if not title:
+                        continue
+                    if chart_count >= max_charts:
+                        truncated = True
+                        continue
+                    chart_count += 1
+                    size_preset = str(item_raw.get("size_preset") or "").strip()
+                    chart_type = str(item_raw.get("chart_type") or "bar").strip() or "bar"
+                    if size_preset not in SIZE_PRESETS:
+                        size_preset = "kpi" if chart_type in {"single_value", "gauge"} else "half"
+                    items.append(
+                        {
+                            "key": unique_key(
+                                item_raw.get("key"), f"c{section_index}-{item_index}"
+                            ),
+                            "kind": "chart",
+                            "title": title,
+                            "description": str(item_raw.get("description") or "").strip(),
+                            "chart_type": chart_type,
+                            "size_preset": size_preset,
+                        }
+                    )
+                elif kind == "text":
+                    content = str(item_raw.get("content") or "").strip()
+                    if not content:
+                        continue
+                    style = str(item_raw.get("style") or "body").strip()
+                    items.append(
+                        {
+                            "key": unique_key(
+                                item_raw.get("key"), f"t{section_index}-{item_index}"
+                            ),
+                            "kind": "text",
+                            "style": style if style in TEXT_STYLES else "body",
+                            "content": content,
+                        }
+                    )
+            if items:
+                sections.append(
                     {
-                        "key": unique_key(item_raw.get("key"), f"c{section_index}-{item_index}"),
-                        "kind": "chart",
-                        "title": title,
-                        "description": str(item_raw.get("description") or "").strip(),
-                        "chart_type": chart_type,
-                        "size_preset": size_preset,
+                        "key": unique_key(section_raw.get("key"), f"s{section_index}"),
+                        "title": str(
+                            section_raw.get("title") or f"Section {section_index}"
+                        ).strip(),
+                        "level": normalize_section_level(section_raw.get("level")) or 1,
+                        "page_key": page_key,
+                        "page_title": page_titles[page_key],
+                        "items": items,
                     }
                 )
-            elif kind == "text":
-                content = str(item_raw.get("content") or "").strip()
-                if not content:
-                    continue
-                style = str(item_raw.get("style") or "body").strip()
-                items.append(
-                    {
-                        "key": unique_key(item_raw.get("key"), f"t{section_index}-{item_index}"),
-                        "kind": "text",
-                        "style": style if style in TEXT_STYLES else "body",
-                        "content": content,
-                    }
-                )
-        if items:
-            sections.append(
-                {
-                    "key": unique_key(section_raw.get("key"), f"s{section_index}"),
-                    "title": str(section_raw.get("title") or f"Section {section_index}").strip(),
-                    "items": items,
-                }
-            )
 
     if not sections or chart_count == 0:
         raise ValueError("outline has no chart items")
 
     return {
-        "title": str(raw.get("title") or "Dashboard").strip() or "Dashboard",
+        "title": dashboard_title,
         "sections": sections,
         "chart_count": chart_count,
+        "page_count": len({section["page_key"] for section in sections}),
         "truncated": truncated,
+        "pages_truncated": pages_truncated,
     }
+
+
+def _outline_pages(outline: dict[str, Any]) -> list[dict[str, Any]]:
+    """Group the normalized flat section list back into ordered pages.
+
+    Pages are derived, never stored twice: item-level deselection in the
+    approval card rewrites `sections`, and anything cached alongside it would go
+    stale the moment a user unticks the last chart of a page.
+    """
+    pages: list[dict[str, Any]] = []
+    index: dict[str, dict[str, Any]] = {}
+    for section in outline.get("sections") or []:
+        page_key = str(section.get("page_key") or "p1")
+        page = index.get(page_key)
+        if page is None:
+            page = {
+                "key": page_key,
+                "title": str(section.get("page_title") or outline.get("title") or "Dashboard"),
+                "sections": [],
+            }
+            index[page_key] = page
+            pages.append(page)
+        page["sections"].append(section)
+    return pages
+
+
+def _outline_root_page_title(outline: dict[str, Any]) -> str:
+    pages = _outline_pages(outline)
+    return str(pages[0]["title"]) if pages else ""
+
+
+def _outline_prompt_json(outline: dict[str, Any]) -> str:
+    """Page-grouped view of the outline handed to the execution prompt."""
+    return json.dumps(
+        {
+            "title": outline.get("title") or "Dashboard",
+            "pages": [
+                {
+                    "title": page["title"],
+                    "sections": [
+                        {
+                            "title": section.get("title"),
+                            "level": section.get("level") or 1,
+                            "items": section.get("items") or [],
+                        }
+                        for section in page["sections"]
+                    ],
+                }
+                for page in _outline_pages(outline)
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 def _filter_outline_selection(
@@ -1607,12 +1796,21 @@ def _filter_outline_selection(
         **outline,
         "sections": filtered_sections,
         "chart_count": chart_count,
+        "page_count": len({str(section.get("page_key") or "p1") for section in filtered_sections}),
     }
     return filtered, None
 
 
-def _default_summary(*, status: str, locale: str, placed: int, failed: int) -> str:
+def _default_summary(
+    *, status: str, locale: str, placed: int, failed: int, pages: int = 1
+) -> str:
     if status == RUN_STATUS_COMPLETED:
+        if pages > 1:
+            return _localized_text(
+                locale,
+                en=f"Dashboard completed: {placed} charts placed across {pages} pages.",
+                zh=f"仪表盘已完成：在 {pages} 个页面中共放置 {placed} 个图表。",
+            )
         return _localized_text(
             locale,
             en=f"Dashboard completed: {placed} charts placed.",

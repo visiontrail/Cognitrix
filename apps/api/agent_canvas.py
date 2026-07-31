@@ -50,7 +50,19 @@ CANVAS_FORMAT_WEB_DESIGN = "web-design"
 SIZE_PRESETS = ("kpi", "half", "wide", "full")
 TEXT_STYLES = ("title", "subtitle", "body")
 
-CANVAS_TOOL_NAMES = ("add_section", "add_text_block", "place_chart", "finish_dashboard")
+# Section nesting depth. 1 = section heading, 2 = sub-section heading; the client
+# maps them onto the web-design text styles (title / subtitle). Deliberately
+# capped at two levels: deeper nesting has no distinct rendering on the canvas.
+SECTION_LEVELS = (1, 2)
+MAX_SECTION_LEVEL = max(SECTION_LEVELS)
+
+CANVAS_TOOL_NAMES = (
+    "add_page",
+    "add_section",
+    "add_text_block",
+    "place_chart",
+    "finish_dashboard",
+)
 
 # Argument keys that smell like geometry; canvas tool schemas are structure-only
 # and any of these in a call is rejected outright (agent-canvas-tools spec).
@@ -84,17 +96,50 @@ CANVAS_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "add_page",
+            "description": (
+                "Start a NEW page of the dashboard and make it the current page: every "
+                "later add_section/add_text_block/place_chart call lands on it until the "
+                "next add_page. The page appears as its own entry in the canvas page "
+                "sidebar. Use one page per top-level subject of the outline — for example "
+                "one page per department, region, or product line when the user asked for a "
+                "per-entity breakdown. The run's first page already exists; call add_page "
+                "only for the second and later pages."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Page title, in the user's language (also the sidebar label)",
+                    },
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_section",
             "description": (
-                "Add a section header to the dashboard page being generated. Returns a "
-                "section_id used by add_text_block/place_chart. Call once per outline "
-                "section, in order. Layout is computed automatically — never pass "
-                "coordinates or sizes."
+                "Add a section header to the CURRENT page (the page created by the most "
+                "recent add_page, or the run's first page). Returns a section_id used by "
+                "add_text_block/place_chart. Call once per outline section, in order. "
+                "Layout is computed automatically — never pass coordinates or sizes."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Section heading text"},
+                    "level": {
+                        "type": "integer",
+                        "enum": list(SECTION_LEVELS),
+                        "description": (
+                            "Heading depth: 1 = section (default), 2 = sub-section nested "
+                            "under the preceding level-1 section"
+                        ),
+                    },
                 },
                 "required": ["title"],
             },
@@ -234,12 +279,27 @@ def validate_canvas_tool_arguments(tool_name: str, arguments: dict[str, Any]) ->
             ),
         )
 
-    if tool_name == "add_section":
+    if tool_name == "add_page":
+        title = str(arguments.get("title") or "").strip()
+        if not title:
+            raise AgentCanvasError(
+                code="AGENT_CANVAS_TITLE_REQUIRED",
+                message="add_page requires a non-empty title.",
+            )
+    elif tool_name == "add_section":
         title = str(arguments.get("title") or "").strip()
         if not title:
             raise AgentCanvasError(
                 code="AGENT_CANVAS_TITLE_REQUIRED",
                 message="add_section requires a non-empty title.",
+            )
+        if "level" in arguments and normalize_section_level(arguments.get("level")) is None:
+            raise AgentCanvasError(
+                code="AGENT_CANVAS_SECTION_LEVEL_INVALID",
+                message=(
+                    "add_section level must be one of: "
+                    f"{', '.join(str(level) for level in SECTION_LEVELS)}."
+                ),
             )
     elif tool_name == "add_text_block":
         content = str(arguments.get("content") or "").strip()
@@ -283,13 +343,42 @@ def validate_canvas_tool_arguments(tool_name: str, arguments: dict[str, Any]) ->
             )
 
 
+def normalize_section_level(value: Any) -> int | None:
+    """Coerce a model-supplied section level to 1/2, or None when unusable.
+
+    Models routinely send `"2"` rather than `2`; a string that is not a valid
+    level (or a float, or None) is rejected by the caller instead of silently
+    collapsing to a top-level heading.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        level = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return level if level in SECTION_LEVELS else None
+
+
 def block_id_for(run_id: str, seq: int) -> str:
     """Deterministic block id (canvas-op-streaming spec): run id + seq."""
     return f"agent-block-{run_id}-{seq}"
 
 
 def page_id_for(run_id: str) -> str:
+    """The run's root page — created automatically as the run's first op."""
     return f"agent-{run_id}"
+
+
+def child_page_id_for(run_id: str, seq: int) -> str:
+    """Deterministic id for a page opened mid-run by `add_page`.
+
+    Derived from the op seq for the same reason block ids are: replay of the op
+    log must rebuild byte-identical page ids, so re-attaching after a disconnect
+    never duplicates a page.
+    """
+    return f"agent-{run_id}-p{seq}"
 
 
 class AgentCanvasRunStore:
@@ -531,6 +620,33 @@ class AgentCanvasRunStore:
                 }
             )
         return ops
+
+    def find_page_for_block(self, *, run_id: str, block_id: str) -> str | None:
+        """Which page a previously emitted block (usually a section) lives on.
+
+        Charts and text blocks reference their section by id, so the section's
+        own op — not a mutable server-side cursor — is the authority on which
+        page they belong to. That keeps placement correct even when the model
+        opens a new page before it has finished filling the previous one.
+        """
+        if not block_id:
+            return None
+        with self._lock, self._connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT payload_json FROM agent_canvas_ops WHERE run_id = ? ORDER BY seq ASC",
+                (run_id,),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("block_id") or "") == block_id:
+                return str(payload.get("page_id") or "") or None
+        return None
 
     def count_ops(self, *, run_id: str, op_type: str | None = None) -> int:
         with self._lock, self._connect() as conn:

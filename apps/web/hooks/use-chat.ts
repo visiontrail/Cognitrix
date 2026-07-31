@@ -757,7 +757,10 @@ async function streamAssistantResponse({
       if (streamEvent.event === "canvas_op") {
         const op = parseAgentCanvasWireOp(payload);
         if (op) {
-          if (op.opType === "create_page") {
+          // Only the run's ROOT page owns the soft lock and the undo target; a
+          // multi-page run's later pages are nested under it and must not
+          // re-point the lock at a child page.
+          if (op.opType === "create_page" && !op.payload.parent_page_id) {
             useUIStore.getState().setActiveAgentRun({
               runId: op.runId,
               pageId: op.pageId,
@@ -932,6 +935,9 @@ function mapAgentRunOutline(
     ? payload.sections.filter(isRecord).map((section, sectionIndex) => ({
         key: String(section.key ?? `s${sectionIndex + 1}`),
         title: String(section.title ?? ""),
+        level: Number(section.level) === 2 ? (2 as const) : (1 as const),
+        pageKey: String(section.page_key ?? "p1"),
+        pageTitle: String(section.page_title ?? payload.page_title ?? ""),
         items: (Array.isArray(section.items) ? section.items : [])
           .filter(isRecord)
           .map((item, itemIndex) => ({
@@ -953,9 +959,12 @@ function mapAgentRunOutline(
     sections,
     proposedChartCount: asNumber(payload.proposed_chart_count),
     maxChartCount: Math.max(1, asNumber(payload.max_chart_count)),
+    proposedPageCount: Math.max(1, asNumber(payload.proposed_page_count)),
+    maxPageCount: Math.max(1, asNumber(payload.max_page_count)),
     expiresAt: typeof payload.expires_at === "number" ? payload.expires_at : undefined,
     reason: typeof payload.reason === "string" ? payload.reason : undefined,
     truncated: Boolean(payload.truncated),
+    pagesTruncated: Boolean(payload.pages_truncated),
     approved,
   };
 }

@@ -375,3 +375,127 @@ def test_canvas_audit_events_are_metadata_only(monkeypatch, tmp_path: Path) -> N
     serialized = json.dumps(events[0], ensure_ascii=False)
     assert "部门人数" not in serialized
     assert "SELECT" not in serialized
+
+
+# ---------------------------------------------------------------------------
+# Multi-page runs: add_page opens a new sidebar page, and blocks follow the
+# section they reference rather than a mutable server-side cursor.
+# ---------------------------------------------------------------------------
+
+
+def test_add_page_emits_nested_create_page_op(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    run = _create_run()
+    response = _invoke("add_page", _run_arguments(run, {"title": "平台组"}))
+    assert response.status == "success", response.error
+    result = response.result or {}
+    page_id = result["page_id"]
+    assert page_id != run["page_id"]
+    op = result["op"]
+    assert op["op_type"] == "create_page"
+    assert op["payload"]["parent_page_id"] == run["page_id"]
+    assert op["payload"]["title"] == "平台组"
+    # Deterministic id derived from the op seq, so replay rebuilds it exactly.
+    assert page_id == f"agent-{run['run_id']}-p{op['seq']}"
+
+
+def test_add_page_requires_title(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    run = _create_run()
+    response = _invoke("add_page", _run_arguments(run, {"title": "   "}))
+    assert response.status == "error"
+    assert response.error is not None
+    assert response.error["code"] == "AGENT_CANVAS_TITLE_REQUIRED"
+    assert get_agent_canvas_run_store().count_ops(run_id=run["run_id"]) == 0
+
+
+def test_sections_land_on_the_current_page_and_charts_follow_their_section(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    _seed_dataset()
+    run = _create_run()
+
+    root_section = (
+        _invoke(
+            "add_section", _run_arguments(run, {"title": "总览"}), idempotency_key="sec-1"
+        ).result
+        or {}
+    )
+    assert root_section["page_id"] == run["page_id"]
+
+    page = (_invoke("add_page", _run_arguments(run, {"title": "平台组"})).result or {})
+    second_page_id = page["page_id"]
+    # The runtime advances the cursor after add_page; emulate that here.
+    run_on_page_two = {**run, "page_id": second_page_id}
+
+    second_section = (
+        _invoke(
+            "add_section",
+            _run_arguments(run_on_page_two, {"title": "人员结构", "level": 2}),
+            idempotency_key="sec-2",
+        ).result
+        or {}
+    )
+    assert second_section["page_id"] == second_page_id
+    assert second_section["level"] == 2
+
+    chart = (
+        _invoke(
+            "place_chart",
+            _run_arguments(
+                run_on_page_two,
+                {
+                    "section_id": second_section["section_id"],
+                    "title": "平台组人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            ),
+            idempotency_key="chart-page-two",
+        ).result
+        or {}
+    )
+    assert chart["status"] == "placed"
+    assert chart["op"]["payload"]["page_id"] == second_page_id
+
+    # A chart whose section lives on page one stays on page one even while the
+    # cursor points at page two.
+    stray = (
+        _invoke(
+            "place_chart",
+            _run_arguments(
+                run_on_page_two,
+                {
+                    "section_id": root_section["section_id"],
+                    "title": "全员人数",
+                    "chart_type": "bar",
+                    "size_preset": "half",
+                    "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees GROUP BY 1",
+                },
+            ),
+            idempotency_key="chart-page-one",
+        ).result
+        or {}
+    )
+    assert stray["op"]["payload"]["page_id"] == run["page_id"]
+
+
+def test_section_level_must_be_one_or_two(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    run = _create_run()
+    response = _invoke("add_section", _run_arguments(run, {"title": "总览", "level": 4}))
+    assert response.status == "error"
+    assert response.error is not None
+    assert response.error["code"] == "AGENT_CANVAS_SECTION_LEVEL_INVALID"
+
+
+def test_canvas_page_budget_enforcement(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AGENT_MODE_MAX_PAGES", "2")
+    _set_canvas_env(monkeypatch, tmp_path)
+    guardrails = AgentGuardrails()
+    guardrails.enforce_canvas_page_budget(1)
+    with pytest.raises(AgentGuardrailError) as exc_info:
+        guardrails.enforce_canvas_page_budget(2)
+    assert exc_info.value.code == "AGENT_MODE_PAGE_BUDGET_EXCEEDED"

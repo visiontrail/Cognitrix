@@ -23,10 +23,15 @@ function outlineFixture(overrides: Partial<AgentRunOutline> = {}): AgentRunOutli
     pageTitle: "销售概览",
     proposedChartCount: 2,
     maxChartCount: 12,
+    proposedPageCount: 1,
+    maxPageCount: 6,
     sections: [
       {
         key: "s1",
         title: "概览",
+        level: 1,
+        pageKey: "p1",
+        pageTitle: "销售概览",
         items: [
           { key: "c1", kind: "chart", title: "总人数", chartType: "single_value", sizePreset: "kpi" },
           { key: "c2", kind: "chart", title: "部门人数", chartType: "bar", sizePreset: "half" },
@@ -121,5 +126,40 @@ describe("AgentRunOutlineCard", () => {
     expect(screen.getByText(/auto-approved/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Generate/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("groups sections into the pages the run will create", () => {
+    renderCard(
+      outlineFixture({
+        proposedPageCount: 2,
+        sections: [
+          {
+            key: "s1",
+            title: "整体",
+            level: 1,
+            pageKey: "p1",
+            pageTitle: "总览",
+            items: [
+              { key: "c1", kind: "chart", title: "总人数", chartType: "single_value", sizePreset: "kpi" },
+            ],
+          },
+          {
+            key: "s2",
+            title: "人员结构",
+            level: 2,
+            pageKey: "p2",
+            pageTitle: "平台组",
+            items: [
+              { key: "c2", kind: "chart", title: "平台组人数", chartType: "bar", sizePreset: "half" },
+            ],
+          },
+        ],
+      })
+    );
+
+    // One heading per page, plus the "N pages" hint.
+    expect(screen.getByText("总览")).toBeInTheDocument();
+    expect(screen.getByText("平台组")).toBeInTheDocument();
+    expect(screen.getByText("2 pages will be created in the canvas sidebar.")).toBeInTheDocument();
   });
 });

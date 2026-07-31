@@ -165,7 +165,7 @@ def test_flag_off_leaves_session_store_untouched(tmp_path: Path, monkeypatch) ->
         settings = get_settings()
         assert settings.agent_canvas_mode_enabled is False
         assert settings.agent_mode_max_steps == 40
-        assert settings.agent_mode_outline_max_steps == 16
+        assert settings.agent_mode_outline_max_steps == 24
         assert settings.agent_mode_timeout_seconds == 600.0
         assert settings.agent_mode_max_charts == 12
 

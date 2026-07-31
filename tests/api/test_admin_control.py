@@ -148,12 +148,12 @@ def test_agent_mode_outline_budget_is_tunable_and_reaches_the_canvas_service(
     client, headers = admin_client
     listed = client.get("/admin/control/settings?category=agent", headers=headers).json()
     item = next(row for row in listed["settings"] if row["key"] == "AGENT_MODE_OUTLINE_MAX_STEPS")
-    assert item["value"] == 16
+    assert item["value"] == 24
     assert item["type"] == "integer"
     assert item["restart_required"] is False
 
     service = get_agent_canvas_mode_service()
-    assert service.settings.agent_mode_outline_max_steps == 16
+    assert service.settings.agent_mode_outline_max_steps == 24
 
     rejected = client.patch(
         "/admin/control/settings/AGENT_MODE_OUTLINE_MAX_STEPS",
@@ -165,11 +165,11 @@ def test_agent_mode_outline_budget_is_tunable_and_reaches_the_canvas_service(
     updated = client.patch(
         "/admin/control/settings/AGENT_MODE_OUTLINE_MAX_STEPS",
         headers=headers,
-        json={"value": 24},
+        json={"value": 32},
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["value"] == 24
-    assert service.settings.agent_mode_outline_max_steps == 24
+    assert updated.json()["value"] == 32
+    assert service.settings.agent_mode_outline_max_steps == 32
 
 
 def test_empty_secret_keeps_existing_and_clear_is_explicit(

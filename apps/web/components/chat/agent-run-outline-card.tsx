@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, LayoutDashboard, Type, X } from "lucide-react";
+import { Check, Files, LayoutDashboard, Type, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSendMessage } from "@/hooks/use-chat";
@@ -11,7 +11,7 @@ import {
 } from "@/lib/chat/agent-canvas";
 import { useI18n } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
-import type { AgentRunOutline } from "@/types/chat";
+import type { AgentRunOutline, AgentRunOutlineSection } from "@/types/chat";
 
 type Props = {
   sessionId: string;
@@ -34,6 +34,25 @@ export function AgentRunOutlineCard({ sessionId, outline }: Props) {
       ),
     [outline.sections]
   );
+  // Sections are delivered flat with a page key; group them so the card shows
+  // the same page split the canvas sidebar will get.
+  const { sections, pageTitle } = outline;
+  const pages = useMemo(() => {
+    type OutlinePage = { key: string; title: string; sections: AgentRunOutlineSection[] };
+    const grouped: OutlinePage[] = [];
+    const index = new Map<string, OutlinePage>();
+    for (const section of sections) {
+      const pageKey = section.pageKey || "p1";
+      let page = index.get(pageKey);
+      if (!page) {
+        page = { key: pageKey, title: section.pageTitle || pageTitle, sections: [] };
+        index.set(pageKey, page);
+        grouped.push(page);
+      }
+      page.sections.push(section);
+    }
+    return grouped;
+  }, [sections, pageTitle]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set(chartKeys));
   const [skipApproval, setSkipApproval] = useState(() => getAutoApprovePreference());
   const [submitted, setSubmitted] = useState(false);
@@ -115,9 +134,24 @@ export function AgentRunOutlineCard({ sessionId, outline }: Props) {
         </Badge>
       </div>
 
+      {pages.length > 1 && (
+        <p className="mt-2 flex items-center gap-1.5 text-caption text-stone-gray">
+          <Files className="h-3 w-3 shrink-0 text-terracotta" />
+          {t("chat.agentOutline.pageCount", { count: pages.length })}
+        </p>
+      )}
+
       <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
-        {outline.sections.map((section) => (
-          <div key={section.key}>
+        {pages.map((page, pageIndex) => (
+          <div key={page.key} className={cn(pages.length > 1 && "space-y-2")}>
+            {pages.length > 1 && (
+              <p className="flex items-center gap-1.5 border-b border-border-cream pb-1 text-body-sm font-semibold text-near-black">
+                <Files className="h-3 w-3 shrink-0 text-terracotta" />
+                {page.title || `${pageIndex + 1}`}
+              </p>
+            )}
+            {page.sections.map((section) => (
+          <div key={section.key} className={cn(section.level === 2 && "pl-3")}>
             <p className="mb-1 text-caption font-semibold uppercase tracking-wide text-stone-gray">
               {section.title}
             </p>
@@ -159,6 +193,8 @@ export function AgentRunOutlineCard({ sessionId, outline }: Props) {
               )}
             </div>
           </div>
+            ))}
+          </div>
         ))}
       </div>
 
@@ -167,6 +203,11 @@ export function AgentRunOutlineCard({ sessionId, outline }: Props) {
           {overLimit
             ? t("chat.agentOutline.limitExceeded", { max: outline.maxChartCount })
             : t("chat.agentOutline.truncated", { max: outline.maxChartCount })}
+        </p>
+      )}
+      {outline.pagesTruncated && (
+        <p className="mt-2 text-caption leading-relaxed text-error-crimson">
+          {t("chat.agentOutline.pagesTruncated", { max: outline.maxPageCount })}
         </p>
       )}
 

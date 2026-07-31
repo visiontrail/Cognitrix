@@ -37,10 +37,34 @@ export function agentNodeIdForBlock(blockId: string): string {
   return `node-${blockId}`;
 }
 
+/** Section heading depth: 1 = section, 2 = sub-section. */
+export type SectionLevel = 1 | 2;
+
+export function normalizeSectionLevel(value: unknown): SectionLevel {
+  return Number(value) === 2 ? 2 : 1;
+}
+
+/** A sub-section renders one step down from a section heading. */
+export function textStyleForSectionLevel(level: SectionLevel): WebDesignTextStyle {
+  return level === 2 ? "subtitle" : "title";
+}
+
 /** Store-level ops: the wire payload already converted into client shapes. */
 export type AgentCanvasStoreOp =
-  | { type: "create_page"; pageId: string; title: string }
-  | { type: "add_section"; pageId: string; blockId: string; title: string }
+  | {
+      type: "create_page";
+      pageId: string;
+      title: string;
+      /** Empty for the run's root page; set for every page opened by `add_page`. */
+      parentPageId: string;
+    }
+  | {
+      type: "add_section";
+      pageId: string;
+      blockId: string;
+      title: string;
+      level: SectionLevel;
+    }
   | {
       type: "add_text_block";
       pageId: string;

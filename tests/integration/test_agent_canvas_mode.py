@@ -939,3 +939,202 @@ def test_deselected_items_are_skipped(monkeypatch, tmp_path: Path) -> None:
         final_payload = run_events[-1]["data"]
         assert final_payload["status"] == "completed"
         assert final_payload["placed_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Multi-page runs: an outline that breaks down by entity produces one canvas
+# page (sidebar entry) per entity instead of one flat page.
+# ---------------------------------------------------------------------------
+
+MULTI_PAGE_OUTLINE = {
+    "title": "部门人力概览",
+    "pages": [
+        {
+            "key": "p1",
+            "title": "总览",
+            "sections": [
+                {
+                    "key": "s1",
+                    "title": "整体",
+                    "items": [
+                        {
+                            "key": "c1",
+                            "kind": "chart",
+                            "title": "总人数",
+                            "chart_type": "single_value",
+                            "size_preset": "kpi",
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "key": "p2",
+            "title": "HR",
+            "sections": [
+                {
+                    "key": "s2",
+                    "title": "人员结构",
+                    "level": 2,
+                    "items": [
+                        {
+                            "key": "c2",
+                            "kind": "chart",
+                            "title": "HR 人数",
+                            "chart_type": "bar",
+                            "size_preset": "half",
+                        }
+                    ],
+                }
+            ],
+        },
+    ],
+}
+
+
+async def _multi_page_outline_script(invoke) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    await invoke("list_tables", {})
+    return MULTI_PAGE_OUTLINE
+
+
+async def _multi_page_execution_script(invoke) -> None:  # type: ignore[no-untyped-def]
+    first = await invoke("add_section", {"title": "整体"})
+    await invoke(
+        "place_chart",
+        {
+            "section_id": first["section_id"],
+            "title": "总人数",
+            "chart_type": "single_value",
+            "size_preset": "kpi",
+            "sql": "SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees",
+        },
+    )
+    page = await invoke("add_page", {"title": "HR"})
+    second = await invoke("add_section", {"title": "人员结构", "level": 2})
+    assert second["page_id"] == page["page_id"]
+    await invoke(
+        "place_chart",
+        {
+            "section_id": second["section_id"],
+            "title": "HR 人数",
+            "chart_type": "bar",
+            "size_preset": "half",
+            "sql": "SELECT department AS segment, COUNT(*) AS metric_value FROM employees WHERE department = 'HR' GROUP BY 1",
+        },
+    )
+    await invoke("finish_dashboard", {"summary": "已生成 2 个页面。"})
+    return None
+
+
+def test_multi_page_run_creates_one_page_per_outline_page(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers)
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client(
+            [_multi_page_outline_script, _multi_page_execution_script]
+        )
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, auto_approve=True),
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            events, _ = read_sse_events(response)
+
+        outline_payload = next(item["data"] for item in events if item["event"] == "outline")
+        assert outline_payload["proposed_page_count"] == 2
+        assert [page["title"] for page in outline_payload["pages"]] == ["总览", "HR"]
+        assert [section["page_key"] for section in outline_payload["sections"]] == ["p1", "p2"]
+        assert outline_payload["sections"][1]["level"] == 2
+
+        canvas_ops = [item["data"] for item in events if item["event"] == "canvas_op"]
+        assert [op["op_type"] for op in canvas_ops] == [
+            "create_page",
+            "add_section",
+            "place_chart",
+            "create_page",
+            "add_section",
+            "place_chart",
+        ]
+        run_id = canvas_ops[0]["run_id"]
+        root_page_id = f"agent-{run_id}"
+        second_page_id = canvas_ops[3]["page_id"]
+        assert second_page_id != root_page_id
+        # Every op carries the page it belongs to, so replay reproduces the split.
+        assert [op["page_id"] for op in canvas_ops] == [
+            root_page_id,
+            root_page_id,
+            root_page_id,
+            second_page_id,
+            second_page_id,
+            second_page_id,
+        ]
+        assert canvas_ops[0]["payload"]["parent_page_id"] == ""
+        assert canvas_ops[3]["payload"]["parent_page_id"] == root_page_id
+        assert canvas_ops[0]["payload"]["title"] == "总览"
+        assert canvas_ops[3]["payload"]["title"] == "HR"
+        assert canvas_ops[4]["payload"]["level"] == 2
+
+        final_payload = events[-1]["data"]
+        assert final_payload["status"] == "completed"
+        assert final_payload["placed_count"] == 2
+        assert final_payload["page_count"] == 2
+
+        # The op log replays the same page split after a disconnect.
+        ops_response = client.get(
+            f"/chat/agent-runs/{run_id}/ops", params={"after_seq": 0}, headers=headers
+        )
+        assert ops_response.status_code == 200
+        replayed = ops_response.json()["ops"]
+        assert [op["page_id"] for op in replayed] == [op["page_id"] for op in canvas_ops]
+
+
+def test_outline_pages_are_folded_down_to_the_page_budget(monkeypatch, tmp_path: Path) -> None:
+    from apps.api.agent_canvas_mode import _normalize_outline
+
+    raw = {
+        "title": "部门概览",
+        "pages": [
+            {
+                "key": f"p{index}",
+                "title": f"部门 {index}",
+                "sections": [
+                    {
+                        "key": f"s{index}",
+                        "title": "结构",
+                        "items": [
+                            {
+                                "key": f"c{index}",
+                                "kind": "chart",
+                                "title": f"部门 {index} 人数",
+                                "chart_type": "bar",
+                                "size_preset": "half",
+                            }
+                        ],
+                    }
+                ],
+            }
+            for index in range(1, 6)
+        ],
+    }
+    outline = _normalize_outline(raw, max_charts=12, max_pages=2)
+    assert outline["page_count"] == 2
+    assert outline["pages_truncated"] is True
+    # No chart is dropped — the overflow pages' sections are folded onto the last
+    # page the budget allows.
+    assert outline["chart_count"] == 5
+    assert {section["page_key"] for section in outline["sections"]} == {"p1", "p2"}
+
+
+def test_legacy_flat_outline_still_normalizes_to_one_page(monkeypatch, tmp_path: Path) -> None:
+    from apps.api.agent_canvas_mode import _normalize_outline
+
+    outline = _normalize_outline(OUTLINE, max_charts=12, max_pages=6)
+    assert outline["page_count"] == 1
+    assert outline["sections"][0]["page_title"] == "员工概览"
+    assert outline["sections"][0]["level"] == 1

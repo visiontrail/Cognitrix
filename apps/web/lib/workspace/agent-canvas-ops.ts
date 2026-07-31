@@ -2,6 +2,7 @@ import type { AgentCanvasWireOp } from "@/lib/chat/agent-canvas";
 import {
   AGENT_ERROR_CHART_TYPE,
   agentNodeIdForBlock,
+  normalizeSectionLevel,
   spanForSizePreset,
   type AgentCanvasStoreOp,
 } from "@/lib/workspace/agent-canvas-layout";
@@ -81,7 +82,12 @@ export function toStoreOp(op: AgentCanvasWireOp, deps: AgentCanvasOpDeps): Agent
   const blockId = String(payload.block_id ?? "");
   switch (op.opType) {
     case "create_page":
-      return { type: "create_page", pageId: op.pageId, title: String(payload.title ?? "Dashboard") };
+      return {
+        type: "create_page",
+        pageId: op.pageId,
+        title: String(payload.title ?? "Dashboard"),
+        parentPageId: String(payload.parent_page_id ?? ""),
+      };
     case "add_section":
       if (!blockId) return null;
       return {
@@ -89,6 +95,7 @@ export function toStoreOp(op: AgentCanvasWireOp, deps: AgentCanvasOpDeps): Agent
         pageId: op.pageId,
         blockId,
         title: String(payload.title ?? ""),
+        level: normalizeSectionLevel(payload.level),
       };
     case "add_text_block":
       if (!blockId) return null;

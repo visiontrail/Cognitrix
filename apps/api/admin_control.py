@@ -756,6 +756,9 @@ def _setting_description(key: str) -> str:
         ),
         "AGENT_MODE_TIMEOUT_SECONDS": "Agent canvas mode: wall-clock budget for one run",
         "AGENT_MODE_MAX_CHARTS": "Agent canvas mode: maximum charts placed in one run",
+        "AGENT_MODE_MAX_PAGES": (
+            "Agent canvas mode: maximum dashboard pages (sidebar entries) one run may create"
+        ),
     }
     return descriptions.get(key, key.replace("_", " ").title())
 

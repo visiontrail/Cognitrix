@@ -34,6 +34,7 @@ import {
 } from "@/lib/workspace/web-design-layout";
 import {
   AGENT_ERROR_CHART_TYPE,
+  textStyleForSectionLevel,
   type AgentCanvasStoreOp,
 } from "@/lib/workspace/agent-canvas-layout";
 import type {
@@ -820,6 +821,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           anchorRowId: "row-1",
           children: [],
         };
+        // A run may open several pages. Every page after the first is nested
+        // under the run's root sidebar item, so the run reads as one unit and
+        // run-level undo stays a single cascade delete.
+        const parentId = op.parentPageId;
+        const hasParent = Boolean(parentId) && Boolean(findSidebarItem(layout.sidebar, parentId));
+        const sidebar = hasParent
+          ? appendSidebarChild(layout.sidebar, parentId, sidebarItem)
+          : [...layout.sidebar, sidebarItem];
         // Runs always target the web-design format (design D8/D12): stash the
         // current format's nodes and surface the web-design bucket.
         const nodesByFormat = { ...state.nodesByFormat, [state.canvasFormat.id]: state.nodes };
@@ -833,8 +842,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           canvasFormat: { id: "web-design" },
           webDesign: {
             ...layout,
-            sidebar: [...layout.sidebar, sidebarItem],
+            sidebar,
             pages: [...(layout.pages ?? []), page],
+            // Follow the agent onto the page it is currently filling.
             activePageId: op.pageId,
             grid: page.grid,
             zones: page.zones,
@@ -868,7 +878,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       if (op.type === "add_section" || op.type === "add_text_block") {
         if (blockExists) return {};
-        const style = op.type === "add_section" ? "title" : op.style;
+        const style =
+          op.type === "add_section" ? textStyleForSectionLevel(op.level) : op.style;
         const content = op.type === "add_section" ? op.title : op.content;
         const size = style === "body" ? { w: 12, h: 2 } : { w: 12, h: 1 };
         const slot = findSlot(pageToLayoutItems(page), size.w, size.h);
@@ -947,12 +958,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const layout = ensureWebDesignPages(state.webDesign);
       const page = (layout.pages ?? []).find((item) => item.id === pageId);
       if (!page) return {};
-      const nodeIds = new Set(page.zones.map((zone) => zone.nodeId));
 
       // Reuse the sidebar-item removal cascade (page + zones), then drop the
-      // page's chart nodes from the web-design bucket. Chart assets stay in
-      // the asset library.
+      // pages' chart nodes from the web-design bucket. Chart assets stay in
+      // the asset library. A multi-page run nests its extra pages under the
+      // root item, so the cascade must drive which nodes are removed — using
+      // only the root page's zones would strand every later page's nodes.
       const removedPageIds = collectSidebarPageIds(layout.sidebar, pageId);
+      removedPageIds.add(pageId);
+      const nodeIds = new Set(
+        (layout.pages ?? [])
+          .filter((item) => removedPageIds.has(item.id))
+          .flatMap((item) => item.zones.map((zone) => zone.nodeId))
+      );
       let sidebar = removeSidebarItem(layout.sidebar, pageId);
       let pages = (layout.pages ?? []).filter((item) => !removedPageIds.has(item.id) && item.id !== pageId);
       if (!sidebar.length || !pages.length) {
@@ -1316,6 +1334,19 @@ function findSidebarItem(items: WebDesignSidebarItem[], itemId: string): WebDesi
     if (child) return child;
   }
   return undefined;
+}
+
+/** Append `child` to the children of `parentId`, leaving the rest untouched. */
+function appendSidebarChild(
+  items: WebDesignSidebarItem[],
+  parentId: string,
+  child: WebDesignSidebarItem
+): WebDesignSidebarItem[] {
+  return items.map((item) =>
+    item.id === parentId
+      ? { ...item, children: [...item.children, child] }
+      : { ...item, children: appendSidebarChild(item.children, parentId, child) }
+  );
 }
 
 function collectSidebarPageIds(items: WebDesignSidebarItem[], itemId: string): Set<string> {

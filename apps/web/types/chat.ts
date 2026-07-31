@@ -122,6 +122,11 @@ export type AgentRunOutlineItem = {
 export type AgentRunOutlineSection = {
   key: string;
   title: string;
+  /** 1 = section heading, 2 = sub-section nested under the preceding section. */
+  level: 1 | 2;
+  /** Page this section belongs to; sections sharing a key land on one page. */
+  pageKey: string;
+  pageTitle: string;
   items: AgentRunOutlineItem[];
 };
 
@@ -132,9 +137,14 @@ export type AgentRunOutline = {
   sections: AgentRunOutlineSection[];
   proposedChartCount: number;
   maxChartCount: number;
+  /** Number of pages (sidebar entries) the run will create. */
+  proposedPageCount: number;
+  maxPageCount: number;
   expiresAt?: number;
   reason?: string;
   truncated?: boolean;
+  /** True when the planned pages were folded down to the page budget. */
+  pagesTruncated?: boolean;
   // True when the outline was auto-approved (informational card, no buttons).
   approved?: boolean;
 };

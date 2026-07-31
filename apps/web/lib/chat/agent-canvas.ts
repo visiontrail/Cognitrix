@@ -131,7 +131,10 @@ export async function fetchAgentRunOps(
     .map((op) =>
       parseAgentCanvasWireOp({
         run_id: runId,
-        page_id: pageId,
+        // Per-op page first: a multi-page run replays onto the pages it was
+        // built on. The run-level page id is the fallback for ops written
+        // before multi-page runs existed.
+        page_id: String(op.page_id ?? (op.payload as Record<string, unknown>)?.page_id ?? pageId),
         seq: op.seq,
         op_type: op.op_type,
         payload: op.payload,

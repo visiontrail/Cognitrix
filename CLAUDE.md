@@ -73,8 +73,26 @@ Two facts that make the deploy-then-configure flow work, and that break it if ch
 the browser only ever calls the same-origin path `/api/backend` (`apps/web/lib/api-base.ts`
 is a constant), so no deployment URL is baked into the web image at build time; and
 `_bootstrap_admin()` creates the first account **only while the `users` table holds no
-password account at all**, so `AUTH_BOOTSTRAP_ADMIN_EMAIL`/`_PASSWORD` must be present on
-the very first boot — supplying them later can only promote an existing user.
+password account at all** — a later boot can promote an existing user but never create one.
+
+Because of that one-shot window, bootstrapping needs no configuration at all:
+`AUTH_BOOTSTRAP_ADMIN_EMAIL` defaults to `admin@cognitrix.local`, and an empty
+`AUTH_BOOTSTRAP_ADMIN_PASSWORD` makes `_bootstrap_admin()` generate one and log it in a
+banner (`grep -A6 "BOOTSTRAP ADMIN"`) exactly once, at creation. `_bootstrap_superadmin()`
+then promotes that account so `/admin/control` is reachable. Setting the password
+configures it explicitly (nothing is generated or logged); setting the *email* empty opts
+out of bootstrapping entirely. There is deliberately no hardcoded default password: it
+would be public to everyone who can read this repository.
+
+### Kubernetes
+`scripts/deploy.sh` is compose-only. For an orchestrator the image itself carries
+`APP_ENV=production`, `UPLOAD_DIR` and `DATABASE_URL` (image `ENV`, not code defaults —
+`UPLOAD_DIR` resolves relative paths against `apps/api/`, so a manifest that mounts a
+volume but omits the variable would silently write outside it), and `MODEL_PROVIDER_URL`
+/ `LOG_LEVEL` fall back to code defaults. That leaves **`AUTH_SECRET` as the only variable
+a manifest must inject**. The data layer is DuckDB + SQLite on local files, so a
+deployment must be `replicas: 1` with `strategy: Recreate` and an RWO PVC at
+`/app/data/uploads`; anything else corrupts data silently. See `deploy/README.md`.
 
 `scripts/lib/docker.sh:ensure_env_file()` deliberately refuses to synthesize a `.env` from
 `.env.example`: the template ships no secrets, and an empty `AUTH_SECRET` still signs

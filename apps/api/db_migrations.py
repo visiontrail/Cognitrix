@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets
 import sqlite3
+import string
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -195,16 +197,62 @@ def _seed_jobs(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _generate_bootstrap_password() -> str:
+    """A password nobody has to invent, transmit, or store in a manifest.
+
+    Alphanumeric only: the value is read off a terminal and retyped into a
+    login form, so shell quoting and character-set surprises cost more than the
+    handful of entropy bits. 20 characters from a 62-symbol alphabet is ~119
+    bits, far past anything a login form can be brute-forced through.
+    """
+
+    alphabet = string.ascii_letters + string.digits
+    return "Cg" + "".join(secrets.choice(alphabet) for _ in range(20))
+
+
+def _log_generated_credentials(email: str, password: str) -> None:
+    """Announce a generated credential loudly enough to be found in pod logs.
+
+    This is the only place the password is ever readable: it is bcrypt-hashed
+    before it reaches the database, and this line is emitted once, at account
+    creation. WARNING level so it survives a deployment that filters INFO.
+    """
+
+    logger.warning(
+        "\n"
+        "================================================================\n"
+        " COGNITRIX BOOTSTRAP ADMIN CREATED\n"
+        "   email:    %s\n"
+        "   password: %s\n"
+        "\n"
+        " Shown once, at account creation, and never logged again.\n"
+        " Change it immediately after the first login.\n"
+        " Set AUTH_BOOTSTRAP_ADMIN_PASSWORD to choose the password instead.\n"
+        "================================================================",
+        email,
+        password,
+    )
+
+
 def _bootstrap_admin(conn: sqlite3.Connection) -> None:
     settings = get_settings()
     admin_email = settings.auth_bootstrap_admin_email.strip()
-    admin_password = settings.auth_bootstrap_admin_password.strip()
-    if not admin_email or not admin_password:
+    # An explicitly empty email opts out of bootstrapping entirely; the field
+    # otherwise carries a default so a zero-configuration deployment still ends
+    # up with an account somebody can log in with.
+    if not admin_email:
         return
 
     row = conn.execute("SELECT COUNT(*) AS cnt FROM users WHERE password_hash IS NOT NULL").fetchone()
     if row and int(row["cnt"]) > 0:
         return
+
+    # Only reached while the deployment has no password account at all, so the
+    # generated credential can never overwrite one somebody is already using.
+    admin_password = settings.auth_bootstrap_admin_password.strip()
+    generated = not admin_password
+    if generated:
+        admin_password = _generate_bootstrap_password()
 
     import bcrypt as _bcrypt_lib
 
@@ -226,7 +274,9 @@ def _bootstrap_admin(conn: sqlite3.Connection) -> None:
         (user_id, admin_email, email_lower, password_hash, job_id),
     )
     conn.commit()
-    logger.info("bootstrap_admin_created email=%s", admin_email)
+    logger.info("bootstrap_admin_created email=%s generated_password=%s", admin_email, generated)
+    if generated:
+        _log_generated_credentials(admin_email, admin_password)
 
 
 def _bootstrap_superadmin(conn: sqlite3.Connection) -> None:

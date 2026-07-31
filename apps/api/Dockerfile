@@ -30,6 +30,17 @@ COPY apps/__init__.py /app/apps/__init__.py
 COPY apps/api /app/apps/api
 COPY models /app/models
 
+# Runtime layout the image owns, so an orchestrator only has to supply
+# AUTH_SECRET. Declared here rather than as code defaults because UPLOAD_DIR
+# resolves a relative path against apps/api/: a manifest that mounts a volume at
+# /app/data/uploads but omits the variable would otherwise write outside that
+# volume and lose everything on restart. Kept after the dependency layers so
+# changing them never invalidates the pip cache; `docker inspect` shows the
+# values, and any deployment can override them.
+ENV APP_ENV=production \
+    UPLOAD_DIR=/app/data/uploads \
+    DATABASE_URL=sqlite:////app/data/uploads/state/ai_views.sqlite3
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=6 CMD curl -fsS http://127.0.0.1:8000/healthz >/dev/null || exit 1

@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_ENV_FILE_PATH = Path(__file__).resolve().parent / ".env"
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 DEFAULT_DEVELOPMENT_ADMIN_PASSWORD = "Admin@123456"
+DEFAULT_BOOTSTRAP_ADMIN_EMAIL = "admin@cognitrix.local"
 # Signing keys that have ever been shipped in a template or committed to the
 # repository. Anyone who can read the repo can forge tokens with these.
 PUBLIC_PLACEHOLDER_SECRETS = {
@@ -24,7 +25,9 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     database_url: str = Field(alias="DATABASE_URL")
     sqlite_busy_timeout_ms: int = Field(default=15000, alias="SQLITE_BUSY_TIMEOUT_MS")
-    model_provider_url: str = Field(alias="MODEL_PROVIDER_URL")
+    model_provider_url: str = Field(
+        default="https://api.deepseek.com", alias="MODEL_PROVIDER_URL"
+    )
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-chat", alias="AI_MODEL")
     ai_timeout_seconds: float = Field(default=20.0, alias="AI_TIMEOUT_SECONDS")
@@ -75,7 +78,14 @@ class Settings(BaseSettings):
     # when APP_ENV=production: the endpoint issues a token for any role the
     # caller asks for, so an exposed instance would hand out `superadmin`.
     legacy_service_login_enabled: bool = Field(default=False, alias="LEGACY_SERVICE_LOGIN_ENABLED")
-    auth_bootstrap_admin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_EMAIL")
+    # Carries a default so a deployment that configures nothing still ends up
+    # with an account somebody can log in with; set it empty to opt out of
+    # bootstrapping. An empty password is not a disable switch — one is
+    # generated and logged once (see `_bootstrap_admin`), because a hardcoded
+    # default credential would be public to everyone who can read this repo.
+    auth_bootstrap_admin_email: str = Field(
+        default=DEFAULT_BOOTSTRAP_ADMIN_EMAIL, alias="AUTH_BOOTSTRAP_ADMIN_EMAIL"
+    )
     auth_bootstrap_admin_password: str = Field(default="", alias="AUTH_BOOTSTRAP_ADMIN_PASSWORD")
     auth_bootstrap_superadmin_email: str = Field(default="", alias="AUTH_BOOTSTRAP_SUPERADMIN_EMAIL")
     agent_skills_enabled: bool = Field(default=False, alias="AGENT_SKILLS_ENABLED")
@@ -85,7 +95,7 @@ class Settings(BaseSettings):
     legacy_xlsx_parser_enabled: bool = Field(default=True, alias="LEGACY_XLSX_PARSER_ENABLED")
     app_url: str = Field(default="http://localhost:3000", alias="APP_URL")
     public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
-    log_level: str = Field(alias="LOG_LEVEL")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     upload_dir: Path = Field(alias="UPLOAD_DIR")
     cors_allow_origins: str = Field(
         default="http://127.0.0.1:3000,http://localhost:3000",

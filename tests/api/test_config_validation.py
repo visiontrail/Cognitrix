@@ -8,10 +8,12 @@ from apps.api.config import get_settings
 @pytest.mark.parametrize(
     "missing_key",
     [
+        # MODEL_PROVIDER_URL and LOG_LEVEL deliberately carry defaults: an
+        # orchestrated deployment should only have to supply the values that
+        # cannot be guessed safely. The storage locations and the signing key
+        # stay required — a wrong guess there loses data or fails open.
         "DATABASE_URL",
-        "MODEL_PROVIDER_URL",
         "AUTH_SECRET",
-        "LOG_LEVEL",
         "UPLOAD_DIR",
     ],
 )
@@ -125,6 +127,12 @@ def test_agent_engine_requires_claude_agent_sdk_toggle(monkeypatch, tmp_path) ->
 
 
 def _write_env(tmp_path, monkeypatch, **overrides) -> None:
+    """Write an env file and clear the matching process env.
+
+    An override of ``None`` omits the key entirely, so the field falls through
+    to its default — that is what the K8s-minimal-manifest tests exercise.
+    """
+
     values = {
         "DATABASE_URL": "sqlite:///./state.sqlite3",
         "MODEL_PROVIDER_URL": "https://api.deepseek.com",
@@ -135,12 +143,15 @@ def _write_env(tmp_path, monkeypatch, **overrides) -> None:
         "APP_ENV": "production",
     }
     values.update(overrides)
+    omitted = [key for key, value in values.items() if value is None]
+    for key in omitted:
+        values.pop(key)
     env_file = tmp_path / "api.env"
     env_file.write_text(
         "\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8"
     )
     monkeypatch.setenv("API_ENV_FILE", str(env_file))
-    for key in values:
+    for key in list(values) + omitted:
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
 
@@ -170,3 +181,21 @@ def test_public_auth_secret_allowed_outside_production(monkeypatch, tmp_path) ->
     _write_env(tmp_path, monkeypatch, APP_ENV="development", AUTH_SECRET="")
 
     assert get_settings().auth_secret == ""
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [("MODEL_PROVIDER_URL", "https://api.deepseek.com"), ("LOG_LEVEL", "INFO")],
+)
+def test_defaulted_keys_do_not_block_startup(monkeypatch, tmp_path, key, expected) -> None:
+    """A K8s manifest should only have to carry AUTH_SECRET.
+
+    The container image supplies DATABASE_URL and UPLOAD_DIR (they name paths
+    that must line up with the mounted volume), which leaves these two to fall
+    back to their defaults.
+    """
+
+    _write_env(tmp_path, monkeypatch, **{key: None})
+    settings = get_settings()
+
+    assert getattr(settings, key.lower()) == expected

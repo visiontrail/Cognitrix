@@ -98,6 +98,94 @@ bash scripts/deploy.sh
 
 ---
 
+## Kubernetes 部署
+
+不使用 `scripts/deploy.sh`（它是 docker compose 的封装）。镜像自带运行时布局，
+**manifest 只需要注入一个变量：`AUTH_SECRET`**。
+
+### 三条硬约束
+
+| 项 | 要求 | 违反后果 |
+|---|---|---|
+| `replicas` | **必须为 1** | DuckDB/SQLite 靠文件锁，多副本并发写直接损坏数据 |
+| 更新策略 | **`Recreate`** | RollingUpdate 期间新旧 Pod 同时挂同一卷，等同多副本 |
+| 存储 | RWO PVC 挂到 `/app/data/uploads` | 无 PVC = 每次重启丢光全部数据（含用户表）|
+
+`AUTH_SECRET` 必须是稳定的 Secret，不能每次发布重新生成（会让所有人登出）。
+空值或仓库里出现过的值会被直接拒绝启动，这是刻意的。
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: cognitrix-api}
+spec:
+  replicas: 1                       # 不可调大
+  strategy: {type: Recreate}        # 不可用 RollingUpdate
+  selector: {matchLabels: {app: cognitrix-api}}
+  template:
+    metadata: {labels: {app: cognitrix-api}}
+    spec:
+      containers:
+        - name: api
+          image: <registry>/cognitrix-api:<tag>
+          env:
+            - name: AUTH_SECRET     # 唯一必须注入的变量
+              valueFrom: {secretKeyRef: {name: cognitrix, key: auth-secret}}
+            # 对外地址，用于公开分享链接；走 Ingress 时按实际域名填
+            - name: APP_URL
+              value: https://bi.example.com
+            - name: PUBLIC_BASE_URL
+              value: https://bi.example.com
+          ports: [{containerPort: 8000}]
+          volumeMounts:
+            - {name: data, mountPath: /app/data/uploads}
+          readinessProbe: {httpGet: {path: /healthz, port: 8000}}
+          livenessProbe:  {httpGet: {path: /healthz, port: 8000}}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: cognitrix-data}
+```
+
+web 容器同理，需要 `API_BASE_URL=http://<api-service>:8000` 和
+`NEXTAUTH_SECRET`。**Ingress 只暴露 web（3000）**，API 的 8000 不要对外。
+浏览器全程走同源代理 `/api/backend`，功能不受影响。
+
+镜像已内置 `APP_ENV=production`、`UPLOAD_DIR=/app/data/uploads`、
+`DATABASE_URL=sqlite:////app/data/uploads/state/ai_views.sqlite3`；
+`MODEL_PROVIDER_URL` 与 `LOG_LEVEL` 有代码默认值。都可以按需覆盖。
+
+### 首次登录凭据
+
+不需要预先设置任何管理员变量。首次启动、库中还没有任何账号时，系统会自动创建
+`admin@cognitrix.local` 并**随机生成**口令，以横幅形式打进容器日志：
+
+```bash
+kubectl logs deploy/cognitrix-api | grep -A6 "BOOTSTRAP ADMIN"
+```
+
+```
+ COGNITRIX BOOTSTRAP ADMIN CREATED
+   email:    admin@cognitrix.local
+   password: Cg……
+```
+
+该口令**只在账号创建那一次**出现，之后重启不再打印，也不会被改写。登录后请立即改密。
+
+要自己指定口令，注入 `AUTH_BOOTSTRAP_ADMIN_PASSWORD`（此时不生成、不打印）；
+要完全禁用自动建号，把 `AUTH_BOOTSTRAP_ADMIN_EMAIL` 显式设为空。
+
+> 口令会进入容器日志。如果贵方有日志采集系统，这条记录会被收走 —— 这也是必须
+> 首登即改密的原因。系统不提供硬编码的默认口令：那种口令对所有能读代码的人公开。
+
+### 两个需要评估的默认值
+
+- `AUTH_REGISTRATION_ENABLED` 默认开启自助注册，**注册用户直接获得 `admin` 角色**
+  （可上传数据、管理工作区、读审计日志；不含超管的 `/admin/control`）。
+  非内网部署请登录后在「环境配置」里关掉，改用邀请链接。
+- Token 有效期默认 30 天且无吊销机制，泄露时只能靠更换 `AUTH_SECRET` 全量失效。
+
+---
+
 ## 部署后：在管理后台完成配置
 
 登录 → 右上角进入 `/admin`（仅超级管理员可见）：

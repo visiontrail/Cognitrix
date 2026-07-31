@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
-ENV_TEMPLATE="${PROJECT_ROOT}/.env.example"
 ENV_FILE="${PROJECT_ROOT}/.env"
 
 if docker compose version >/dev/null 2>&1; then
@@ -65,13 +64,24 @@ require_docker() {
 
 ensure_env_file() {
   warn_shadowed_host_env
+  # Deliberately does not copy .env.example: the template carries no secrets, so
+  # a verbatim copy would start the stack with an empty AUTH_SECRET, which still
+  # signs JWTs and would let anyone mint a token for any role. scripts/deploy.sh
+  # is the only supported way to create a .env.
   if [[ ! -f "${ENV_FILE}" ]]; then
-    if [[ ! -f "${ENV_TEMPLATE}" ]]; then
-      echo "[docker] Missing env template: ${ENV_TEMPLATE}" >&2
-      exit 1
-    fi
-    cp "${ENV_TEMPLATE}" "${ENV_FILE}"
-    echo "[docker] Created .env from .env.example. Fill AI/auth secrets before shared testing."
+    cat >&2 <<EOF
+[docker] 缺少 ${ENV_FILE}。
+[docker] 首次部署请执行:  bash scripts/deploy.sh
+[docker] 该脚本会生成随机密钥与超管账号，再构建启动整个栈。
+EOF
+    exit 1
+  fi
+
+  local auth_secret
+  auth_secret="$(env_value AUTH_SECRET "")"
+  if [[ -z "${auth_secret}" || "${auth_secret}" == "replace-with-a-strong-secret" ]]; then
+    echo "[docker] 警告: AUTH_SECRET 为空或仍是公开占位值，任何人都能伪造任意角色的 JWT。" >&2
+    echo "[docker]         执行 bash scripts/deploy.sh 可自动替换为随机密钥。" >&2
   fi
 }
 

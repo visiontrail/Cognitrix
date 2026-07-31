@@ -379,7 +379,18 @@ make test-all
 
 ## Docker 交付
 
-构建并启动：
+服务器部署用一条命令，无需事先准备 `.env`，也不需要模型 API Key：
+
+```bash
+PUBLIC_URL=http://172.16.5.38:3000 bash scripts/deploy.sh
+```
+
+`scripts/deploy.sh` 会生成随机 `AUTH_SECRET` / `NEXTAUTH_SECRET` 与随机超管口令，
+构建并启动全栈，等待健康检查，最后打印访问地址与登录凭据。模型 Key、联网检索、
+Agent 参数等登录后在管理后台 `/admin` 配置，保存即生效。重复执行等于升级重启，
+不会覆盖已有密钥或删除数据卷。运维完整说明见 [deploy/README.md](deploy/README.md)。
+
+也可以手工构建并启动（需要自己准备一份合法的 `.env`）：
 
 ```bash
 docker compose up -d --build

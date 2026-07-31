@@ -122,3 +122,51 @@ def test_agent_engine_requires_claude_agent_sdk_toggle(monkeypatch, tmp_path) ->
 
     with pytest.raises(RuntimeError):
         get_settings()
+
+
+def _write_env(tmp_path, monkeypatch, **overrides) -> None:
+    values = {
+        "DATABASE_URL": "sqlite:///./state.sqlite3",
+        "MODEL_PROVIDER_URL": "https://api.deepseek.com",
+        "CLAUDE_AGENT_SDK_ENABLED": "true",
+        "AUTH_SECRET": "a" * 64,
+        "LOG_LEVEL": "INFO",
+        "UPLOAD_DIR": "./uploads",
+        "APP_ENV": "production",
+    }
+    values.update(overrides)
+    env_file = tmp_path / "api.env"
+    env_file.write_text(
+        "\n".join(f"{key}={value}" for key, value in values.items()), encoding="utf-8"
+    )
+    monkeypatch.setenv("API_ENV_FILE", str(env_file))
+    for key in values:
+        monkeypatch.delenv(key, raising=False)
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "auth_secret",
+    [
+        "",
+        "replace-with-a-strong-secret",
+        "dd904b50ad26343d430462093f66bedc79ec0be5db9c93422fa424ca0781f5d8",
+    ],
+)
+def test_public_auth_secret_rejected_in_production(monkeypatch, tmp_path, auth_secret) -> None:
+    """An empty or repository-known signing key must never boot in production.
+
+    Such a key still signs structurally valid JWTs, so the deployment fails open:
+    anyone able to read the template can mint a token for any role.
+    """
+
+    _write_env(tmp_path, monkeypatch, AUTH_SECRET=auth_secret)
+
+    with pytest.raises(RuntimeError, match="AUTH_SECRET"):
+        get_settings()
+
+
+def test_public_auth_secret_allowed_outside_production(monkeypatch, tmp_path) -> None:
+    _write_env(tmp_path, monkeypatch, APP_ENV="development", AUTH_SECRET="")
+
+    assert get_settings().auth_secret == ""

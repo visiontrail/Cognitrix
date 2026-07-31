@@ -15,6 +15,7 @@ apps/web/.env
 apps/web/.env.local
 apps/api/.env
 .env
+.env.tmp.*
 
 apps/api/data/
 apps/api/uploads/

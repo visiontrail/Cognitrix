@@ -11,6 +11,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_ENV_FILE_PATH = Path(__file__).resolve().parent / ".env"
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 DEFAULT_DEVELOPMENT_ADMIN_PASSWORD = "Admin@123456"
+# Signing keys that have ever been shipped in a template or committed to the
+# repository. Anyone who can read the repo can forge tokens with these.
+PUBLIC_PLACEHOLDER_SECRETS = {
+    "replace-with-a-strong-secret",
+    "dd904b50ad26343d430462093f66bedc79ec0be5db9c93422fa424ca0781f5d8",
+}
 
 
 class Settings(BaseSettings):
@@ -191,6 +197,17 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "The documented development Admin password cannot be used when APP_ENV=production"
+            )
+        # An empty or placeholder signing key still produces valid-looking JWTs,
+        # so a misconfigured deployment fails open: anyone can mint a token for
+        # any role. Refuse to boot instead of serving with a known key.
+        if self.app_env.strip().lower() == "production" and (
+            not self.auth_secret.strip() or self.auth_secret in PUBLIC_PLACEHOLDER_SECRETS
+        ):
+            raise ValueError(
+                "AUTH_SECRET must be a non-empty, deployment-specific value when "
+                "APP_ENV=production (generate one with `openssl rand -hex 32`, or "
+                "run scripts/deploy.sh which does it for you)"
             )
         return self
 

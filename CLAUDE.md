@@ -55,6 +55,33 @@ make lint             # Backend: python -m compileall; Frontend: next lint
 make build            # Frontend production build + backend compile check
 ```
 
+### Server deployment
+```bash
+PUBLIC_URL=http://<host>:3000 bash scripts/deploy.sh   # or: make deploy
+```
+`scripts/deploy.sh` is the only supported way to create a server `.env`. It generates a
+random `AUTH_SECRET`/`NEXTAUTH_SECRET` and a random bootstrap superadmin password, builds
+and starts the compose stack, waits on the container healthchecks, and prints the URL plus
+first-login credentials. Re-running it is an upgrade/restart: existing secrets and the data
+volume are preserved, and only newly-introduced settings keys are backfilled. It leaves
+`AI_API_KEY` empty on purpose — the model provider, web-search, and every other non-restart
+setting is configured afterwards from `/admin` («模型设置» / «环境配置»), which writes to
+`admin_control.sqlite3` and takes effect immediately via `_clear_runtime_caches()`. Operator
+documentation lives in `deploy/README.md`.
+
+Two facts that make the deploy-then-configure flow work, and that break it if changed:
+the browser only ever calls the same-origin path `/api/backend` (`apps/web/lib/api-base.ts`
+is a constant), so no deployment URL is baked into the web image at build time; and
+`_bootstrap_admin()` creates the first account **only while the `users` table holds no
+password account at all**, so `AUTH_BOOTSTRAP_ADMIN_EMAIL`/`_PASSWORD` must be present on
+the very first boot — supplying them later can only promote an existing user.
+
+`scripts/lib/docker.sh:ensure_env_file()` deliberately refuses to synthesize a `.env` from
+`.env.example`: the template ships no secrets, and an empty `AUTH_SECRET` still signs
+structurally valid JWTs, so a copied template would fail open. `Settings` rejects an empty
+or repository-known `AUTH_SECRET` whenever `APP_ENV=production` (`PUBLIC_PLACEHOLDER_SECRETS`
+in `config.py`; keep it in sync with `PUBLIC_SECRETS` in `scripts/deploy.sh`).
+
 ### Smoke & Docker
 ```bash
 make smoke-local      # End-to-end: healthz → login → upload → query → chat → save → share

@@ -33,6 +33,9 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     container_name: cognitrix-api
     restart: unless-stopped
     depends_on:

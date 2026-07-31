@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap env-check lint test build dev dev-local dev-web dev-api smoke smoke-local smoke-docker test-all docker-start docker-restart docker-up docker-down reset-local-data hf-deploy
+.PHONY: help bootstrap env-check lint test build dev dev-local dev-web dev-api smoke smoke-local smoke-docker test-all deploy docker-start docker-restart docker-up docker-down reset-local-data hf-deploy
 
 help: ## Show all available commands
 	@awk 'BEGIN {FS = ":.*##"; print "Available targets:"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,6 +44,9 @@ smoke-docker: ## Run docker end-to-end smoke flow
 
 test-all: ## Run lint/test/build plus local smoke flow
 	@bash scripts/tests/test_all.sh
+
+deploy: ## One-command server deploy: generate secrets, build, start, print credentials
+	@bash scripts/deploy.sh
 
 docker-start: ## Start docker compose stack and print endpoints
 	@bash scripts/docker_start.sh

@@ -53,6 +53,73 @@ export type UsageOverview = {
   trend: UsageTrend[];
 };
 
+export type ModelProviderProfile = {
+  name: string;
+  label: string;
+  default_openai_url: string;
+  default_anthropic_url: string;
+  default_model: string;
+  default_fast_model: string;
+  models: string[];
+  notes: string;
+};
+
+export type ModelSlot = {
+  slot: "primary" | "backup";
+  provider?: string;
+  openai_url?: string;
+  anthropic_url?: string;
+  model?: string;
+  fast_model?: string;
+  api_key_configured: boolean;
+  configured: boolean;
+};
+
+export type ModelRouterState = {
+  enabled: boolean;
+  serving_slot: "primary" | "backup";
+  primary_breaker_open: boolean;
+  cooldown_remaining_seconds: number;
+  failure_threshold: number;
+  slow_ttft_ms: number;
+  slots: Record<string, ModelSlot & { consecutive_failures: number; samples: unknown[] }>;
+};
+
+export type ModelSettings = {
+  profiles: ModelProviderProfile[];
+  configuration: {
+    backup_enabled: boolean;
+    router_enabled: boolean;
+    failure_threshold: number;
+    cooldown_seconds: number;
+    slow_ttft_ms: number;
+  };
+  slots: { primary: ModelSlot; backup: ModelSlot };
+  router: ModelRouterState;
+  count?: number;
+  settings?: AdminSetting[];
+};
+
+export type ModelSettingsUpdate = {
+  primary_provider: string;
+  primary_openai_url: string;
+  primary_anthropic_url: string;
+  primary_model: string;
+  primary_fast_model: string;
+  primary_api_key?: string;
+  backup_enabled: boolean;
+  backup_provider: string;
+  backup_openai_url: string;
+  backup_anthropic_url: string;
+  backup_model: string;
+  backup_fast_model: string;
+  backup_api_key?: string;
+  router_enabled: boolean;
+  failure_threshold: number;
+  cooldown_seconds: number;
+  slow_ttft_ms: number;
+};
+
 export type AdminUser = {
   id: string;
   email: string;
@@ -127,16 +194,34 @@ export async function resetAdminSetting(key: string): Promise<AdminSetting> {
   });
 }
 
-export async function getModelSettings(): Promise<{ count: number; settings: AdminSetting[] }> {
+export async function getModelSettings(): Promise<ModelSettings> {
   return request("/admin/control/models");
 }
 
+export async function updateModelSettings(payload: ModelSettingsUpdate): Promise<ModelSettings> {
+  return request("/admin/control/models", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function testModelConnection(payload: {
+  target?: "primary" | "backup";
+  protocol?: "openai" | "anthropic";
+  provider?: string;
   provider_url?: string;
+  anthropic_url?: string;
   model?: string;
   api_key?: string;
   timeout_seconds?: number;
-} = {}): Promise<{ ok: boolean; provider: string; model: string; latency_ms: number }> {
+} = {}): Promise<{
+  ok: boolean;
+  target: "primary" | "backup";
+  protocol: "openai" | "anthropic";
+  provider: string;
+  model: string;
+  latency_ms: number;
+}> {
   return request("/admin/control/models/test", {
     method: "POST",
     body: JSON.stringify(payload),

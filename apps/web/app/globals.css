@@ -82,6 +82,31 @@
 }
 
 @layer components {
+  .model-control {
+    width: 100%;
+    min-height: 2.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 0.3rem;
+    background: #141611;
+    padding: 0.55rem 0.75rem;
+    color: #d9d5ca;
+    transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+  }
+
+  .model-control::placeholder {
+    color: #5d6158;
+  }
+
+  .model-control:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .model-control:focus {
+    border-color: rgba(217, 174, 89, 0.55);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(217, 174, 89, 0.08);
+  }
+
   .ring-warm-shadow {
     box-shadow: 0px 0px 0px 1px theme("colors.ring-warm");
   }

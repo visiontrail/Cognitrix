@@ -45,6 +45,7 @@ RESTART_REQUIRED_KEYS = {
     "AUTH_BOOTSTRAP_SUPERADMIN_EMAIL",
 }
 MODEL_SETTING_KEYS = {
+    "MODEL_PRIMARY_PROVIDER",
     "MODEL_PROVIDER_URL",
     "AI_API_KEY",
     "AI_MODEL",
@@ -53,6 +54,17 @@ MODEL_SETTING_KEYS = {
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "API_TIMEOUT_MS",
+    "MODEL_BACKUP_ENABLED",
+    "MODEL_BACKUP_PROVIDER",
+    "MODEL_BACKUP_URL",
+    "MODEL_BACKUP_ANTHROPIC_URL",
+    "MODEL_BACKUP_API_KEY",
+    "MODEL_BACKUP_MODEL",
+    "MODEL_BACKUP_FAST_MODEL",
+    "MODEL_ROUTER_ENABLED",
+    "MODEL_ROUTER_FAILURE_THRESHOLD",
+    "MODEL_ROUTER_COOLDOWN_SECONDS",
+    "MODEL_ROUTER_SLOW_TTFT_MS",
 }
 
 
@@ -70,10 +82,34 @@ class UserStatusUpdateRequest(BaseModel):
 
 
 class ModelConnectionTestRequest(BaseModel):
+    target: Literal["primary", "backup"] = "primary"
+    protocol: Literal["openai", "anthropic"] = "openai"
+    provider: str | None = None
     provider_url: str | None = None
+    anthropic_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     timeout_seconds: float | None = None
+
+
+class ModelSettingsUpdateRequest(BaseModel):
+    primary_provider: str
+    primary_openai_url: str
+    primary_anthropic_url: str
+    primary_model: str
+    primary_fast_model: str = ""
+    primary_api_key: str | None = None
+    backup_enabled: bool = False
+    backup_provider: str = "yinhe"
+    backup_openai_url: str = ""
+    backup_anthropic_url: str = ""
+    backup_model: str = ""
+    backup_fast_model: str = ""
+    backup_api_key: str | None = None
+    router_enabled: bool = True
+    failure_threshold: int = 2
+    cooldown_seconds: int = 60
+    slow_ttft_ms: int = 15000
 
 
 def get_control_store() -> AdminControlStore:
@@ -264,7 +300,119 @@ async def get_model_settings(
     items = [
         item for item in _settings_inventory() if str(item["key"]) in MODEL_SETTING_KEYS
     ]
-    return {"count": len(items), "settings": items}
+    return {**_model_settings_payload(), "count": len(items), "settings": items}
+
+
+@router.put("/models")
+async def update_model_settings(
+    request: ModelSettingsUpdateRequest,
+    identity: AuthIdentity = Depends(require_permission("admin:control")),
+) -> dict[str, Any]:
+    from .model_router import PROVIDER_PROFILES, get_model_router
+
+    primary_provider = request.primary_provider.strip().lower()
+    backup_provider = request.backup_provider.strip().lower()
+    if primary_provider not in PROVIDER_PROFILES or backup_provider not in PROVIDER_PROFILES:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_model_provider", "message": "Unknown model provider"},
+        )
+    if (
+        not request.primary_openai_url.strip()
+        or not request.primary_anthropic_url.strip()
+        or not request.primary_model.strip()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "primary_model_incomplete",
+                "message": "Primary OpenAI URL, Anthropic URL, and model are required",
+            },
+        )
+    if request.backup_enabled and (
+        not request.backup_openai_url.strip()
+        or not request.backup_anthropic_url.strip()
+        or not request.backup_model.strip()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "backup_model_incomplete",
+                "message": "Enabled backup requires OpenAI URL, Anthropic URL, and model",
+            },
+        )
+    active_urls = [request.primary_openai_url, request.primary_anthropic_url]
+    if request.backup_enabled:
+        active_urls.extend([request.backup_openai_url, request.backup_anthropic_url])
+    if any("{" in url or "}" in url for url in active_urls):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "url_template_unresolved",
+                "message": "Resolve URL template placeholders before saving",
+            },
+        )
+
+    updates: dict[str, Any] = {
+        "MODEL_PRIMARY_PROVIDER": primary_provider,
+        "MODEL_PROVIDER_URL": request.primary_openai_url.strip().rstrip("/"),
+        "ANTHROPIC_BASE_URL": request.primary_anthropic_url.strip().rstrip("/"),
+        "AI_MODEL": request.primary_model.strip(),
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": (
+            request.primary_fast_model.strip() or request.primary_model.strip()
+        ),
+        "MODEL_BACKUP_ENABLED": request.backup_enabled,
+        "MODEL_BACKUP_PROVIDER": backup_provider,
+        "MODEL_BACKUP_URL": request.backup_openai_url.strip().rstrip("/"),
+        "MODEL_BACKUP_ANTHROPIC_URL": request.backup_anthropic_url.strip().rstrip("/"),
+        "MODEL_BACKUP_MODEL": request.backup_model.strip(),
+        "MODEL_BACKUP_FAST_MODEL": (
+            request.backup_fast_model.strip() or request.backup_model.strip()
+        ),
+        "MODEL_ROUTER_ENABLED": request.router_enabled,
+        "MODEL_ROUTER_FAILURE_THRESHOLD": request.failure_threshold,
+        "MODEL_ROUTER_COOLDOWN_SECONDS": request.cooldown_seconds,
+        "MODEL_ROUTER_SLOW_TTFT_MS": request.slow_ttft_ms,
+    }
+    if request.primary_api_key not in (None, ""):
+        updates["AI_API_KEY"] = str(request.primary_api_key).strip()
+        updates["ANTHROPIC_AUTH_TOKEN"] = str(request.primary_api_key).strip()
+    if request.backup_api_key not in (None, ""):
+        updates["MODEL_BACKUP_API_KEY"] = str(request.backup_api_key).strip()
+
+    current = get_settings()
+    candidate_payload = {**current.model_dump(by_alias=True), **updates}
+    try:
+        Settings(_env_file=None, **candidate_payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_model_settings",
+                "message": _sanitized_validation_message("MODELS", exc, secret=False),
+            },
+        ) from exc
+
+    get_control_store().set_overrides(
+        values={key: (value, _is_secret(key)) for key, value in updates.items()},
+        updated_by=identity.user_id,
+    )
+    _clear_runtime_caches("AI_MODEL")
+    get_model_router().reset_health()
+    _audit_admin_mutation(
+        identity=identity,
+        action="model_settings_update",
+        status="success",
+        resource="admin.models",
+        detail={
+            "primary_provider": primary_provider,
+            "primary_model": request.primary_model.strip(),
+            "backup_enabled": request.backup_enabled,
+            "backup_provider": backup_provider,
+            "backup_model": request.backup_model.strip(),
+        },
+    )
+    return _model_settings_payload()
 
 
 @router.post("/models/test")
@@ -272,10 +420,23 @@ async def test_model_connection(
     request: ModelConnectionTestRequest,
     identity: AuthIdentity = Depends(require_permission("admin:control")),
 ) -> dict[str, Any]:
+    from .model_router import ModelEndpoint, PROVIDER_PROFILES, get_model_router
+
     settings = get_settings()
-    provider_url = (request.provider_url or settings.model_provider_url).strip().rstrip("/")
-    model = (request.model or settings.ai_model).strip()
-    api_key = request.api_key if request.api_key not in (None, "") else settings.ai_api_key
+    saved = get_model_router().endpoints(settings).get(request.target)
+    profile = PROVIDER_PROFILES.get((request.provider or (saved.provider if saved else "custom")).strip().lower())
+    provider_url = (
+        request.anthropic_url
+        if request.protocol == "anthropic"
+        else request.provider_url
+    )
+    if not provider_url and saved:
+        provider_url = saved.anthropic_url if request.protocol == "anthropic" else saved.openai_url
+    if not provider_url and profile:
+        provider_url = profile.default_anthropic_url if request.protocol == "anthropic" else profile.default_openai_url
+    provider_url = str(provider_url or "").strip().rstrip("/")
+    model = (request.model or (saved.model if saved else settings.ai_model)).strip()
+    api_key = request.api_key if request.api_key not in (None, "") else (saved.api_key if saved else "")
     timeout = request.timeout_seconds or settings.ai_timeout_seconds
     if not provider_url or not model or not api_key:
         raise HTTPException(
@@ -289,16 +450,31 @@ async def test_model_connection(
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=max(1.0, min(float(timeout), 30.0))) as client:
-            response = await client.post(
-                f"{provider_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "Reply with OK."}],
-                    "max_tokens": 1,
-                    "temperature": 0,
-                },
-            )
+            if request.protocol == "anthropic":
+                response = await client.post(
+                    _anthropic_messages_endpoint(provider_url),
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "Reply with OK."}],
+                        "max_tokens": 8,
+                    },
+                )
+            else:
+                response = await client.post(
+                    _openai_chat_endpoint(provider_url),
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "Reply with OK."}],
+                        "max_tokens": 8,
+                        "temperature": 0,
+                    },
+                )
         latency = round((time.perf_counter() - started) * 1000, 2)
         if response.status_code >= 400:
             raise HTTPException(
@@ -316,8 +492,20 @@ async def test_model_connection(
             resource="admin.models",
             detail={"provider": _provider_label(provider_url), "model": model},
         )
+        probe_endpoint = saved or ModelEndpoint(
+            slot=request.target,
+            provider=(request.provider or "custom").strip().lower(),
+            openai_url=provider_url if request.protocol == "openai" else "",
+            anthropic_url=provider_url if request.protocol == "anthropic" else "",
+            api_key=api_key,
+            model=model,
+            fast_model=model,
+        )
+        get_model_router().record(probe_endpoint, ok=True, latency_ms=latency, settings=settings)
         return {
             "ok": True,
+            "target": request.target,
+            "protocol": request.protocol,
             "provider": _provider_label(provider_url),
             "model": model,
             "latency_ms": latency,
@@ -644,6 +832,31 @@ def _settings_inventory() -> list[dict[str, Any]]:
     return sorted(result, key=lambda item: (str(item["category"]), str(item["key"])))
 
 
+def _model_settings_payload() -> dict[str, Any]:
+    from .model_router import get_model_router, provider_profiles_payload
+
+    settings = get_settings()
+    router = get_model_router()
+    endpoints = router.endpoints(settings)
+    return {
+        "profiles": provider_profiles_payload(),
+        "configuration": {
+            "backup_enabled": settings.model_backup_enabled,
+            "router_enabled": settings.model_router_enabled,
+            "failure_threshold": settings.model_router_failure_threshold,
+            "cooldown_seconds": settings.model_router_cooldown_seconds,
+            "slow_ttft_ms": settings.model_router_slow_ttft_ms,
+        },
+        "slots": {
+            slot: endpoint.public_dict()
+            if endpoint is not None
+            else {"slot": slot, "configured": False, "api_key_configured": False}
+            for slot, endpoint in endpoints.items()
+        },
+        "router": router.snapshot(settings),
+    }
+
+
 def _serialize_setting(
     *,
     key: str,
@@ -899,6 +1112,22 @@ def _provider_label(url: str) -> str:
         return httpx.URL(url).host or "custom"
     except Exception:
         return "custom"
+
+
+def _openai_chat_endpoint(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/chat/completions"
+    return f"{normalized}/v1/chat/completions"
+
+
+def _anthropic_messages_endpoint(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1/messages"):
+        return normalized
+    return f"{normalized}/v1/messages"
 
 
 def _sanitize_connection_error(exc: Exception) -> str:

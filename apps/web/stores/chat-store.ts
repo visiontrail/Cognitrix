@@ -29,6 +29,13 @@ type ChatState = {
   pendingIngestionBySession: Record<string, PendingIngestionApproval | undefined>;
   pendingIngestionSetupBySession: Record<string, PendingIngestionSetup | undefined>;
   pendingMultiChartBySession: Record<string, MultiChartConfirmation | undefined>;
+  /**
+   * Agent (dashboard-building) mode, per conversation. It is a sticky mode, not
+   * a per-message option: once the user flips it on in a conversation it stays
+   * on for every following turn there — and only there — until they flip it off.
+   * Persisted with the rest of the chat state so a reload keeps the mode.
+   */
+  agentModeBySession: Record<string, boolean>;
   isComposing: boolean;
   composerText: string;
   /**
@@ -62,6 +69,7 @@ type ChatState = {
     pending: MultiChartConfirmation | null
   ) => void;
   clearPendingMultiChartConfirmation: (sessionId: string) => void;
+  setAgentMode: (sessionId: string, enabled: boolean) => void;
   touchSession: (
     sessionId: string,
     updates: { lastMessage?: string; messageDelta?: number; title?: string }
@@ -90,6 +98,9 @@ type PersistedChatState = {
   sessions: ChatSession[];
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
+  // Added after v2 shipped; absent in states written by older builds, so it is
+  // optional rather than a version bump (a missing map just means "all off").
+  agentModeBySession?: Record<string, boolean>;
 };
 
 type LegacyMigrationMarker = {
@@ -147,7 +158,22 @@ function normalizePersistedChatState(state: Partial<PersistedChatState> | null):
     messagesBySession: Object.fromEntries(
       Object.entries(messagesBySession).filter(([sessionId]) => sessionIds.has(sessionId))
     ),
+    agentModeBySession: normalizeAgentModeMap(state.agentModeBySession, sessionIds),
   };
+}
+
+function normalizeAgentModeMap(
+  value: unknown,
+  sessionIds: Set<string>
+): Record<string, boolean> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      ([sessionId, enabled]) => sessionIds.has(sessionId) && enabled === true
+    )
+  ) as Record<string, boolean>;
 }
 
 function hasLegacyMigrationMarker(userId: string): boolean {
@@ -219,13 +245,16 @@ function persistTrace(traceByMessageId: Record<string, MessageTrace>): void {
   safeSaveToStorage(traceStorageKeyForWorkspace(_currentUserId, _currentWorkspaceId), toSave);
 }
 
-function persistChatState(state: Pick<ChatState, "sessions" | "activeSessionId" | "messagesBySession">): void {
+function persistChatState(
+  state: Pick<ChatState, "sessions" | "activeSessionId" | "messagesBySession" | "agentModeBySession">
+): void {
   if (!_currentUserId || !_currentWorkspaceId) return;
   safeSaveToStorage<PersistedChatState>(chatStorageKeyForWorkspace(_currentUserId, _currentWorkspaceId), {
     version: 2,
     sessions: state.sessions,
     activeSessionId: state.activeSessionId,
     messagesBySession: state.messagesBySession,
+    agentModeBySession: state.agentModeBySession,
   });
 }
 
@@ -243,6 +272,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingIngestionBySession: {},
   pendingIngestionSetupBySession: {},
   pendingMultiChartBySession: {},
+  agentModeBySession: {},
   isComposing: false,
   composerText: "",
   composerAttachment: null,
@@ -268,6 +298,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const pendingMultiChartBySession = Object.fromEntries(
         Object.entries(state.pendingMultiChartBySession).filter(([sessionId]) => sessionIds.has(sessionId))
       );
+      const agentModeBySession = normalizeAgentModeMap(state.agentModeBySession, sessionIds);
       const nextState = {
         sessions: normalizedSessions,
         activeSessionId,
@@ -275,6 +306,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingIngestionBySession,
         pendingIngestionSetupBySession,
         pendingMultiChartBySession,
+        agentModeBySession,
       };
       persistChatState(nextState);
       return nextState;
@@ -294,6 +326,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.messagesBySession,
           [normalizedSession.id]: state.messagesBySession[normalizedSession.id] ?? [],
         },
+        agentModeBySession: state.agentModeBySession,
       };
       persistChatState(nextState);
       return nextState;
@@ -324,6 +357,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete next[sessionId];
         return next;
       })();
+      const agentModeBySession = (() => {
+        const next = { ...state.agentModeBySession };
+        delete next[sessionId];
+        return next;
+      })();
       const nextState = {
         sessions,
         activeSessionId,
@@ -331,6 +369,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingIngestionBySession,
         pendingIngestionSetupBySession,
         pendingMultiChartBySession,
+        agentModeBySession,
       };
       persistChatState(nextState);
       return nextState;
@@ -495,6 +534,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const next = { ...state.pendingMultiChartBySession };
       delete next[sessionId];
       return { pendingMultiChartBySession: next };
+    }),
+
+  // Sticky per-conversation mode: written only on an explicit user toggle, and
+  // persisted so the conversation reopens in the mode it was left in.
+  setAgentMode: (sessionId, enabled) =>
+    set((state) => {
+      const current = state.agentModeBySession[sessionId] === true;
+      if (current === enabled) {
+        return state;
+      }
+      const agentModeBySession = { ...state.agentModeBySession };
+      if (enabled) {
+        agentModeBySession[sessionId] = true;
+      } else {
+        delete agentModeBySession[sessionId];
+      }
+      persistChatState({ ...state, agentModeBySession });
+      return { agentModeBySession };
     }),
 
   touchSession: (sessionId, updates) =>
@@ -666,6 +723,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingIngestionBySession: {},
         pendingIngestionSetupBySession: {},
         pendingMultiChartBySession: {},
+        agentModeBySession: {},
         traceByMessageId: {},
       });
       return;
@@ -681,6 +739,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
       pendingMultiChartBySession: {},
+      agentModeBySession: persisted?.agentModeBySession ?? {},
       traceByMessageId,
     });
   },
@@ -703,6 +762,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingIngestionBySession: {},
       pendingIngestionSetupBySession: {},
       pendingMultiChartBySession: {},
+      agentModeBySession: {},
       traceByMessageId: {},
     });
   },

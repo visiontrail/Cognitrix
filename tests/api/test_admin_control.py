@@ -347,6 +347,96 @@ def test_model_connection_test_is_sanitized(
     assert "secret-provider-key" not in response.text
 
 
+def test_model_settings_support_primary_backup_and_atomic_save(
+    admin_client: tuple[TestClient, dict[str, str]],
+) -> None:
+    client, headers = admin_client
+    initial = client.get("/admin/control/models", headers=headers)
+    assert initial.status_code == 200
+    body = initial.json()
+    assert any(item["name"] == "yinhe" for item in body["profiles"])
+    assert "secret-provider-key" not in initial.text
+
+    updated = client.put(
+        "/admin/control/models",
+        headers=headers,
+        json={
+            "primary_provider": "yinhe",
+            "primary_openai_url": "https://oneapi.yhroot.com",
+            "primary_anthropic_url": "https://oneapi.yhroot.com",
+            "primary_model": "yinhe-thinking",
+            "primary_fast_model": "yinhe-chat",
+            "primary_api_key": "new-primary-secret",
+            "backup_enabled": True,
+            "backup_provider": "deepseek",
+            "backup_openai_url": "https://backup.test",
+            "backup_anthropic_url": "https://backup.test/anthropic",
+            "backup_model": "backup-model",
+            "backup_fast_model": "backup-fast",
+            "backup_api_key": "new-backup-secret",
+            "router_enabled": True,
+            "failure_threshold": 3,
+            "cooldown_seconds": 90,
+            "slow_ttft_ms": 12000,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    result = updated.json()
+    assert result["slots"]["primary"]["provider"] == "yinhe"
+    assert result["slots"]["primary"]["model"] == "yinhe-thinking"
+    assert result["slots"]["backup"]["model"] == "backup-model"
+    assert result["configuration"]["failure_threshold"] == 3
+    assert "new-primary-secret" not in updated.text
+    assert "new-backup-secret" not in updated.text
+
+    from apps.api.config import get_settings
+
+    effective = get_settings()
+    assert effective.ai_model == "yinhe-thinking"
+    assert effective.model_backup_enabled is True
+    assert effective.model_backup_model == "backup-model"
+
+
+def test_anthropic_probe_uses_messages_protocol(
+    admin_client: tuple[TestClient, dict[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, headers = admin_client
+
+    class _Response:
+        status_code = 200
+
+    class _Client:
+        async def __aenter__(self) -> "_Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> _Response:
+            assert url == "https://anthropic-gateway.test/v1/messages"
+            assert kwargs["headers"]["x-api-key"] == "probe-secret"
+            assert kwargs["json"]["model"] == "probe-model"
+            return _Response()
+
+    monkeypatch.setattr("apps.api.admin_control.httpx.AsyncClient", lambda **kwargs: _Client())
+    response = client.post(
+        "/admin/control/models/test",
+        headers=headers,
+        json={
+            "target": "primary",
+            "protocol": "anthropic",
+            "provider": "custom",
+            "anthropic_url": "https://anthropic-gateway.test",
+            "model": "probe-model",
+            "api_key": "probe-secret",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["protocol"] == "anthropic"
+    assert "probe-secret" not in response.text
+
+
 def test_documented_default_password_rejected_in_production(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -73,6 +73,79 @@ const overview = {
   ],
 };
 
+const modelSettings: controlApi.ModelSettings = {
+  profiles: [
+    {
+      name: "deepseek",
+      label: "DeepSeek 深度求索",
+      default_openai_url: "https://api.deepseek.com",
+      default_anthropic_url: "https://api.deepseek.com/anthropic",
+      default_model: "deepseek-chat",
+      default_fast_model: "deepseek-chat",
+      models: ["deepseek-chat", "deepseek-reasoner"],
+      notes: "OpenAI 与 Anthropic 兼容端点。",
+    },
+    {
+      name: "yinhe",
+      label: "银河内部模型（OneAPI）",
+      default_openai_url: "https://oneapi.yhroot.com",
+      default_anthropic_url: "https://oneapi.yhroot.com",
+      default_model: "yinhe-thinking",
+      default_fast_model: "yinhe-chat",
+      models: ["yinhe-thinking", "yinhe-chat"],
+      notes: "公司内部统一网关。",
+    },
+  ],
+  configuration: {
+    backup_enabled: false,
+    router_enabled: true,
+    failure_threshold: 2,
+    cooldown_seconds: 60,
+    slow_ttft_ms: 15000,
+  },
+  slots: {
+    primary: {
+      slot: "primary",
+      provider: "deepseek",
+      openai_url: "https://api.deepseek.com",
+      anthropic_url: "https://api.deepseek.com/anthropic",
+      model: "deepseek-chat",
+      fast_model: "deepseek-chat",
+      api_key_configured: true,
+      configured: true,
+    },
+    backup: {
+      slot: "backup",
+      provider: "yinhe",
+      openai_url: "https://oneapi.yhroot.com",
+      anthropic_url: "https://oneapi.yhroot.com",
+      model: "yinhe-thinking",
+      fast_model: "yinhe-chat",
+      api_key_configured: false,
+      configured: false,
+    },
+  },
+  router: {
+    enabled: true,
+    serving_slot: "primary",
+    primary_breaker_open: false,
+    cooldown_remaining_seconds: 0,
+    failure_threshold: 2,
+    slow_ttft_ms: 15000,
+    slots: {
+      primary: {
+        slot: "primary",
+        provider: "deepseek",
+        model: "deepseek-chat",
+        api_key_configured: true,
+        configured: true,
+        consecutive_failures: 0,
+        samples: [],
+      },
+    },
+  },
+};
+
 describe("AdminConsole", () => {
   beforeEach(() => {
     sessionState.user = {
@@ -142,7 +215,7 @@ describe("AdminConsole", () => {
         },
       ],
     });
-    vi.spyOn(controlApi, "getModelSettings").mockResolvedValue({ count: 0, settings: [] });
+    vi.spyOn(controlApi, "getModelSettings").mockResolvedValue(modelSettings);
     vi.spyOn(controlApi, "getSkillsMeta").mockResolvedValue({
       enabled: false,
       directory: "/tmp/skills",
@@ -204,5 +277,25 @@ describe("AdminConsole", () => {
     expect(await screen.findByText("Runtime loading")).toBeInTheDocument();
     expect(screen.getByText("disabled")).toBeInTheDocument();
     expect(screen.getByText("尚未安装 Skill bundle")).toBeInTheDocument();
+  });
+
+  it("adapts URLs and model presets when the primary provider changes", async () => {
+    const update = vi.spyOn(controlApi, "updateModelSettings").mockResolvedValue(modelSettings);
+    render(<AdminConsole />);
+    await userEvent.click(screen.getByRole("button", { name: /模型设置/ }));
+
+    const provider = await screen.findByLabelText("主力模型 Provider");
+    await userEvent.selectOptions(provider, "yinhe");
+
+    expect(screen.getByLabelText("主力模型 OpenAI Base URL")).toHaveValue("https://oneapi.yhroot.com");
+    expect(screen.getByLabelText("主力模型 Anthropic Base URL")).toHaveValue("https://oneapi.yhroot.com");
+    expect(screen.getByLabelText("主力模型 模型")).toHaveValue("yinhe-thinking");
+    expect(screen.getByLabelText("主力模型 快模型")).toHaveValue("yinhe-chat");
+
+    await userEvent.click(screen.getByRole("button", { name: "保存并即时应用" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      primary_provider: "yinhe",
+      primary_model: "yinhe-thinking",
+    })));
   });
 });

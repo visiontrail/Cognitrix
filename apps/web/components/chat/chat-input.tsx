@@ -19,8 +19,9 @@ import {
   type QueryChartType,
 } from "@/lib/charts/chart-type-options";
 import {
-  GENERATION_OPTIONS,
+  MENU_GENERATION_OPTIONS,
   buildGenerationOptionPayload,
+  findGenerationOption,
   selectedGenerationOptions,
   toggleGenerationOption,
   type GenerationOptionId,
@@ -95,22 +96,20 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const recentPrompts = recentPromptsQuery.data ?? [];
   const chartOptions = useMemo(() => getQueryChartTypeOptions(locale), [locale]);
   const capabilities = useBackendCapabilities();
-  // Agent mode is offered only when the backend reports the feature flag; a
-  // disabled deployment renders no toggle at all (agent-canvas-mode spec).
-  const availableOptions = useMemo(
-    () =>
-      GENERATION_OPTIONS.filter(
-        (option) => option.id !== "agent_canvas" || capabilities.agentCanvasModeEnabled
-      ),
-    [capabilities.agentCanvasModeEnabled]
-  );
   const activeOptions = useMemo(() => selectedGenerationOptions(selectedOptions), [selectedOptions]);
   const canvasFormatId = useWorkspaceStore((s) => s.canvasFormat.id);
   const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
-  const agentCanvasSelected = selectedOptions.has("agent_canvas");
+  // Agent mode is a sticky per-conversation mode, not a per-message option: it
+  // lives in the chat store keyed by session, survives sends and reloads, and
+  // is flipped only by its own switch. Offered only when the backend reports
+  // the feature flag; a disabled deployment renders no switch at all.
+  const agentModeAvailable = capabilities.agentCanvasModeEnabled;
+  const agentMode = useChatStore((s) => s.agentModeBySession[sessionId] === true) && agentModeAvailable;
+  const setAgentMode = useChatStore((s) => s.setAgentMode);
+  const agentOption = findGenerationOption("agent_canvas");
   // Agent mode v1 operates on the web-design canvas only: prompt a one-click
   // switch instead of letting the backend reject the turn.
-  const agentFormatMismatch = agentCanvasSelected && canvasFormatId !== "web-design";
+  const agentFormatMismatch = agentMode && canvasFormatId !== "web-design";
   const columns = useWorkspaceColumns(activeWorkspaceId);
   const approvalOptions = useMemo(
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
@@ -202,6 +201,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       attachment: selectedFile ?? undefined,
       preferredChartType: chartType ?? undefined,
       ...buildGenerationOptionPayload(selectedOptions),
+      // Sticky mode: carried by every turn of this conversation, and
+      // deliberately not reset below with the per-message selections.
+      agentCanvas: agentMode,
     });
     setComposerText("");
     setSelectedChartType(null);
@@ -219,6 +221,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     });
   }, [
     agentFormatMismatch,
+    agentMode,
     composerText,
     inputLockedByApproval,
     isSending,
@@ -369,14 +372,21 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       setActionMenuOpen(false);
       setSavedPromptsSubmenuOpen(false);
       // Preselect any generation options the prompt hints at; hints never make
-      // a backend call beyond mark-used and never auto-send.
+      // a backend call beyond mark-used and never auto-send. A hint at a sticky
+      // mode turns the mode on rather than joining the per-message set.
       const optionIds = capabilitiesToGenerationOptions(prompt.capabilities);
-      if (optionIds.length > 0) {
+      const menuOptionIds = optionIds.filter(
+        (id) => findGenerationOption(id)?.placement !== "composer"
+      );
+      if (menuOptionIds.length > 0) {
         setSelectedOptions((current) => {
           const next = new Set(current);
-          for (const id of optionIds) next.add(id);
+          for (const id of menuOptionIds) next.add(id);
           return next;
         });
+      }
+      if (optionIds.includes("agent_canvas") && agentModeAvailable) {
+        setAgentMode(sessionId, true);
       }
       if (prompt.variables.length > 0) {
         setVariablePrompt(prompt);
@@ -385,7 +395,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       insertPromptText(prompt.body);
       markPromptUsed.mutate(prompt.id);
     },
-    [insertPromptText, markPromptUsed],
+    [agentModeAvailable, insertPromptText, markPromptUsed, sessionId, setAgentMode],
   );
 
   const handleKeyDown = useCallback(
@@ -658,7 +668,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                   <FileSpreadsheet className="h-4 w-4 shrink-0 text-stone-gray" />
                   <span>{t("chat.actions.attachFile")}</span>
                 </button>
-                {availableOptions.map((option) => {
+                {MENU_GENERATION_OPTIONS.map((option) => {
                   const Icon = option.icon;
                   const checked = selectedOptions.has(option.id);
                   return (
@@ -768,6 +778,46 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
             ) : null}
           </div>
 
+          {agentModeAvailable && agentOption ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={agentMode}
+              data-testid="agent-mode-toggle"
+              aria-label={t("chat.agentCanvas.toggleAriaLabel")}
+              title={t(agentMode ? "chat.agentCanvas.toggleOnTitle" : "chat.agentCanvas.toggleOffTitle")}
+              onClick={() => setAgentMode(sessionId, !agentMode)}
+              disabled={isSending || Boolean(pendingApproval) || Boolean(pendingSetup)}
+              className={cn(
+                "inline-flex h-[44px] shrink-0 select-none items-center gap-2 self-center rounded-full border px-2 sm:px-3",
+                "transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-blue",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                agentMode
+                  ? "border-terracotta/40 bg-terracotta/10 text-terracotta shadow-[0_0_0_3px_rgba(201,100,66,0.08)]"
+                  : "border-border-cream bg-parchment text-stone-gray hover:border-terracotta/30 hover:text-near-black"
+              )}
+            >
+              <agentOption.icon className="h-4 w-4 shrink-0" />
+              <span className="hidden text-caption font-medium sm:inline">
+                {t("chat.agentCanvas.toggleLabel")}
+              </span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "relative h-[14px] w-[26px] shrink-0 rounded-full transition-colors duration-200",
+                  agentMode ? "bg-terracotta" : "bg-border-cream"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-[2px] h-[10px] w-[10px] rounded-full bg-ivory transition-all duration-200",
+                    agentMode ? "left-[14px]" : "left-[2px]"
+                  )}
+                />
+              </span>
+            </button>
+          ) : null}
+
           <div className="relative flex-1">
             <textarea
               ref={textareaRef}
@@ -799,11 +849,20 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               placeholder={
                 inputLockedByApproval
                   ? t("chat.ingestion.approvalInputLocked")
-                  : t("chat.inputPlaceholder")
+                  : agentMode
+                    ? t("chat.agentCanvas.placeholder")
+                    : t("chat.inputPlaceholder")
               }
               rows={1}
               disabled={isSending || inputLockedByApproval}
-              className="w-full resize-none rounded-generous border border-border-cream bg-parchment px-4 py-2 text-body-sm text-near-black placeholder:text-stone-gray focus:outline-none focus:ring-2 focus:ring-focus-blue focus:border-focus-blue transition-colors disabled:opacity-50 min-h-[44px] max-h-[160px] scrollbar-thin"
+              className={cn(
+                "w-full resize-none rounded-generous border bg-parchment px-4 py-2 text-body-sm text-near-black placeholder:text-stone-gray focus:outline-none focus:ring-2 transition-colors disabled:opacity-50 min-h-[44px] max-h-[160px] scrollbar-thin",
+                // While the conversation is in Agent mode the composer carries
+                // the mode's accent, so the state is legible even mid-typing.
+                agentMode
+                  ? "border-terracotta/40 focus:border-terracotta focus:ring-terracotta/40"
+                  : "border-border-cream focus:ring-focus-blue focus:border-focus-blue"
+              )}
               style={{
                 height: "44px",
                 minHeight: "44px",
@@ -852,7 +911,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       </div>
 
       <p className="text-label text-stone-gray text-center mt-2">
-        {activeOptions.length > 1
+        {agentMode
+          ? t("chat.inputHintWithAgentCanvas")
+          : activeOptions.length > 1
           ? t("chat.inputHintWithOptions", { count: activeOptions.length })
           : activeOptions.length === 1
           ? t(activeOptions[0].hintKey)

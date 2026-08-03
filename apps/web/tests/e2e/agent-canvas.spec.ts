@@ -273,11 +273,11 @@ async function startAgentRun(page: import("@playwright/test").Page, prompt: stri
     await newConversation.click();
   }
 
-  // Enable Agent mode from the "+" menu.
-  await page.getByLabel("Open chat actions").click();
-  await page.getByRole("menuitemcheckbox", { name: "Agent build dashboard" }).click();
-  await page.keyboard.press("Escape");
-  await expect(page.getByText("Agent dashboard mode")).toBeVisible();
+  // Agent mode is a sticky per-conversation switch in the composer, not a
+  // per-message row in the "+" menu.
+  const agentToggle = page.getByTestId("agent-mode-toggle");
+  await agentToggle.click();
+  await expect(agentToggle).toHaveAttribute("aria-checked", "true");
 
   // The default canvas is not web-design: take the one-click switch.
   const formatPrompt = page.getByTestId("agent-canvas-format-prompt");

@@ -36,23 +36,34 @@ vi.mock("../../hooks/use-backend-capabilities", () => ({
   useBackendCapabilities: () => capabilities,
 }));
 
-function renderInput() {
+function renderInput(sessionId = "s1") {
   return render(
-    React.createElement(I18nProvider, null, React.createElement(ChatInput, { sessionId: "s1" })),
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, { sessionId })),
   );
 }
 
-describe("ChatInput agent-canvas option", () => {
+describe("ChatInput agent-mode switch", () => {
   beforeEach(() => {
     sendMutate.mockReset();
     window.localStorage.clear();
     capabilities.agentCanvasModeEnabled = false;
-    useChatStore.setState({ composerText: "", pendingIngestionBySession: {}, pendingIngestionSetupBySession: {} });
+    useChatStore.setState({
+      composerText: "",
+      pendingIngestionBySession: {},
+      pendingIngestionSetupBySession: {},
+      agentModeBySession: {},
+    });
     useUIStore.setState({ isSending: false, sendingBySession: {} });
     useWorkspaceStore.setState({ activeWorkspaceId: null, canvasFormat: { id: "web-design" } });
   });
 
-  it("hides the Agent-mode toggle when the backend flag is off", async () => {
+  it("hides the Agent-mode switch when the backend flag is off", () => {
+    renderInput();
+    expect(screen.queryByTestId("agent-mode-toggle")).not.toBeInTheDocument();
+  });
+
+  it("does not offer Agent mode as a row in the + menu", async () => {
+    capabilities.agentCanvasModeEnabled = true;
     const user = userEvent.setup();
     renderInput();
 
@@ -62,26 +73,58 @@ describe("ChatInput agent-canvas option", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("sends agentCanvas: true when the toggle is active and the canvas is web-design", async () => {
+  it("keeps agentCanvas: true on every turn once the switch is on", async () => {
     capabilities.agentCanvasModeEnabled = true;
     const user = userEvent.setup();
     renderInput();
 
-    await user.click(screen.getByLabelText("Open chat actions"));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "Agent build dashboard" }));
-    expect(screen.queryByRole("menu", { name: "Chat actions" })).not.toBeInTheDocument();
-    expect(screen.getByText("Agent dashboard mode")).toBeInTheDocument();
+    const toggle = screen.getByTestId("agent-mode-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByTestId("agent-canvas-format-prompt")).not.toBeInTheDocument();
 
     const input = screen.getByLabelText("Chat Input");
     await user.type(input, "生成销售概览仪表盘{Enter}");
-
-    expect(sendMutate).toHaveBeenCalledTimes(1);
     expect(sendMutate.mock.calls[0][0]).toMatchObject({
       sessionId: "s1",
       content: "生成销售概览仪表盘",
       agentCanvas: true,
     });
+
+    // The mode is sticky: it survives the send instead of resetting like the
+    // per-message "+" options do.
+    expect(screen.getByTestId("agent-mode-toggle")).toHaveAttribute("aria-checked", "true");
+    await user.type(screen.getByLabelText("Chat Input"), "再加一页人力概览{Enter}");
+    expect(sendMutate).toHaveBeenCalledTimes(2);
+    expect(sendMutate.mock.calls[1][0]).toMatchObject({ agentCanvas: true });
+  });
+
+  it("scopes the mode to its own conversation and turns off on a second click", async () => {
+    capabilities.agentCanvasModeEnabled = true;
+    const user = userEvent.setup();
+    const { unmount } = renderInput("s1");
+    await user.click(screen.getByTestId("agent-mode-toggle"));
+    unmount();
+
+    // A different conversation starts off.
+    const other = renderInput("s2");
+    expect(screen.getByTestId("agent-mode-toggle")).toHaveAttribute("aria-checked", "false");
+    await user.type(screen.getByLabelText("Chat Input"), "各部门人数{Enter}");
+    expect(sendMutate.mock.calls[0][0]).toMatchObject({ sessionId: "s2", agentCanvas: false });
+    other.unmount();
+
+    // Back in the original conversation the mode is still on, and clicking the
+    // switch again turns it off.
+    renderInput("s1");
+    const toggle = screen.getByTestId("agent-mode-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(useChatStore.getState().agentModeBySession.s1).toBeUndefined();
+
+    await user.type(screen.getByLabelText("Chat Input"), "各部门人数{Enter}");
+    expect(sendMutate.mock.calls[1][0]).toMatchObject({ sessionId: "s1", agentCanvas: false });
   });
 
   it("prompts a one-click format switch and blocks sending on other formats", async () => {
@@ -90,8 +133,7 @@ describe("ChatInput agent-canvas option", () => {
     const user = userEvent.setup();
     renderInput();
 
-    await user.click(screen.getByLabelText("Open chat actions"));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "Agent build dashboard" }));
+    await user.click(screen.getByTestId("agent-mode-toggle"));
 
     const prompt = screen.getByTestId("agent-canvas-format-prompt");
     expect(prompt).toBeInTheDocument();

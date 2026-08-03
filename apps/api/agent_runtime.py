@@ -314,24 +314,42 @@ def _active_tool_definitions(settings: Any) -> list[dict[str, Any]]:
     return list(AGENT_TOOL_DEFINITIONS)
 
 
-def build_sdk_provider_env(settings: Any) -> tuple[dict[str, str], str | None]:
+def build_sdk_provider_env(
+    settings: Any,
+    endpoint: Any | None = None,
+) -> tuple[dict[str, str], str | None]:
     """Provider env vars + model for a ClaudeAgentOptions, shared by every
     SDK-backed runtime (Q&A turns and agent-canvas runs)."""
     env: dict[str, str] = {
         "API_TIMEOUT_MS": str(settings.api_timeout_ms),
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     }
-    auth_token = (settings.anthropic_auth_token or settings.ai_api_key).strip()
+    auth_token = (
+        str(endpoint.api_key).strip()
+        if endpoint is not None
+        else (settings.anthropic_auth_token or settings.ai_api_key).strip()
+    )
     if auth_token:
         env["ANTHROPIC_API_KEY"] = auth_token
         env["ANTHROPIC_AUTH_TOKEN"] = auth_token
-    if settings.anthropic_base_url.strip():
-        env["ANTHROPIC_BASE_URL"] = settings.anthropic_base_url.strip()
-    model = settings.ai_model.strip() or None
+    anthropic_base_url = (
+        str(endpoint.anthropic_url).strip()
+        if endpoint is not None
+        else settings.anthropic_base_url.strip()
+    )
+    if anthropic_base_url:
+        env["ANTHROPIC_BASE_URL"] = anthropic_base_url
+    model = (
+        str(endpoint.model).strip() or None
+        if endpoint is not None
+        else settings.ai_model.strip() or None
+    )
     if model:
         env["ANTHROPIC_MODEL"] = model
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = (
-            settings.anthropic_default_haiku_model.strip() or model
+            (str(endpoint.fast_model).strip() if endpoint is not None else "")
+            or settings.anthropic_default_haiku_model.strip()
+            or model
         )
     return env, model
 
@@ -1429,24 +1447,92 @@ class AgentRuntime:
             )
 
         final_answer: dict[str, Any] | None = None
-        options = self._build_sdk_options(
-            request=request,
-            session=session,
-            system_text=system_text,
-            run_context=run_context,
-        )
+        sdk_messages_seen = 0
+        first_sdk_message_at: float | None = None
 
         async def execute_sdk_turn(sdk_options: ClaudeAgentOptions) -> None:
-            nonlocal final_answer
+            nonlocal final_answer, sdk_messages_seen, first_sdk_message_at
             async with self._sdk_client_factory(options=sdk_options) as client:
                 await client.query(request.message)
                 async for message in client.receive_response():
+                    sdk_messages_seen += 1
+                    if first_sdk_message_at is None:
+                        first_sdk_message_at = time.perf_counter()
                     candidate = self._consume_sdk_message(message=message, run_context=run_context)
                     if candidate is not None:
                         final_answer = candidate
 
+        from .model_router import get_model_router
+
+        model_router = get_model_router()
+        endpoint_candidates = model_router.candidates(
+            protocol="anthropic",
+            settings=self.settings,
+        )
+
+        async def execute_routed_sdk_turn() -> None:
+            nonlocal first_sdk_message_at
+            candidates: list[Any | None] = endpoint_candidates or [None]
+            for index, endpoint in enumerate(candidates):
+                sdk_options = self._build_sdk_options(
+                    request=request,
+                    session=session,
+                    system_text=system_text,
+                    run_context=run_context,
+                    force_fresh_session=bool(endpoint is not None and endpoint.slot == "backup"),
+                    endpoint=endpoint,
+                )
+                started_attempt = time.perf_counter()
+                first_sdk_message_at = None
+                tool_count_before = len(tool_trace)
+                message_count_before = sdk_messages_seen
+                try:
+                    await execute_sdk_turn(sdk_options)
+                    if endpoint is not None:
+                        model_router.record(
+                            endpoint,
+                            ok=True,
+                            latency_ms=(
+                                (first_sdk_message_at - started_attempt) * 1000
+                                if first_sdk_message_at is not None
+                                else None
+                            ),
+                            settings=self.settings,
+                        )
+                    return
+                except Exception as exc:
+                    if _is_missing_claude_session_error(
+                        exc,
+                        stderr_lines=run_context.sdk_stderr_lines,
+                    ):
+                        raise
+                    if endpoint is not None:
+                        model_router.record(
+                            endpoint,
+                            ok=False,
+                            error_kind=type(exc).__name__,
+                            settings=self.settings,
+                        )
+                    can_fail_over = (
+                        index + 1 < len(candidates)
+                        and len(tool_trace) == tool_count_before
+                        and sdk_messages_seen == message_count_before
+                        and not _has_tool_observation(tool_trace)
+                    )
+                    if not can_fail_over:
+                        raise
+                    logger.warning(
+                        "agent_model_failover conversation_id=%s request_id=%s "
+                        "from_slot=%s to_slot=%s error_type=%s",
+                        request.conversation_id,
+                        request.request_id,
+                        endpoint.slot if endpoint is not None else "settings",
+                        candidates[index + 1].slot,
+                        type(exc).__name__,
+                    )
+
         try:
-            await execute_sdk_turn(options)
+            await execute_routed_sdk_turn()
         except Exception as exc:
             self._flush_pending_sdk_tool_results(run_context)
             if (
@@ -2158,6 +2244,7 @@ class AgentRuntime:
         system_text: str,
         run_context: SDKRunContext,
         force_fresh_session: bool = False,
+        endpoint: Any | None = None,
     ) -> ClaudeAgentOptions:
         async def can_use_tool(
             tool_name: str,
@@ -2236,7 +2323,7 @@ class AgentRuntime:
             version="1.0.0",
             tools=self._build_sdk_tools(run_context=run_context),
         )
-        env, model = build_sdk_provider_env(self.settings)
+        env, model = build_sdk_provider_env(self.settings, endpoint=endpoint)
         resume_session = (
             session.agent_session_id
             if session.turn_count > 0 and session.agent_session_id and not force_fresh_session

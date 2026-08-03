@@ -31,6 +31,26 @@ class Settings(BaseSettings):
     ai_api_key: str = Field(default="", alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-chat", alias="AI_MODEL")
     ai_timeout_seconds: float = Field(default=20.0, alias="AI_TIMEOUT_SECONDS")
+    model_primary_provider: str = Field(default="deepseek", alias="MODEL_PRIMARY_PROVIDER")
+    model_backup_enabled: bool = Field(default=False, alias="MODEL_BACKUP_ENABLED")
+    model_backup_provider: str = Field(default="yinhe", alias="MODEL_BACKUP_PROVIDER")
+    model_backup_url: str = Field(default="", alias="MODEL_BACKUP_URL")
+    model_backup_anthropic_url: str = Field(
+        default="", alias="MODEL_BACKUP_ANTHROPIC_URL"
+    )
+    model_backup_api_key: str = Field(default="", alias="MODEL_BACKUP_API_KEY")
+    model_backup_model: str = Field(default="", alias="MODEL_BACKUP_MODEL")
+    model_backup_fast_model: str = Field(default="", alias="MODEL_BACKUP_FAST_MODEL")
+    model_router_enabled: bool = Field(default=True, alias="MODEL_ROUTER_ENABLED")
+    model_router_failure_threshold: int = Field(
+        default=2, alias="MODEL_ROUTER_FAILURE_THRESHOLD"
+    )
+    model_router_cooldown_seconds: int = Field(
+        default=60, alias="MODEL_ROUTER_COOLDOWN_SECONDS"
+    )
+    model_router_slow_ttft_ms: int = Field(
+        default=15000, alias="MODEL_ROUTER_SLOW_TTFT_MS"
+    )
     anthropic_base_url: str = Field(
         default="https://api.deepseek.com/anthropic",
         alias="ANTHROPIC_BASE_URL",
@@ -187,6 +207,9 @@ class Settings(BaseSettings):
         "agent_mode_max_charts",
         "agent_mode_max_pages",
         "admin_usage_retention_days",
+        "model_router_failure_threshold",
+        "model_router_cooldown_seconds",
+        "model_router_slow_ttft_ms",
     )
     @classmethod
     def validate_positive_ints(cls, value: int, info) -> int:  # type: ignore[no-untyped-def]

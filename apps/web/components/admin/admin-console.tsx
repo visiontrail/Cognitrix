@@ -12,6 +12,7 @@ import {
   CircleGauge,
   CloudCog,
   Database,
+  GitBranch,
   KeyRound,
   LayoutGrid,
   Loader2,
@@ -19,11 +20,13 @@ import {
   LogOut,
   RefreshCw,
   RotateCcw,
+  Save,
   Search,
   ServerCog,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  PlugZap,
   TerminalSquare,
   Upload,
   UserCog,
@@ -40,6 +43,9 @@ import {
   type AdminMeta,
   type AdminSetting,
   type AdminUser,
+  type ModelProviderProfile,
+  type ModelSettings,
+  type ModelSettingsUpdate,
   type UsageOverview,
   type UsageUser,
   getAdminMeta,
@@ -54,6 +60,7 @@ import {
   setAdminUserStatus,
   testModelConnection,
   updateAdminSetting,
+  updateModelSettings,
 } from "@/lib/admin/control";
 import {
   KNOWN_AGENT_NAMES,
@@ -689,15 +696,17 @@ function ModelsSection({
 }: {
   notify: (notice: { kind: "ok" | "error"; text: string }) => void;
 }) {
-  const [settings, setSettings] = useState<AdminSetting[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [settings, setSettings] = useState<ModelSettings | null>(null);
+  const [draft, setDraft] = useState<ModelSettingsUpdate | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState<"primary" | "backup" | null>(null);
+  const [testResults, setTestResults] = useState<Partial<Record<"primary" | "backup", string>>>({});
 
   const load = useCallback(async () => {
     try {
-      setSettings((await getModelSettings()).settings);
+      const next = await getModelSettings();
+      setSettings(next);
+      setDraft(toModelDraft(next));
     } catch (error) {
       notify({ kind: "error", text: errorMessage(error) });
     }
@@ -707,102 +716,312 @@ function ModelsSection({
     void load();
   }, [load]);
 
-  const save = async (setting: AdminSetting) => {
-    setBusy(setting.key);
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
     try {
-      await updateAdminSetting(
-        setting.key,
-        parseSettingValue(setting, drafts[setting.key] ?? ""),
-      );
-      setDrafts((current) => withoutKey(current, setting.key));
-      await load();
-      notify({ kind: "ok", text: `${setting.key} 已更新` });
+      const next = await updateModelSettings(draft);
+      setSettings(next);
+      setDraft(toModelDraft(next));
+      notify({ kind: "ok", text: "主备模型与路由策略已保存并即时生效" });
     } catch (error) {
       notify({ kind: "error", text: errorMessage(error) });
     } finally {
-      setBusy(null);
+      setSaving(false);
     }
   };
 
-  const runTest = async () => {
-    setTesting(true);
-    setTestResult(null);
+  const runTest = async (slot: "primary" | "backup") => {
+    if (!draft) return;
+    setTesting(slot);
+    setTestResults((current) => ({ ...current, [slot]: undefined }));
+    const prefix = slot === "primary" ? "primary" : "backup";
     try {
       const result = await testModelConnection({
-        provider_url: drafts.MODEL_PROVIDER_URL || undefined,
-        model: drafts.AI_MODEL || undefined,
-        api_key: drafts.AI_API_KEY || undefined,
+        target: slot,
+        protocol: "anthropic",
+        provider: draft[`${prefix}_provider`],
+        provider_url: draft[`${prefix}_openai_url`],
+        anthropic_url: draft[`${prefix}_anthropic_url`],
+        model: draft[`${prefix}_model`],
+        api_key: draft[`${prefix}_api_key`] || undefined,
       });
-      setTestResult(`${result.provider} / ${result.model} · ${Math.round(result.latency_ms)}ms`);
-      notify({ kind: "ok", text: "模型网关连接成功" });
+      setTestResults((current) => ({
+        ...current,
+        [slot]: `PASS · ${result.model} · ${Math.round(result.latency_ms)}ms`,
+      }));
+      notify({ kind: "ok", text: `${slot === "primary" ? "主力" : "备选"}模型调用成功` });
     } catch (error) {
-      notify({ kind: "error", text: errorMessage(error) });
+      const message = errorMessage(error);
+      setTestResults((current) => ({ ...current, [slot]: `FAIL · ${message}` }));
+      notify({ kind: "error", text: message });
     } finally {
-      setTesting(false);
+      setTesting(null);
     }
   };
 
+  const update = <K extends keyof ModelSettingsUpdate>(key: K, value: ModelSettingsUpdate[K]) => {
+    setDraft((current) => current ? { ...current, [key]: value } : current);
+  };
+
+  const selectProvider = (slot: "primary" | "backup", provider: string) => {
+    const profile = settings?.profiles.find((item) => item.name === provider);
+    if (!profile) return;
+    setDraft((current) => current ? {
+      ...current,
+      [`${slot}_provider`]: provider,
+      [`${slot}_openai_url`]: profile.default_openai_url,
+      [`${slot}_anthropic_url`]: profile.default_anthropic_url,
+      [`${slot}_model`]: profile.default_model,
+      [`${slot}_fast_model`]: profile.default_fast_model,
+    } : current);
+  };
+
+  if (!settings || !draft) return <InlineLoading />;
+
+  const servingBackup = settings.router.serving_slot === "backup";
+
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(330px,0.7fr)]">
-      <Panel>
-        <PanelHeader eyebrow="PROVIDER CONFIGURATION" title="模型网关" />
-        <div className="space-y-2">
-          {settings.map((setting) => (
-            <SettingRow
-              key={setting.key}
-              setting={setting}
-              draft={drafts[setting.key]}
-              busy={busy === setting.key}
-              onDraft={(value) => setDrafts((current) => ({ ...current, [setting.key]: value }))}
-              onSave={() => void save(setting)}
-              onReset={async () => {
-                await resetAdminSetting(setting.key);
-                setDrafts((current) => withoutKey(current, setting.key));
-                await load();
-              }}
-            />
-          ))}
+    <div className="space-y-5">
+      <section className={`relative overflow-hidden rounded-lg border px-5 py-4 ${
+        servingBackup
+          ? "border-[#c7774d]/35 bg-[#c7774d]/[0.08]"
+          : "border-[#90a871]/30 bg-[#90a871]/[0.065]"
+      }`}>
+        <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_right,rgba(255,255,255,0.06),transparent_68%)]" />
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className={`flex h-10 w-10 items-center justify-center rounded-full border ${
+            servingBackup ? "border-[#c7774d]/40 text-[#dc8e68]" : "border-[#90a871]/40 text-[#b5ca98]"
+          }`}>
+            <GitBranch className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="font-mono text-[8px] tracking-[0.22em] text-[#797d72]">LIVE ROUTING STATE</p>
+            <p className="mt-0.5 text-sm text-[#dedbd0]">
+              当前由{servingBackup ? "备选" : "主力"}模型服务
+              <span className="ml-2 font-mono text-[10px] text-[#8f9288]">
+                {settings.router.slots[settings.router.serving_slot]?.model ?? "未配置"}
+              </span>
+            </p>
+          </div>
+          <div className="sm:ml-auto">
+            <StatePill active={!servingBackup} label={servingBackup ? `FAILOVER · ${settings.router.cooldown_remaining_seconds}s` : "PRIMARY HEALTHY"} />
+          </div>
         </div>
-      </Panel>
-      <div className="space-y-5">
+      </section>
+
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(350px,0.55fr)]">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <ModelEndpointCard
+            slot="primary"
+            title="主力模型"
+            eyebrow="01 / PRIMARY"
+            profile={settings.profiles.find((item) => item.name === draft.primary_provider)}
+            profiles={settings.profiles}
+            draft={draft}
+            keyConfigured={settings.slots.primary.api_key_configured}
+            testing={testing === "primary"}
+            testResult={testResults.primary}
+            onProvider={(provider) => selectProvider("primary", provider)}
+            onUpdate={update}
+            onTest={() => void runTest("primary")}
+          />
+          <ModelEndpointCard
+            slot="backup"
+            title="备选模型"
+            eyebrow="02 / FAILOVER"
+            profile={settings.profiles.find((item) => item.name === draft.backup_provider)}
+            profiles={settings.profiles}
+            draft={draft}
+            keyConfigured={settings.slots.backup.api_key_configured}
+            testing={testing === "backup"}
+            testResult={testResults.backup}
+            inactive={!draft.backup_enabled}
+            onProvider={(provider) => selectProvider("backup", provider)}
+            onUpdate={update}
+            onTest={() => void runTest("backup")}
+          />
+        </div>
+
+        <div className="space-y-5">
+          <Panel>
+            <PanelHeader eyebrow="FAILOVER POLICY" title="路由与熔断" />
+            <div className="space-y-4">
+              <SwitchRow label="启用备选模型" detail="主力不可用时允许故障切换" checked={draft.backup_enabled} onChange={(value) => update("backup_enabled", value)} />
+              <SwitchRow label="启用智能路由" detail="按失败与响应延迟自动开合熔断器" checked={draft.router_enabled} onChange={(value) => update("router_enabled", value)} />
+              <ModelNumberField label="连续失败阈值" value={draft.failure_threshold} suffix="次" onChange={(value) => update("failure_threshold", value)} />
+              <ModelNumberField label="主力恢复窗口" value={draft.cooldown_seconds} suffix="秒" onChange={(value) => update("cooldown_seconds", value)} />
+              <ModelNumberField label="慢响应阈值" value={draft.slow_ttft_ms} suffix="ms" onChange={(value) => update("slow_ttft_ms", value)} />
+            </div>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-[#d9ae59]/40 bg-[#d9ae59]/12 px-4 py-3 text-sm text-[#f0c873] transition hover:bg-[#d9ae59]/20 disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? "正在应用…" : "保存并即时应用"}
+            </button>
+          </Panel>
         <Panel>
-          <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-lg border border-[#d9ae59]/25 bg-[#d9ae59]/10 text-[#edc36f]">
+          <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg border border-[#d9ae59]/25 bg-[#d9ae59]/10 text-[#edc36f]">
             <KeyRound className="h-5 w-5" />
           </div>
-          <p className="font-mono text-[9px] tracking-[0.2em] text-[#8b7b58]">CONNECTION PROBE</p>
-          <h2 className="mt-1 font-serif text-2xl text-[#eee9dc]">验证当前配置</h2>
+          <p className="font-mono text-[9px] tracking-[0.2em] text-[#8b7b58]">WRITE-ONLY SECRETS</p>
+          <h2 className="mt-1 font-serif text-xl text-[#eee9dc]">凭据不会回传浏览器</h2>
           <p className="mt-3 text-sm leading-6 text-[#8d8e86]">
-            发送 1 token 的最小请求。响应内容与密钥都不会写入后台日志。
+            留空表示保留已保存的 Key。连接测试直接走 Agent 使用的 Anthropic Messages 协议，而不是只探测网关端口。
           </p>
-          <button
-            type="button"
-            onClick={() => void runTest()}
-            disabled={testing}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-[#d9ae59]/35 bg-[#d9ae59]/10 px-4 py-3 text-sm text-[#edc36f] transition hover:bg-[#d9ae59]/15 disabled:opacity-50"
-          >
-            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
-            {testing ? "正在连接…" : "测试模型连接"}
-          </button>
-          {testResult && (
-            <div className="mt-3 rounded border border-[#90a871]/25 bg-[#90a871]/10 px-3 py-2 font-mono text-[10px] text-[#bdd1a4]">
-              PASS · {testResult}
-            </div>
-          )}
         </Panel>
-        <Panel className="border-[#6d83a5]/20 bg-[#6d83a5]/[0.045]">
-          <div className="flex gap-3">
-            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#8aa3c6]" />
-            <div>
-              <p className="text-sm font-medium text-[#cbd7e6]">密钥为 write-only</p>
-              <p className="mt-1 text-xs leading-5 text-[#8390a1]">
-                留空保存会保留原密钥；只有显式清空操作才会移除。页面、历史与审计均不返回明文。
-              </p>
-            </div>
-          </div>
-        </Panel>
+        </div>
       </div>
     </div>
   );
+}
+
+function ModelEndpointCard({
+  slot,
+  title,
+  eyebrow,
+  profile,
+  profiles,
+  draft,
+  keyConfigured,
+  testing,
+  testResult,
+  inactive = false,
+  onProvider,
+  onUpdate,
+  onTest,
+}: {
+  slot: "primary" | "backup";
+  title: string;
+  eyebrow: string;
+  profile?: ModelProviderProfile;
+  profiles: ModelProviderProfile[];
+  draft: ModelSettingsUpdate;
+  keyConfigured: boolean;
+  testing: boolean;
+  testResult?: string;
+  inactive?: boolean;
+  onProvider: (provider: string) => void;
+  onUpdate: <K extends keyof ModelSettingsUpdate>(key: K, value: ModelSettingsUpdate[K]) => void;
+  onTest: () => void;
+}) {
+  const field = <T extends "provider" | "openai_url" | "anthropic_url" | "model" | "fast_model" | "api_key">(name: T) => `${slot}_${name}` as keyof ModelSettingsUpdate;
+  const value = (name: "provider" | "openai_url" | "anthropic_url" | "model" | "fast_model" | "api_key") => String(draft[field(name)] ?? "");
+  const listId = `${slot}-model-presets`;
+
+  return (
+    <Panel className={inactive ? "opacity-60" : ""}>
+      <PanelHeader
+        eyebrow={eyebrow}
+        title={title}
+        action={<StatePill active={!inactive && keyConfigured} label={inactive ? "STANDBY OFF" : keyConfigured ? "KEY READY" : "KEY REQUIRED"} />}
+      />
+      <div className="space-y-4">
+        <ModelField label="Provider">
+          <select
+            aria-label={`${title} Provider`}
+            value={value("provider")}
+            onChange={(event) => onProvider(event.target.value)}
+            className="model-control"
+          >
+            {profiles.map((item) => <option key={item.name} value={item.name}>{item.label}</option>)}
+          </select>
+        </ModelField>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+          <ModelField label="OpenAI Base URL" detail="轻量任务与结构推断">
+            <input aria-label={`${title} OpenAI Base URL`} value={value("openai_url")} onChange={(event) => onUpdate(field("openai_url"), event.target.value)} className="model-control font-mono text-[10px]" placeholder={profile?.default_openai_url || "可选"} />
+          </ModelField>
+          <ModelField label="Anthropic Base URL" detail="Agent 主调用链">
+            <input aria-label={`${title} Anthropic Base URL`} value={value("anthropic_url")} onChange={(event) => onUpdate(field("anthropic_url"), event.target.value)} className="model-control font-mono text-[10px]" placeholder={profile?.default_anthropic_url || "必填"} />
+          </ModelField>
+        </div>
+        <ModelField label="模型">
+          <input list={listId} aria-label={`${title} 模型`} value={value("model")} onChange={(event) => onUpdate(field("model"), event.target.value)} className="model-control font-mono text-[11px]" placeholder={profile?.default_model} />
+          <datalist id={listId}>{profile?.models.map((model) => <option key={model} value={model} />)}</datalist>
+        </ModelField>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+          <ModelField label="小 / 快模型">
+            <input aria-label={`${title} 快模型`} value={value("fast_model")} onChange={(event) => onUpdate(field("fast_model"), event.target.value)} className="model-control font-mono text-[11px]" placeholder={profile?.default_fast_model} />
+          </ModelField>
+          <ModelField label="API Key" detail={keyConfigured ? "已保存；留空保持不变" : "尚未配置"}>
+            <input type="password" autoComplete="off" aria-label={`${title} API Key`} value={value("api_key")} onChange={(event) => onUpdate(field("api_key"), event.target.value)} className="model-control font-mono text-[11px]" placeholder={keyConfigured ? "•••••••• 已配置" : "sk-…"} />
+          </ModelField>
+        </div>
+        {profile?.notes && <p className="rounded border border-white/[0.07] bg-black/15 px-3 py-2 text-[11px] leading-5 text-[#777b71]">{profile.notes}</p>}
+        <button type="button" disabled={testing || inactive} onClick={onTest} className="flex w-full items-center justify-center gap-2 rounded border border-white/10 px-3 py-2.5 text-xs text-[#b7b3a8] transition hover:border-[#90a871]/30 hover:bg-[#90a871]/[0.07] hover:text-[#c5d6ae] disabled:opacity-40">
+          {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5" />}
+          {testing ? "正在完成真实调用…" : `测试${title}`}
+        </button>
+        {testResult && <div className="rounded border border-[#90a871]/25 bg-[#90a871]/10 px-3 py-2 font-mono text-[9px] text-[#bdd1a4]">{testResult}</div>}
+      </div>
+    </Panel>
+  );
+}
+
+function ModelField({ label, detail, children }: { label: string; detail?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 flex items-center justify-between gap-3 text-xs text-[#aaa79d]">
+        {label}
+        {detail && <span className="font-mono text-[7px] tracking-[0.08em] text-[#62665d]">{detail}</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function SwitchRow({ label, detail, checked, onChange }: { label: string; detail: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3 rounded border border-white/[0.07] bg-black/10 px-3 py-3">
+      <input type="checkbox" className="sr-only" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span className={`relative h-5 w-9 rounded-full border transition ${checked ? "border-[#d9ae59]/45 bg-[#d9ae59]/25" : "border-white/10 bg-black/20"}`}>
+        <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition ${checked ? "left-[18px] bg-[#edc36f]" : "left-0.5 bg-[#666a60]"}`} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs text-[#d4d0c4]">{label}</span>
+        <span className="block truncate text-[10px] text-[#696d64]">{detail}</span>
+      </span>
+    </label>
+  );
+}
+
+function ModelNumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix: string; onChange: (value: number) => void }) {
+  return (
+    <label className="grid grid-cols-[1fr_110px] items-center gap-3 text-xs text-[#aaa79d]">
+      <span>{label}</span>
+      <span className="relative">
+        <input type="number" min={1} value={value} onChange={(event) => onChange(Math.max(1, Number(event.target.value)))} className="model-control pr-9 text-right font-mono text-[10px]" />
+        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[8px] text-[#62665d]">{suffix}</span>
+      </span>
+    </label>
+  );
+}
+
+function toModelDraft(settings: ModelSettings): ModelSettingsUpdate {
+  const primary = settings.slots.primary;
+  const backup = settings.slots.backup;
+  return {
+    primary_provider: primary.provider ?? "deepseek",
+    primary_openai_url: primary.openai_url ?? "",
+    primary_anthropic_url: primary.anthropic_url ?? "",
+    primary_model: primary.model ?? "",
+    primary_fast_model: primary.fast_model ?? primary.model ?? "",
+    primary_api_key: "",
+    backup_enabled: settings.configuration.backup_enabled,
+    backup_provider: backup.provider ?? "yinhe",
+    backup_openai_url: backup.openai_url ?? "",
+    backup_anthropic_url: backup.anthropic_url ?? "",
+    backup_model: backup.model ?? "",
+    backup_fast_model: backup.fast_model ?? backup.model ?? "",
+    backup_api_key: "",
+    router_enabled: settings.configuration.router_enabled,
+    failure_threshold: settings.configuration.failure_threshold,
+    cooldown_seconds: settings.configuration.cooldown_seconds,
+    slow_ttft_ms: settings.configuration.slow_ttft_ms,
+  };
 }
 
 function UsageSection({ overview }: { overview: UsageOverview | null }) {

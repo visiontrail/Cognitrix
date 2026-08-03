@@ -1,13 +1,18 @@
 import { BarChart3, Globe, LayoutDashboard, Tags, type LucideIcon } from "lucide-react";
 
 /**
- * Declarative registry for the multi-selectable chart-generation options that
- * live in the chat composer's "+" menu.
+ * Declarative registry for the generation options a chat turn can carry.
  *
- * Each option is an independent, freely combinable toggle. The composer keeps
- * the active set in a `Set<GenerationOptionId>` and renders menu items + chips
- * by mapping over this registry, so adding a new option is a single entry here
- * (plus its i18n keys) — no new state, reset branch, or send wiring required.
+ * Most are per-message toggles in the composer's "+" menu (`placement: "menu"`):
+ * independent, freely combinable, cleared on send. The composer keeps that
+ * active set in a `Set<GenerationOptionId>` and renders menu items + chips by
+ * mapping over this registry, so adding one is a single entry here (plus its
+ * i18n keys) — no new state, reset branch, or send wiring required.
+ *
+ * `placement: "composer"` options are sticky conversation modes with their own
+ * dedicated control (Agent mode), so they are not part of that per-message set —
+ * but they stay in this registry so their request payload and trace-summary
+ * labels are defined in exactly one place.
  *
  * `payload` declares how a selected option contributes to the send request;
  * `buildGenerationOptionPayload` merges the contributions of the active set.
@@ -27,10 +32,22 @@ export type GenerationOptionPayload = {
   agentCanvas?: boolean;
 };
 
+/**
+ * Where the option is surfaced.
+ *
+ * `menu` — a per-message checkbox in the composer's "+" menu; cleared on send.
+ * `composer` — a sticky mode with its own dedicated control in the composer,
+ * owned by conversation state rather than by the per-message selection set.
+ * Composer-placed options still declare their payload here so the send request
+ * and the assistant message's trace summary keep a single source of truth.
+ */
+export type GenerationOptionPlacement = "menu" | "composer";
+
 export type GenerationOption = {
   id: GenerationOptionId;
   icon: LucideIcon;
   tone: GenerationOptionTone;
+  placement: GenerationOptionPlacement;
   /** i18n key for the menu row label. */
   menuLabelKey: string;
   /** i18n key for the selected-state chip label. */
@@ -45,6 +62,7 @@ export type GenerationOption = {
 export const GENERATION_OPTIONS: readonly GenerationOption[] = [
   {
     id: "multi_chart",
+    placement: "menu",
     icon: BarChart3,
     tone: "blue",
     menuLabelKey: "chat.actions.multiChart",
@@ -55,6 +73,7 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
   },
   {
     id: "data_labels",
+    placement: "menu",
     icon: Tags,
     tone: "terracotta",
     menuLabelKey: "chat.actions.dataLabels",
@@ -65,6 +84,7 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
   },
   {
     id: "web_search",
+    placement: "menu",
     icon: Globe,
     tone: "blue",
     menuLabelKey: "chat.actions.webSearch",
@@ -73,10 +93,12 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
     hintKey: "chat.inputHintWithWebSearch",
     payload: { webSearch: true },
   },
-  // Only rendered when the backend reports AGENT_CANVAS_MODE_ENABLED=true
-  // (the composer filters by capability before mapping over the registry).
+  // Sticky conversation mode, not a "+" menu row: the composer renders its own
+  // switch (only when the backend reports AGENT_CANVAS_MODE_ENABLED=true) and
+  // reads the on/off state from `chat-store.agentModeBySession`.
   {
     id: "agent_canvas",
+    placement: "composer",
     icon: LayoutDashboard,
     tone: "terracotta",
     menuLabelKey: "chat.actions.agentCanvas",
@@ -86,6 +108,16 @@ export const GENERATION_OPTIONS: readonly GenerationOption[] = [
     payload: { agentCanvas: true },
   },
 ];
+
+/** Registry entries rendered as rows in the composer's "+" menu. */
+export const MENU_GENERATION_OPTIONS: readonly GenerationOption[] = GENERATION_OPTIONS.filter(
+  (option) => option.placement === "menu"
+);
+
+/** Registry entry for a given id; `undefined` for an unknown id. */
+export function findGenerationOption(id: GenerationOptionId): GenerationOption | undefined {
+  return GENERATION_OPTIONS.find((option) => option.id === id);
+}
 
 const GENERATION_OPTION_IDS = new Set<string>(GENERATION_OPTIONS.map((option) => option.id));
 

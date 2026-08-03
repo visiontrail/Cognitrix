@@ -115,6 +115,42 @@ class AdminControlStore:
             )
             conn.commit()
 
+    def set_overrides(
+        self,
+        *,
+        values: dict[str, tuple[Any, bool]],
+        updated_by: str,
+    ) -> None:
+        """Persist a validated settings form as one transaction."""
+        if not values:
+            return
+        now = _utc_now()
+        with self._lock, self._connect() as conn:
+            for key, (value, is_secret) in values.items():
+                encoded = json.dumps(value, ensure_ascii=False, default=str)
+                conn.execute(
+                    """
+                    INSERT INTO setting_overrides
+                        (key, value_json, is_secret, updated_by, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        is_secret = excluded.is_secret,
+                        updated_by = excluded.updated_by,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, encoded, int(is_secret), updated_by, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO setting_history
+                        (id, key, action, is_secret, updated_by, updated_at)
+                    VALUES (?, ?, 'set', ?, ?, ?)
+                    """,
+                    (uuid.uuid4().hex, key, int(is_secret), updated_by, now),
+                )
+            conn.commit()
+
     def delete_override(self, *, key: str, is_secret: bool, updated_by: str) -> bool:
         now = _utc_now()
         with self._lock, self._connect() as conn:

@@ -1,10 +1,10 @@
 # Cognitrix — AI-Native BI & Analytics Platform
 
-English | [简体中文](README_CN.md)
+English | [简体中文](README_CN.md) | [हिन्दी](README_HI.md) | [Español](README_ES.md) | [日本語](README_JA.md)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![DuckDB](https://img.shields.io/badge/DuckDB-powered-yellow.svg)](https://duckdb.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -38,10 +38,15 @@ Key differentiators versus traditional BI tools (Tableau, Power BI, Metabase):
 - **Agentic Query Engine** — A ReAct agent loop (Claude/DeepSeek-compatible) explores table structures, selects semantic metrics, and generates read-only SQL — all transparently streamed to the UI.
 - **Semantic Metric Layer** — YAML-driven metric definitions prevent AI hallucinations on business KPIs (headcount, attrition rate, project velocity, budget burn, etc.).
 - **AI-Generated Dashboards** — Specs streamed as JSON are rendered by ECharts (heatmap, sankey, gauge, graph) and Recharts (bar, line, pie, scatter, funnel, table, KPI card).
-- **Visual Workspace** — Drag-and-drop React Flow canvas lets you compose charts into shareable analytical dashboards.
-- **Versioned Views & Sharing** — Save, version, and share analysis views with role-aware data redaction at the API layer.
+- **Visual Workspace & Agent Canvas** — Compose charts manually on a multi-format canvas, or let the optional long-horizon agent create an approved, multi-page dashboard outline and stream it into the workspace.
+- **Multi-Chart Generation & Saved Prompts** — Generate a confirmed set of charts from one question and reuse parameterized prompts with capability presets.
+- **Durable Collaboration** — Workspaces, conversations, messages, chart assets, and canvas snapshots are persisted server-side, with localStorage retained as a fast offline cache and migration source.
+- **Members, Invites & Publishing** — Manage owner/editor/viewer roles, issue expiring invite links, and publish pages as public, registered-user-only, or allowlist-only experiences with a read-only public assistant.
+- **Versioned Views & Sharing** — Save, version, roll back, and share analysis views with role-aware data redaction at the API layer.
 - **Enterprise-Grade Security** — JWT auth, RBAC permission scopes, row-level security injection, SQL read-only validation, audit logging, and jailbreak guardrails.
-- **LLM-Provider Agnostic** — Works with DeepSeek, Claude (Anthropic), Kimi, or any OpenAI-compatible endpoint via a single env-var swap.
+- **Optional Web Research** — Feature-gated Bocha or Tavily search/fetch tools use explicit per-turn budgets and never bypass the BI tool guardrails.
+- **Operations Console** — A superadmin UI controls runtime settings, model credentials, users, roles, usage telemetry, and Agent Skills; secrets remain write-only.
+- **Anthropic-Compatible Agent Runtime** — DeepSeek's Anthropic gateway is the default; native Anthropic/Claude or another compatible endpoint can be selected through environment settings.
 - **Self-Hosted & Open Source** — Runs locally or in Docker; no cloud lock-in, no SaaS fees.
 
 ---
@@ -56,33 +61,9 @@ Key differentiators versus traditional BI tools (Tableau, Power BI, Metabase):
 
 ---
 
-## Architecture Overview
+## Functional Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Next.js Frontend (Port 3000)              │
-│  ChatPanel · WorkspaceCanvas · CatalogView · ShareView       │
-│  Zustand · TanStack Query · React Flow · ECharts · Recharts  │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  SSE stream (planning/tool_use/spec/final)
-┌───────────────────────────▼─────────────────────────────────┐
-│                    FastAPI Backend (Port 8000)                │
-│                                                              │
-│  AgentRuntime ──► ReAct Loop ──► ToolCallingService          │
-│       │               │               │                      │
-│  AgentGuardrails  LLM Client     SemanticLayer (YAML)        │
-│  (SQL/jailbreak)  (OpenAI-compat) MetricCompiler             │
-│       │               │               │                      │
-│  ChartStrategyRouter ◄─────── secure_query_sql()             │
-│  (ECharts / Recharts)         RLS · RBAC · Audit             │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│              Data Layer                                      │
-│  DuckDB (per-user session) · SQLite (views, sessions)        │
-│  UPLOAD_DIR/state/  ·  sample_data/*.xlsx                    │
-└─────────────────────────────────────────────────────────────┘
-```
+[![Cognitrix functional architecture](docs/diagrams/functional-architecture-en.svg)](docs/diagrams/functional-architecture-en.html)
 
 ---
 
@@ -92,7 +73,7 @@ Key differentiators versus traditional BI tools (Tableau, Power BI, Metabase):
 |---|---|
 | **Backend** | FastAPI, Pydantic Settings, Python 3.11+ |
 | **Analytics Engine** | DuckDB (in-process OLAP), Pandas, sqlglot |
-| **Agent Runtime** | Claude Agent SDK / DeepSeek (OpenAI-compatible) |
+| **Agent Runtime** | Claude Agent SDK / Anthropic Messages protocol |
 | **Frontend** | Next.js 15 App Router, React 18, TypeScript |
 | **State Management** | Zustand, TanStack Query |
 | **Visualization** | ECharts, Recharts, React Flow |
@@ -141,13 +122,13 @@ API restart is required.
 
 ## Current Status
 
-- All 45 tasks across M0–M9 in `SPEC_PLAN.md` have been completed. The project now supports local development, Docker delivery, backend/security/integration/smoke tests, and the main Agentic Query workflow.
-- The frontend has evolved from a single-page integration console into a product-style workspace: a global left sidebar manages Conversations / Workspaces, while the center area supports Chat, Canvas, and Split layouts with `Cmd/Ctrl + 1/2/3/B` shortcuts.
-- The main Chat entry calls the backend `POST /chat/stream`, consumes `planning/tool_use/tool_result/spec/final/error` SSE events, and archives returned specs as chart assets. Legacy `reasoning/tool` compatibility events are still retained.
-- Workspaces use a React Flow canvas with chart nodes, text nodes, draggable layouts, rename, duplicate, delete, and local persistence.
-- The Share page reads backend-saved view state and can re-render charts plus saved conversation context through `/share/[viewId]` without calling the model again.
-- The backend already includes upload handling, the semantic layer, a controlled BI tool surface, Claude Agent SDK powered Agentic Query, authorization, audit logging, view versioning, and agent session resume.
-- The project is still in prototype/internal-testing stage: frontend Conversations / Workspaces / Chart Assets lists and canvas state are mostly managed through mock APIs and localStorage. The backend already handles real data uploads, queries, agent chat streams, and shared view storage.
+- The product workspace provides Chat, Canvas, Split, and Catalog modes with `Cmd/Ctrl + 1/2/3/4`; `Cmd/Ctrl + B` toggles the sidebar, and the split divider is resizable.
+- `POST /chat/stream` emits `planning`, `tool_use`, `tool_result`, `spec`, `final`, and `error`; optional Agent Canvas runs also emit durable, ordered `canvas_op` events. Legacy `reasoning` and `tool` mirrors remain for compatibility.
+- The canvas supports chart, text, sticky-note, divider, section, and grouped nodes; multiple page/print formats, backgrounds, web-design grids, multi-page dashboards, export, print, autosave, and run-level undo are implemented.
+- Conversations, messages, chart assets, workspace metadata, and canvas snapshots now have durable server stores. The browser cache is loaded first for responsiveness and then merged with the server copy for cross-device recovery.
+- Workspace collaboration includes owner/editor/viewer membership, expiring invites, hard-delete cleanup, and published pages with `public`, `registered`, or `allowlist` visibility.
+- The admin control plane manages settings, model connectivity, users, roles, status, usage telemetry, and Agent Skills. The repository's development template disables Agent Canvas, web research, and runtime skill loading by default; each must be enabled explicitly.
+- The repository has backend, security, integration, evaluation, performance, script, smoke, frontend unit, and Playwright coverage. It remains an actively evolving product rather than a finished enterprise release.
 
 ---
 
@@ -171,15 +152,15 @@ API restart is required.
 ### Move from insight to visual workspace
 
 - Charts generated in conversation can be saved as chart assets and then arranged in the workspace.
-- Users can switch between conversation, canvas, and split modes, turning one-off Q&A into reusable analytical dashboards.
-- Current chart support includes bar, line, pie, area, scatter, funnel, table, single-metric cards, heatmap, gauge, sankey, sunburst, boxplot, graph.
+- Users can switch between conversation, canvas, split, and catalog modes, turning one-off Q&A into reusable analytical dashboards.
+- The GenUI catalog covers common and advanced forms including grouped/negative bars, stacked lines, pie, area, scatter and clustering, radar, treemap, single/multiple funnels, tables, KPI cards, heatmap, gauge, sankey, sunburst, boxplot, candlestick, graph, map, parallel coordinates, and word cloud.
 - Analysis context is preserved so later follow-ups, filters, and chart adjustments feel natural.
 
 ### Make views visible with permissions
 
 - Key analyses can be saved as views and opened through a dedicated presentation entry. Authenticated users can read content they own or are allowed to access.
 - The share entry also requires Bearer authentication and redacts saved AI state in the response according to the caller role.
-- Private view reads follow owner/admin access rules. Shared views are exposed to authenticated roles through the `views:share` permission.
+- Published workspace pages can be public, restricted to registered users, or restricted to an explicit allowlist. Legacy saved-view sharing continues to enforce owner/admin and `views:share` permissions.
 - A view can be updated and rolled back by version, which is useful for weekly reports, project reviews, and management dashboards that evolve over time.
 - Uploads, queries, analysis actions, permission changes, and rollbacks are audited for traceability.
 
@@ -199,8 +180,10 @@ API restart is required.
 │   ├── maintenance       # Local data reset and one-off migration helpers
 │   ├── setup             # Bootstrap and local service setup helpers
 │   └── tests             # Test and smoke-test runners
+├── deploy                # Server and Hugging Face deployment guidance/assets
 ├── docs/adr              # Architecture decision records
 ├── infra/docker          # Alternative Docker Compose configurations
+├── openspec              # Change proposals, specs, and implementation tasks
 └── packages/shared       # Shared package placeholder
 ```
 
@@ -227,14 +210,19 @@ make dev-api           # Start only FastAPI
 make dev-web           # Start only Next.js
 make dev-local         # Start in debug mode, writing logs to logs/dev-local
 make lint              # Backend compileall + frontend lint
-make test              # Backend pytest; add frontend tests when RUN_WEB_TESTS=1
+make test              # Backend pytest by default
 make build             # Backend compile check + frontend production build
 make smoke-local       # Local end-to-end smoke flow
 make smoke-docker      # Docker end-to-end smoke flow
-make test-all          # lint + test + build + smoke-local + optional smoke-docker
+make test-all          # Intended full gate; currently see Known Boundaries
 make reset-local-data  # Clear local runtime data
 make docker-up         # Build and start Docker Compose
 make docker-down       # Stop Docker Compose
+make docker-publish    # Build and push API/Web images to Docker Hub
+make docker-start      # Start/rebuild the server stack and print endpoints
+make docker-restart    # Rebuild/restart without deleting persistent data
+make deploy            # One-command production-style server deployment
+make hf-deploy         # Deploy to a configured Hugging Face Space
 ```
 
 ---
@@ -258,7 +246,10 @@ ANTHROPIC_AUTH_TOKEN=
 ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-chat
 API_TIMEOUT_MS=600000
 CLAUDE_AGENT_SDK_ENABLED=true
-AGENTIC_INGESTION_ENABLED=true
+AGENTIC_INGESTION_ENABLED=false
+AGENT_CANVAS_MODE_ENABLED=false
+WEB_SEARCH_ENABLED=false
+AGENT_SKILLS_ENABLED=false
 AUTH_SECRET=replace-with-a-strong-secret
 UPLOAD_DIR=./data/uploads
 CORS_ALLOW_ORIGINS=http://127.0.0.1:3000,http://localhost:3000
@@ -270,11 +261,12 @@ Key frontend variables:
 
 ```env
 API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 NEXTAUTH_URL=http://127.0.0.1:3000
 NEXTAUTH_SECRET=replace-with-a-strong-secret
 ```
 
-The browser client calls the same-origin proxy path `/api/backend/*`. `API_BASE_URL` is read by the Next.js server at runtime and controls where that proxy forwards requests. This keeps public web images portable: do not bake deployment IPs into `NEXT_PUBLIC_*` variables.
+The browser client calls the same-origin proxy path `/api/backend/*`. `API_BASE_URL` is the preferred runtime-only destination; `NEXT_PUBLIC_API_BASE_URL` remains in the local bootstrap template as a fallback. This keeps public web images portable: do not bake deployment IPs into `NEXT_PUBLIC_*` variables.
 
 Optional context overrides:
 
@@ -299,7 +291,8 @@ Agent configuration:
 
 ```env
 CLAUDE_AGENT_SDK_ENABLED=true
-AGENTIC_INGESTION_ENABLED=true
+AGENTIC_INGESTION_ENABLED=false
+AGENT_CANVAS_MODE_ENABLED=false
 AGENT_MAX_TOOL_STEPS=20
 AGENT_MAX_SQL_ROWS=2000
 AGENT_MAX_SQL_SCAN_ROWS=10000
@@ -317,6 +310,8 @@ The agent tool surface is limited to BI-related operations:
 - `get_distinct_values`
 - `save_view`
 
+When enabled, web research adds `web_search`, `web_fetch`, and `save_web_research`. Agent Canvas registers a separate, constrained canvas tool surface and emits ordered `canvas_op` events; it does not grant arbitrary filesystem or network access.
+
 At runtime, `conversation_id` maps to a resumable `agent_session_id`, and session state is persisted to `UPLOAD_DIR/state/agent_sessions.sqlite3`. All tool calls continue to reuse the existing SQL read-only validation, RLS injection, sensitive-field filtering, response redaction, and audit logging.
 
 Current major events from `POST /chat/stream`:
@@ -327,6 +322,7 @@ Current major events from `POST /chat/stream`:
 - `spec`
 - `final`
 - `error`
+- `canvas_op` (Agent Canvas only)
 
 Compatibility events: `reasoning`, `tool`
 
@@ -336,22 +332,30 @@ Design details are available in `docs/adr/0001-agentic-query-runtime.md`.
 
 ## API Overview
 
-All business APIs except `/healthz` and `/auth/login` require `Authorization: Bearer <token>`. The frontend automatically calls `/auth/login` and caches the token.
+Most business APIs require `Authorization: Bearer <token>`. Registration and email login are public entry points; the credential-free legacy `/auth/login` route is development-only and is refused in production. The frontend caches the authenticated session and sends the Bearer token automatically.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/healthz` | Service health check |
-| `POST` | `/auth/login` | Issue access token |
+| `POST` | `/auth/register` | Register an email/password account |
+| `POST` | `/auth/email-login` | Authenticate an account |
+| `GET` | `/auth/me` | Read the current identity |
 | `POST` | `/auth/roles/{user_id}` | Manage user role overrides |
 | `GET` | `/audit/events` | Query audit events |
 | `POST` | `/ingestion/uploads` | Upload Excel and create an Agentic ingestion job |
 | `POST` | `/ingestion/plan` | Generate a write plan through the Write Ingestion Agent |
+| `POST` | `/ingestion/setup/confirm` | Confirm catalog setup when required |
 | `POST` | `/ingestion/approve` | Approve an agent write plan |
 | `POST` | `/ingestion/execute` | Execute an approved write plan |
 | `GET` | `/semantic/metrics` | Fetch semantic metric catalog |
 | `POST` | `/semantic/query` | Run semantic query |
 | `POST` | `/chat/tool-call` | Call BI tools directly |
 | `POST` | `/chat/stream` | Stream AI conversation and chart generation |
+| `GET` | `/chat/capabilities` | Read enabled generation capabilities |
+| `GET/POST` | `/saved-prompts` | List or create reusable prompts |
+| `GET/POST` | `/workspaces` | List or create workspaces |
+| `POST` | `/workspaces/{workspace_id}/invites` | Create a workspace invite |
+| `POST` | `/workspaces/{workspace_id}/publish` | Publish a workspace page |
 | `POST` | `/views` | Save AI view |
 | `GET` | `/views/{view_id}` | Read private view |
 | `GET` | `/share/{view_id}` | Read shared view |
@@ -373,7 +377,7 @@ Covered workflow:
 healthz → auth/login → upload Excel → semantic query → chat stream → save view → share view
 ```
 
-Full quality gate:
+Intended full quality gate (currently blocked by the missing frontend `test` package script; see [Known Boundaries](#known-boundaries)):
 
 ```bash
 make test-all
@@ -392,7 +396,15 @@ npm run --prefix apps/web build
 
 ## Docker Delivery
 
-Build and start:
+One-command server deployment (no pre-existing `.env` or model key required):
+
+```bash
+PUBLIC_URL=http://172.16.5.38:3000 bash scripts/deploy.sh
+```
+
+The script generates secrets and a random superadmin password, enables Agent Canvas, builds and starts the stack, waits for health checks, and prints the URL and credentials. Configure model keys, web search, and agent limits later in `/admin`. Re-running it upgrades/restarts the compute services without deleting the persistent volume. See [deploy/README.md](deploy/README.md) for the operations guide.
+
+Manual build and start:
 
 ```bash
 docker compose up -d --build
@@ -480,6 +492,9 @@ Upload these files via the ingestion UI or `POST /ingestion/uploads` to create a
 
 - `sample_data/hr_workforce_upload_sample.xlsx`
 - `sample_data/hr_workforce_upload_sample_zh.xlsx`
+- `sample_data/sales_pipeline_sample.xlsx`
+- `sample_data/finance_operations_sample.xlsx`
+- `sample_data/project_management_sample.xlsx`
 
 After upload, use the returned `dataset_table` for subsequent semantic query and chat requests.
 
@@ -530,8 +545,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 ## Known Boundaries
 
-- Frontend session, workspace, and chart asset lists are still mock/localStorage based, and are not equivalent to backend-persisted objects. Browser refresh can restore local state, but switching devices or clearing cache will not sync it automatically.
-- `ChatWorkbench` is still kept for testing/integration purposes, while the current main route renders `AppShell`.
-- The default `NEXT_PUBLIC_DEFAULT_DATASET_TABLE=employees_wide` must align with the actual DuckDB session table. After uploading a new file, use the returned `dataset_table`.
-- Agent mode has runtime and test coverage, but production model integration, evaluation set expansion, cost control, and long-session UX still need more iteration.
-- Frontend test files and configuration exist, but `package.json` does not currently provide unified `npm test` / `test:ui` / `test:e2e` script entries. These should be organized before wiring them into `make test`.
+- Agent Canvas, web research, and Agent Skills are feature-gated. The development template disables all three by default; `scripts/deploy.sh` enables Agent Canvas in its generated server environment. Optional provider-backed features still require credentials and suitable operational limits.
+- localStorage is still the synchronous live cache. Server synchronization is best-effort, so temporary network failures can leave a device-local copy until the next successful commit or hydration pass.
+- Model quality, cost controls, long-session UX, and domain evaluation coverage still require production-specific tuning.
+- Frontend Vitest and Playwright suites exist, but `apps/web/package.json` does not yet expose unified `npm test`, `test:ui`, or `test:e2e` scripts.

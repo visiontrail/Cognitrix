@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cognitrix 功能架构",
+    "subtitle": "从结构化数据和业务问题，到可信、共享的业务决策",
+    "output": "functional-architecture-zh-cn.html",
+    "viewBox": [1450, 650]
+  },
+  "components": [
+    { "id": "people", "type": "external", "label": "业务团队", "sublabel": "管理者 • 分析师 • 业务人员", "pos": [40, 220], "size": [170, 70] },
+    { "id": "data", "type": "database", "label": "结构化数据", "sublabel": "Excel • 报表 • 业务导出", "pos": [40, 420], "size": [170, 70] },
+    { "id": "questions", "type": "frontend", "label": "自然语言提问", "sublabel": "追问 • 下钻 • 即席探索", "pos": [270, 220], "size": [180, 70] },
+    { "id": "onboarding", "type": "cloud", "label": "智能数据接入", "sublabel": "检查 • 映射 • 确认", "pos": [270, 420], "size": [180, 70] },
+    { "id": "analysis", "type": "backend", "label": "可信业务分析", "sublabel": "统一指标 • 结果校验", "pos": [510, 220], "size": [180, 70] },
+    { "id": "catalog", "type": "security", "label": "数据目录", "sublabel": "业务含义 • 可用状态", "pos": [510, 420], "size": [180, 70] },
+    { "id": "insights", "type": "messagebus", "label": "图表与洞察", "sublabel": "对比 • 趋势 • 风险", "pos": [750, 220], "size": [180, 70] },
+    { "id": "collaboration", "type": "external", "label": "团队协作", "sublabel": "成员 • 提问模板 • 版本", "pos": [750, 420], "size": [180, 70] },
+    { "id": "workspace", "type": "frontend", "label": "可视化工作台", "sublabel": "组合 • 编排 • 标注", "pos": [990, 220], "size": [180, 70] },
+    { "id": "sharing", "type": "cloud", "label": "分享与发布", "sublabel": "邀请 • 受众 • 访问控制", "pos": [990, 420], "size": [180, 70] },
+    { "id": "decisions", "type": "external", "label": "更优业务决策", "sublabel": "人力 • 项目 • 销售 • 财务", "pos": [1220, 320], "size": [200, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cognitrix 商业智能能力", "wraps": ["questions", "onboarding", "analysis", "catalog", "insights", "collaboration", "workspace", "sharing"] }
+  ],
+  "connections": [
+    { "from": "people", "to": "questions", "variant": "emphasis" },
+    { "from": "data", "to": "onboarding", "variant": "emphasis" },
+    { "from": "questions", "to": "analysis", "variant": "emphasis" },
+    { "from": "onboarding", "to": "catalog", "variant": "emphasis" },
+    { "from": "catalog", "to": "analysis", "fromSide": "top", "toSide": "bottom", "variant": "security" },
+    { "from": "analysis", "to": "insights", "variant": "emphasis" },
+    { "from": "insights", "to": "workspace", "variant": "emphasis" },
+    { "from": "insights", "to": "collaboration", "fromSide": "bottom", "toSide": "top" },
+    { "from": "workspace", "to": "sharing", "fromSide": "bottom", "toSide": "top" },
+    { "from": "collaboration", "to": "sharing" },
+    { "from": "sharing", "to": "decisions", "variant": "emphasis" }
+  ],
+  "cards": []
+}

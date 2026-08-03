@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cognitrix कार्यात्मक संरचना",
+    "subtitle": "संरचित डेटा और व्यावसायिक प्रश्नों से विश्वसनीय, साझा निर्णयों तक",
+    "output": "functional-architecture-hi.html",
+    "viewBox": [1450, 650]
+  },
+  "components": [
+    { "id": "people", "type": "external", "label": "व्यावसायिक दल", "sublabel": "प्रबंधक • विश्लेषक • संचालन कर्मी", "pos": [40, 220], "size": [170, 70] },
+    { "id": "data", "type": "database", "label": "संरचित डेटा", "sublabel": "एक्सेल • रिपोर्ट • निर्यात", "pos": [40, 420], "size": [170, 70] },
+    { "id": "questions", "type": "frontend", "label": "सामान्य भाषा में प्रश्न", "sublabel": "आगे के प्रश्न • विस्तृत विश्लेषण", "pos": [270, 220], "size": [180, 70] },
+    { "id": "onboarding", "type": "cloud", "label": "सुव्यवस्थित डेटा प्रवेश", "sublabel": "जाँच • मिलान • स्वीकृति", "pos": [270, 420], "size": [180, 70] },
+    { "id": "analysis", "type": "backend", "label": "विश्वसनीय विश्लेषण", "sublabel": "सुसंगत मापदंड • सत्यापन", "pos": [510, 220], "size": [180, 70] },
+    { "id": "catalog", "type": "security", "label": "डेटा सूची", "sublabel": "व्यावसायिक अर्थ • तैयारी", "pos": [510, 420], "size": [180, 70] },
+    { "id": "insights", "type": "messagebus", "label": "चार्ट और निष्कर्ष", "sublabel": "तुलना • रुझान • जोखिम", "pos": [750, 220], "size": [180, 70] },
+    { "id": "collaboration", "type": "external", "label": "दल का सहयोग", "sublabel": "सदस्य • प्रश्न नमूने • संस्करण", "pos": [750, 420], "size": [180, 70] },
+    { "id": "workspace", "type": "frontend", "label": "दृश्य कार्यक्षेत्र", "sublabel": "बनाएँ • सजाएँ • टिप्पणी करें", "pos": [990, 220], "size": [180, 70] },
+    { "id": "sharing", "type": "cloud", "label": "साझा और प्रकाशित करें", "sublabel": "आमंत्रण • दर्शक • पहुँच", "pos": [990, 420], "size": [180, 70] },
+    { "id": "decisions", "type": "external", "label": "बेहतर निर्णय", "sublabel": "मानव संसाधन • परियोजना • बिक्री • वित्त", "pos": [1220, 320], "size": [200, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cognitrix की व्यावसायिक विश्लेषण क्षमताएँ", "wraps": ["questions", "onboarding", "analysis", "catalog", "insights", "collaboration", "workspace", "sharing"] }
+  ],
+  "connections": [
+    { "from": "people", "to": "questions", "variant": "emphasis" },
+    { "from": "data", "to": "onboarding", "variant": "emphasis" },
+    { "from": "questions", "to": "analysis", "variant": "emphasis" },
+    { "from": "onboarding", "to": "catalog", "variant": "emphasis" },
+    { "from": "catalog", "to": "analysis", "fromSide": "top", "toSide": "bottom", "variant": "security" },
+    { "from": "analysis", "to": "insights", "variant": "emphasis" },
+    { "from": "insights", "to": "workspace", "variant": "emphasis" },
+    { "from": "insights", "to": "collaboration", "fromSide": "bottom", "toSide": "top" },
+    { "from": "workspace", "to": "sharing", "fromSide": "bottom", "toSide": "top" },
+    { "from": "collaboration", "to": "sharing" },
+    { "from": "sharing", "to": "decisions", "variant": "emphasis" }
+  ],
+  "cards": []
+}

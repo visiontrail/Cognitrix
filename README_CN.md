@@ -1,10 +1,10 @@
 # Cognitrix — AI-Native 智能商业智能平台
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [हिन्दी](README_HI.md) | [Español](README_ES.md) | [日本語](README_JA.md)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![DuckDB](https://img.shields.io/badge/DuckDB-powered-yellow.svg)](https://duckdb.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -38,10 +38,15 @@
 - **Agentic Query 引擎** — 基于 ReAct 循环（兼容 Claude/DeepSeek），Agent 自动探索表结构、选择语义指标、生成只读 SQL，全过程透明流式推送到 UI。
 - **语义指标层（Semantic Metric Layer）** — YAML 驱动的指标定义，防止 AI 在计算业务 KPI 时产生幻觉（人员总数、离职率、项目 Velocity、预算消耗比等）。
 - **AI 自动生成图表** — JSON Spec 流式输出，经 ECharts（热力图、Sankey、仪表盘、关系图）和 Recharts（柱状图、折线图、饼图、散点图、漏斗图、KPI 卡片）渲染。
-- **可视化工作台** — 基于 React Flow 的拖拽画布，把图表组合为可分享的分析看板。
-- **版本化视图与分享** — 保存、版本化、按角色脱敏后共享分析视图。
+- **可视化工作台与 Agent Canvas** — 在多格式画布中手工编排图表，或启用长任务 Agent，在用户确认多页看板大纲后持续生成整个仪表盘。
+- **多图生成与 Saved Prompts** — 一次问题可生成一组经确认的图表；带变量和能力预设的 Prompt 可保存复用。
+- **可靠持久化与协作** — 工作区、会话、消息、图表资产和画布快照均已服务端持久化；localStorage 作为快速离线缓存和旧数据迁移来源保留。
+- **成员、邀请与发布** — 支持 owner/editor/viewer 角色、带期限的邀请链接，以及公开、仅注册用户、指定用户三种发布可见性，并提供只读公共助手。
+- **版本化视图与分享** — 保存、版本化、回滚并按角色脱敏共享分析视图。
 - **企业级安全** — JWT 鉴权、RBAC 权限范围、行级安全注入、SQL 只读校验、审计日志、越狱防护。
-- **LLM 供应商无关** — 一个环境变量切换 DeepSeek、Claude（Anthropic）、Kimi 或任意 OpenAI 兼容接口。
+- **可选联网研究** — 受 Feature Flag 控制的博查或 Tavily 搜索/抓取工具具有明确的单轮预算，不绕过 BI 工具守卫。
+- **运维管理后台** — superadmin 可管理运行配置、模型凭据、用户、角色、用量指标与 Agent Skills；Secret 只写不读。
+- **Anthropic 兼容 Agent 运行时** — 默认使用 DeepSeek Anthropic 网关，也可通过环境配置切换到原生 Anthropic/Claude 或其他兼容端点。
 - **自托管开源** — 本地或 Docker 部署，无云厂商绑定，无 SaaS 费用。
 
 ---
@@ -56,33 +61,9 @@
 
 ---
 
-## 架构概览
+## 功能架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Next.js 前端（端口 3000）                        │
-│  ChatPanel · WorkspaceCanvas · CatalogView · ShareView       │
-│  Zustand · TanStack Query · React Flow · ECharts · Recharts  │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  SSE 流（planning/tool_use/spec/final）
-┌───────────────────────────▼─────────────────────────────────┐
-│              FastAPI 后端（端口 8000）                        │
-│                                                              │
-│  AgentRuntime ──► ReAct 循环 ──► ToolCallingService          │
-│       │               │               │                      │
-│  AgentGuardrails  LLM Client     SemanticLayer (YAML)        │
-│  (SQL/越狱防护)   (OpenAI 兼容)   MetricCompiler             │
-│       │               │               │                      │
-│  ChartStrategyRouter ◄─────── secure_query_sql()             │
-│  (ECharts / Recharts)         RLS · RBAC · 审计              │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│              数据层                                          │
-│  DuckDB（用户会话级）· SQLite（视图、会话状态）               │
-│  UPLOAD_DIR/state/  ·  sample_data/*.xlsx                    │
-└─────────────────────────────────────────────────────────────┘
-```
+[![Cognitrix 功能架构](docs/diagrams/functional-architecture-zh-cn.svg)](docs/diagrams/functional-architecture-zh-cn.html)
 
 ---
 
@@ -92,7 +73,7 @@
 |---|---|
 | **后端** | FastAPI, Pydantic Settings, Python 3.11+ |
 | **分析引擎** | DuckDB（进程内 OLAP），Pandas，sqlglot |
-| **Agent 运行时** | Claude Agent SDK / DeepSeek（OpenAI 兼容）|
+| **Agent 运行时** | Claude Agent SDK / Anthropic Messages 协议 |
 | **前端** | Next.js 15 App Router, React 18, TypeScript |
 | **状态管理** | Zustand, TanStack Query |
 | **可视化** | ECharts, Recharts, React Flow |
@@ -139,13 +120,13 @@ make dev
 
 ## 当前进展
 
-- `SPEC_PLAN.md` 中 M0-M9 共 45 个任务已经全部完成，当前工程具备本地运行、Docker 交付、后端/安全/集成/smoke 测试与 Agentic Query 主链路。
-- 前端主界面已经从单页联调台推进到产品化工作台：左侧全局侧栏管理 Conversations / Workspaces，中间支持 Chat、Canvas、Split 三种布局，并提供 `⌘/Ctrl + 1/2/3/B` 快捷切换。
-- Chat 主入口调用后端 `POST /chat/stream`，消费 `planning/tool_use/tool_result/spec/final/error` SSE 事件，并把返回 spec 归档为 ECharts 图表资产；历史 `reasoning/tool` 兼容事件仍保留。
-- Workspace 使用 React Flow 画布，支持图表节点、文本节点、拖拽布局、重命名、复制、删除与本地保存。
-- Share 页面已接入后端保存的 view state，可通过 `/share/[viewId]` 重新渲染图表与保存时的对话上下文，无需再次调用模型。
-- 后端已经具备上传、语义层、受控 BI 工具面、Claude Agent SDK Agentic Query、权限控制、审计、视图版本化、Agent 会话恢复等核心能力。
-- 仍处于原型/内测阶段：前端 Conversations / Workspaces / Chart Assets 的列表与画布状态当前主要通过 mock API 和 localStorage 管理；后端已承担真实数据上传、查询、Agent 对话流和分享视图存储。
+- 产品工作台已提供 Chat、Canvas、Split、Catalog 四种模式，快捷键为 `⌘/Ctrl + 1/2/3/4`；`⌘/Ctrl + B` 控制侧栏，分屏宽度可拖动或键盘调整。
+- `POST /chat/stream` 会产生 `planning`、`tool_use`、`tool_result`、`spec`、`final`、`error`；可选 Agent Canvas 还会产生可恢复、有序的 `canvas_op`。`reasoning`、`tool` 兼容镜像仍保留。
+- 画布支持图表、文本、便签、分隔线、Section 和分组节点；已实现多种页面/打印格式、背景、Web Design 网格、多页看板、导出、打印、自动保存和整次运行撤销。
+- Conversations、Messages、Chart Assets、Workspace 元数据与 Canvas Snapshot 均已有服务端存储。浏览器会先加载本地缓存保证响应速度，再与服务端副本合并，实现跨设备恢复。
+- 工作区协作已包含 owner/editor/viewer 成员角色、带期限邀请、硬删除清理，以及 `public`、`registered`、`allowlist` 三种发布可见性。
+- 管理后台可控制配置、模型连通性、用户、角色、账号状态、用量指标和 Agent Skills。仓库的开发环境模板默认关闭 Agent Canvas、联网研究和运行时 Skill 加载，必须显式启用。
+- 仓库包含后端、安全、集成、评测、性能、脚本、smoke、前端单元测试与 Playwright 覆盖。项目仍在持续演进，不应视为已经完成的企业正式版。
 
 ---
 
@@ -169,15 +150,15 @@ make dev
 ### 从洞察到可视化工作台
 
 - 对话中生成的图表可以沉淀为图表资产，继续放入工作台里组合、拖拽和整理。
-- 用户可以在对话、画布和分屏模式之间切换，把一次问答延展成可复用的分析看板。
-- 当前支持柱状图、折线图、饼图、面积图、散点图、漏斗图、表格、单指标卡、热力图、仪表盘、Sankey、旭日图、箱线图、关系图等。
+- 用户可以在对话、画布、分屏和目录模式之间切换，把一次问答延展成可复用的分析看板。
+- GenUI Catalog 已覆盖分组/负值柱状图、堆叠折线图、饼图、面积图、散点与聚类、雷达图、Treemap、单/多漏斗、表格、KPI 卡、热力图、仪表盘、Sankey、旭日图、箱线图、K 线图、关系图、地图、平行坐标和词云等常用及高级形式。
 - 分析过程可以保留上下文，让后续追问、补充筛选和图表调整更自然。
 
 ### 让视图按权限被看见
 
 - 关键分析可以保存为视图，并进入独立的展示入口，登录用户可读取自己或有权限访问的内容。
 - 分享入口同样要求 Bearer 鉴权，并按调用者角色对保存的 AI state 做响应层脱敏。
-- 私有视图读取遵循 owner/admin 访问规则；分享视图通过 `views:share` 权限开放给已登录角色。
+- 发布后的工作区页面可以完全公开、仅限注册用户或仅限指定用户。旧版 Saved View 分享仍执行 owner/admin 与 `views:share` 权限规则。
 - 同一份视图支持版本更新和回滚，适合持续迭代周报、项目复盘和管理驾驶舱。
 - 上传、查询、分析操作、权限调整和回滚都会留下记录，方便团队追踪数据使用与分析过程。
 
@@ -197,8 +178,10 @@ make dev
 │   ├── maintenance       # 本地数据重置与一次性迁移脚本
 │   ├── setup             # bootstrap 与本地服务初始化脚本
 │   └── tests             # 测试与 smoke runner
+├── deploy                # 服务器与 Hugging Face 部署文档/资产
 ├── docs/adr              # 架构决策记录
 ├── infra/docker          # 备用 Docker Compose 配置
+├── openspec              # Change Proposal、Spec 与实现任务
 └── packages/shared       # 共享包占位
 ```
 
@@ -225,14 +208,19 @@ make dev-api           # 仅启动 FastAPI
 make dev-web           # 仅启动 Next.js
 make dev-local         # 调试模式启动，日志写入 logs/dev-local
 make lint              # 后端 compileall + 前端 lint
-make test              # 后端 pytest，设置 RUN_WEB_TESTS=1 后追加前端测试
+make test              # 默认运行后端 pytest
 make build             # 后端编译检查 + 前端生产构建
 make smoke-local       # 本地端到端 smoke flow
 make smoke-docker      # Docker 端到端 smoke flow
-make test-all          # lint + test + build + smoke-local + 可选 smoke-docker
+make test-all          # 预期完整门禁；当前限制见「已知边界」
 make reset-local-data  # 清理本地运行数据
 make docker-up         # 构建并启动 Docker Compose
 make docker-down       # 停止 Docker Compose
+make docker-publish    # 构建 API/Web 镜像并推送到 Docker Hub
+make docker-start      # 启动/重建服务器栈并打印入口
+make docker-restart    # 重建/重启但不删除持久化数据
+make deploy            # 一键进行生产式服务器部署
+make hf-deploy         # 部署到指定 Hugging Face Space
 ```
 
 ---
@@ -256,21 +244,27 @@ ANTHROPIC_AUTH_TOKEN=
 ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-chat
 API_TIMEOUT_MS=600000
 CLAUDE_AGENT_SDK_ENABLED=true
-AGENTIC_INGESTION_ENABLED=true
+AGENTIC_INGESTION_ENABLED=false
+AGENT_CANVAS_MODE_ENABLED=false
+WEB_SEARCH_ENABLED=false
+AGENT_SKILLS_ENABLED=false
 AUTH_SECRET=replace-with-a-strong-secret
 UPLOAD_DIR=./data/uploads
 CORS_ALLOW_ORIGINS=http://127.0.0.1:3000,http://localhost:3000
 ```
 
+Excel 上传始终使用 Agentic Ingestion 生命周期。`AGENTIC_INGESTION_ENABLED` 仅为兼容旧环境文件保留，不再关闭 `/ingestion/*` 路由。
+
 前端关键变量：
 
 ```env
 API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 NEXTAUTH_URL=http://127.0.0.1:3000
 NEXTAUTH_SECRET=replace-with-a-strong-secret
 ```
 
-浏览器端会请求同源代理路径 `/api/backend/*`。`API_BASE_URL` 由 Next.js 服务端在运行时读取，用来决定代理转发到哪个 API 地址。这样公共 web 镜像不会绑定部署机器 IP，也不需要把地址写进 `NEXT_PUBLIC_*` 构建变量。
+浏览器端会请求同源代理路径 `/api/backend/*`。`API_BASE_URL` 是首选的纯运行时转发目标；本地 Bootstrap 模板中的 `NEXT_PUBLIC_API_BASE_URL` 作为兼容回退保留。这样公共 Web 镜像不会绑定部署机器 IP，也不需要把地址写进 `NEXT_PUBLIC_*` 构建变量。
 
 前端对话默认上下文可通过这些可选变量调整：
 
@@ -295,7 +289,8 @@ Agent 相关配置：
 
 ```env
 CLAUDE_AGENT_SDK_ENABLED=true
-AGENTIC_INGESTION_ENABLED=true
+AGENTIC_INGESTION_ENABLED=false
+AGENT_CANVAS_MODE_ENABLED=false
 AGENT_MAX_TOOL_STEPS=20
 AGENT_MAX_SQL_ROWS=2000
 AGENT_MAX_SQL_SCAN_ROWS=10000
@@ -313,6 +308,8 @@ Agent 工具面限制在 BI 相关操作：
 - `get_distinct_values`
 - `save_view`
 
+启用联网研究后会增加 `web_search`、`web_fetch`、`save_web_research`。Agent Canvas 使用另一组受约束的画布工具并产生有序 `canvas_op`，不会因此获得任意文件系统或网络访问权限。
+
 运行时会将 `conversation_id` 映射到可恢复的 `agent_session_id`，并把会话状态持久化到 `UPLOAD_DIR/state/agent_sessions.sqlite3`。所有工具调用仍复用现有 SQL 只读校验、RLS 注入、敏感字段过滤、响应脱敏和审计日志。
 
 `POST /chat/stream` 当前主要事件：
@@ -323,6 +320,7 @@ Agent 工具面限制在 BI 相关操作：
 - `spec`
 - `final`
 - `error`
+- `canvas_op`（仅 Agent Canvas）
 
 兼容事件：`reasoning`、`tool`
 
@@ -332,22 +330,30 @@ Agent 工具面限制在 BI 相关操作：
 
 ## API 概览
 
-所有业务 API 除 `/healthz` 和 `/auth/login` 外都需要 `Authorization: Bearer <token>`。前端会自动调用 `/auth/login` 获取并缓存 token。
+绝大多数业务 API 都需要 `Authorization: Bearer <token>`。注册和邮箱登录是公开入口；无凭据的旧版 `/auth/login` 仅供开发环境使用，生产环境会直接拒绝。前端会缓存登录会话并自动发送 Bearer token。
 
 | Method | Path | 说明 |
 |---|---|---|
 | `GET` | `/healthz` | 服务健康检查 |
-| `POST` | `/auth/login` | 签发访问 token |
+| `POST` | `/auth/register` | 注册邮箱密码账号 |
+| `POST` | `/auth/email-login` | 登录账号 |
+| `GET` | `/auth/me` | 获取当前身份 |
 | `POST` | `/auth/roles/{user_id}` | 管理用户角色覆盖 |
 | `GET` | `/audit/events` | 查询审计事件 |
 | `POST` | `/ingestion/uploads` | 上传 Excel 并创建 Agentic ingestion job |
 | `POST` | `/ingestion/plan` | 由 Write Ingestion Agent 生成写入方案 |
+| `POST` | `/ingestion/setup/confirm` | 在需要时确认 Catalog 设置 |
 | `POST` | `/ingestion/approve` | 审批 Agent 写入方案 |
 | `POST` | `/ingestion/execute` | 执行已审批写入方案 |
 | `GET` | `/semantic/metrics` | 获取语义指标目录 |
 | `POST` | `/semantic/query` | 执行语义查询 |
 | `POST` | `/chat/tool-call` | 直接调用 BI 工具 |
 | `POST` | `/chat/stream` | 流式 AI 对话与图表生成 |
+| `GET` | `/chat/capabilities` | 获取已启用的生成能力 |
+| `GET/POST` | `/saved-prompts` | 列出或创建可复用 Prompt |
+| `GET/POST` | `/workspaces` | 列出或创建工作区 |
+| `POST` | `/workspaces/{workspace_id}/invites` | 创建工作区邀请 |
+| `POST` | `/workspaces/{workspace_id}/publish` | 发布工作区页面 |
 | `POST` | `/views` | 保存 AI view |
 | `GET` | `/views/{view_id}` | 读取私有 view |
 | `GET` | `/share/{view_id}` | 读取分享 view |
@@ -369,7 +375,7 @@ make smoke-local
 healthz → auth/login → upload Excel → semantic query → chat stream → save view → share view
 ```
 
-完整测试门禁：
+预期完整测试门禁（当前会被缺失的前端 `test` Package Script 阻断，见[已知边界](#已知边界)）：
 
 ```bash
 make test-all
@@ -386,7 +392,7 @@ PUBLIC_URL=http://172.16.5.38:3000 bash scripts/deploy.sh
 ```
 
 `scripts/deploy.sh` 会生成随机 `AUTH_SECRET` / `NEXTAUTH_SECRET` 与随机超管口令，
-构建并启动全栈，等待健康检查，最后打印访问地址与登录凭据。模型 Key、联网检索、
+启用 Agent Canvas，构建并启动全栈，等待健康检查，最后打印访问地址与登录凭据。模型 Key、联网检索、
 Agent 参数等登录后在管理后台 `/admin` 配置，保存即生效。重复执行等于升级重启，
 不会覆盖已有密钥或删除数据卷。运维完整说明见 [deploy/README.md](deploy/README.md)。
 
@@ -434,7 +440,7 @@ make smoke-docker
 - Web：`127.0.0.1:3000`
 - API：`127.0.0.1:8000`
 
-上传与状态数据保存在 Docker named volume `cognitrix_upload_data`。
+Compose 栈包含专用的 `cognitrix-storage` 服务，负责初始化并持有 named volume `cognitrix_upload_data`。API 是唯一的应用数据写入方；上传文件、DuckDB、SQLite 状态、审计日志、Agent Session、Saved View 与 Catalog Metadata 都保存在该卷中。正常启动、停止、重启和镜像重建不会传入 `--volumes`，因此不会删除这些数据。
 
 ---
 
@@ -444,8 +450,29 @@ make smoke-docker
 
 - `sample_data/hr_workforce_upload_sample.xlsx`
 - `sample_data/hr_workforce_upload_sample_zh.xlsx`
+- `sample_data/sales_pipeline_sample.xlsx`
+- `sample_data/finance_operations_sample.xlsx`
+- `sample_data/project_management_sample.xlsx`
 
 上传后，API 会返回 `batch_id`、`dataset_table`、`quality_report`、`diagnostics` 等信息。后续语义查询和对话请求需要使用返回的 `dataset_table`。
+
+---
+
+## 数据重置
+
+预览将要清理的本地运行数据：
+
+```bash
+.venv/bin/python scripts/maintenance/reset_local_data.py --dry-run
+```
+
+执行本地重置：
+
+```bash
+make reset-local-data
+```
+
+只有显式使用 `--include-docker-volumes` 并确认后才会删除 Docker Compose 数据卷；普通 Restart/Start/Stop/Rebuild 流程均保留数据。
 
 ---
 
@@ -457,8 +484,7 @@ make smoke-docker
 
 ## 已知边界
 
-- 前端主界面的 session、workspace、chart asset 列表仍是 mock/localStorage 形态，不等同于后端持久化对象；刷新浏览器可恢复本地状态，但换设备/清缓存后不会自动同步。
-- `ChatWorkbench` 组件仍保留为测试/联调用途，但当前主路由渲染的是 `AppShell`。
-- 默认 `NEXT_PUBLIC_DEFAULT_DATASET_TABLE=employees_wide` 需要和实际 DuckDB 会话表对齐；上传新文件后应使用返回的 `dataset_table`。
-- Agent 模式已具备运行时和测试覆盖，但生产级模型接入、评测集扩展、成本控制和长会话体验还需要继续打磨。
-- 前端测试文件和配置已存在，但当前 `package.json` 未提供统一 `npm test` / `test:ui` / `test:e2e` 脚本入口，需要后续整理后再接入 `make test`。
+- Agent Canvas、联网研究和 Agent Skills 均受 Feature Flag 控制。开发模板默认全部关闭；`scripts/deploy.sh` 生成的服务器环境会启用 Agent Canvas。依赖外部供应商的可选能力仍需配置凭据与合适的运行限制。
+- localStorage 仍是同步实时缓存，服务端同步采用 best-effort；网络临时失败时，某台设备可能保留仅本地副本，直到下一次成功提交或 Hydration。
+- 模型质量、成本控制、长会话体验与领域评测覆盖仍需针对生产环境调优。
+- Vitest 与 Playwright 测试已经存在，但 `apps/web/package.json` 暂未提供统一的 `npm test`、`test:ui`、`test:e2e` 脚本。

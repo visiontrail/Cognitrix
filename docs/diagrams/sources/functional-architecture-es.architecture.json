@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Arquitectura funcional de Cognitrix",
+    "subtitle": "De los datos estructurados y las preguntas de negocio a decisiones fiables y compartidas",
+    "output": "functional-architecture-es.html",
+    "viewBox": [1450, 650]
+  },
+  "components": [
+    { "id": "people", "type": "external", "label": "Equipos de negocio", "sublabel": "dirección • analistas • operaciones", "pos": [40, 220], "size": [170, 70] },
+    { "id": "data", "type": "database", "label": "Datos estructurados", "sublabel": "Excel • informes • exportaciones", "pos": [40, 420], "size": [170, 70] },
+    { "id": "questions", "type": "frontend", "label": "Pregunta en lenguaje natural", "sublabel": "repreguntas • análisis detallado", "pos": [270, 220], "size": [180, 70] },
+    { "id": "onboarding", "type": "cloud", "label": "Incorporación guiada", "sublabel": "revisar • asociar • aprobar", "pos": [270, 420], "size": [180, 70] },
+    { "id": "analysis", "type": "backend", "label": "Análisis fiable", "sublabel": "métricas comunes • validación", "pos": [510, 220], "size": [180, 70] },
+    { "id": "catalog", "type": "security", "label": "Catálogo de datos", "sublabel": "significado • disponibilidad", "pos": [510, 420], "size": [180, 70] },
+    { "id": "insights", "type": "messagebus", "label": "Gráficos y hallazgos", "sublabel": "comparaciones • tendencias • riesgos", "pos": [750, 220], "size": [180, 70] },
+    { "id": "collaboration", "type": "external", "label": "Colaboración en equipo", "sublabel": "miembros • preguntas • versiones", "pos": [750, 420], "size": [180, 70] },
+    { "id": "workspace", "type": "frontend", "label": "Espacio visual", "sublabel": "componer • organizar • anotar", "pos": [990, 220], "size": [180, 70] },
+    { "id": "sharing", "type": "cloud", "label": "Compartir y publicar", "sublabel": "invitaciones • audiencias • acceso", "pos": [990, 420], "size": [180, 70] },
+    { "id": "decisions", "type": "external", "label": "Mejores decisiones", "sublabel": "personas • proyectos • ventas • finanzas", "pos": [1220, 320], "size": [200, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Capacidades de inteligencia de negocio de Cognitrix", "wraps": ["questions", "onboarding", "analysis", "catalog", "insights", "collaboration", "workspace", "sharing"] }
+  ],
+  "connections": [
+    { "from": "people", "to": "questions", "variant": "emphasis" },
+    { "from": "data", "to": "onboarding", "variant": "emphasis" },
+    { "from": "questions", "to": "analysis", "variant": "emphasis" },
+    { "from": "onboarding", "to": "catalog", "variant": "emphasis" },
+    { "from": "catalog", "to": "analysis", "fromSide": "top", "toSide": "bottom", "variant": "security" },
+    { "from": "analysis", "to": "insights", "variant": "emphasis" },
+    { "from": "insights", "to": "workspace", "variant": "emphasis" },
+    { "from": "insights", "to": "collaboration", "fromSide": "bottom", "toSide": "top" },
+    { "from": "workspace", "to": "sharing", "fromSide": "bottom", "toSide": "top" },
+    { "from": "collaboration", "to": "sharing" },
+    { "from": "sharing", "to": "decisions", "variant": "emphasis" }
+  ],
+  "cards": []
+}

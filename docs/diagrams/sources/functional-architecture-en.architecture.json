@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cognitrix Functional Architecture",
+    "subtitle": "From structured data and business questions to governed, shared decisions",
+    "output": "functional-architecture-en.html",
+    "viewBox": [1450, 650]
+  },
+  "components": [
+    { "id": "people", "type": "external", "label": "Business teams", "sublabel": "leaders • analysts • operators", "pos": [40, 220], "size": [170, 70] },
+    { "id": "data", "type": "database", "label": "Structured data", "sublabel": "Excel • reports • exports", "pos": [40, 420], "size": [170, 70] },
+    { "id": "questions", "type": "frontend", "label": "Ask in plain language", "sublabel": "follow-ups • drill-downs", "pos": [270, 220], "size": [180, 70] },
+    { "id": "onboarding", "type": "cloud", "label": "Smart onboarding", "sublabel": "inspect • map • approve", "pos": [270, 420], "size": [180, 70] },
+    { "id": "analysis", "type": "backend", "label": "Trusted analysis", "sublabel": "governed metrics • checks", "pos": [510, 220], "size": [180, 70] },
+    { "id": "catalog", "type": "security", "label": "Data catalog", "sublabel": "business meaning • readiness", "pos": [510, 420], "size": [180, 70] },
+    { "id": "insights", "type": "messagebus", "label": "Charts & takeaways", "sublabel": "comparisons • trends • risks", "pos": [750, 220], "size": [180, 70] },
+    { "id": "collaboration", "type": "external", "label": "Team collaboration", "sublabel": "members • prompts • versions", "pos": [750, 420], "size": [180, 70] },
+    { "id": "workspace", "type": "frontend", "label": "Visual workspace", "sublabel": "compose • arrange • annotate", "pos": [990, 220], "size": [180, 70] },
+    { "id": "sharing", "type": "cloud", "label": "Share & publish", "sublabel": "invites • audiences • access", "pos": [990, 420], "size": [180, 70] },
+    { "id": "decisions", "type": "external", "label": "Better decisions", "sublabel": "HR • projects • sales • finance", "pos": [1220, 320], "size": [200, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cognitrix business intelligence capabilities", "wraps": ["questions", "onboarding", "analysis", "catalog", "insights", "collaboration", "workspace", "sharing"] }
+  ],
+  "connections": [
+    { "from": "people", "to": "questions", "variant": "emphasis" },
+    { "from": "data", "to": "onboarding", "variant": "emphasis" },
+    { "from": "questions", "to": "analysis", "variant": "emphasis" },
+    { "from": "onboarding", "to": "catalog", "variant": "emphasis" },
+    { "from": "catalog", "to": "analysis", "fromSide": "top", "toSide": "bottom", "variant": "security" },
+    { "from": "analysis", "to": "insights", "variant": "emphasis" },
+    { "from": "insights", "to": "workspace", "variant": "emphasis" },
+    { "from": "insights", "to": "collaboration", "fromSide": "bottom", "toSide": "top" },
+    { "from": "workspace", "to": "sharing", "fromSide": "bottom", "toSide": "top" },
+    { "from": "collaboration", "to": "sharing" },
+    { "from": "sharing", "to": "decisions", "variant": "emphasis" }
+  ],
+  "cards": []
+}

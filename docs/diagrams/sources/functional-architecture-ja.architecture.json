@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cognitrix 機能アーキテクチャ",
+    "subtitle": "構造化データと業務上の質問から、信頼できる共有可能な意思決定へ",
+    "output": "functional-architecture-ja.html",
+    "viewBox": [1450, 650]
+  },
+  "components": [
+    { "id": "people", "type": "external", "label": "業務チーム", "sublabel": "経営者 • 分析担当 • 業務担当", "pos": [40, 220], "size": [170, 70] },
+    { "id": "data", "type": "database", "label": "構造化データ", "sublabel": "Excel • 帳票 • 各種出力", "pos": [40, 420], "size": [170, 70] },
+    { "id": "questions", "type": "frontend", "label": "自然言語で質問", "sublabel": "追加質問 • 詳細分析", "pos": [270, 220], "size": [180, 70] },
+    { "id": "onboarding", "type": "cloud", "label": "スマート取り込み", "sublabel": "確認 • 項目対応 • 承認", "pos": [270, 420], "size": [180, 70] },
+    { "id": "analysis", "type": "backend", "label": "信頼できる分析", "sublabel": "統一指標 • 結果検証", "pos": [510, 220], "size": [180, 70] },
+    { "id": "catalog", "type": "security", "label": "データカタログ", "sublabel": "業務上の意味 • 利用準備", "pos": [510, 420], "size": [180, 70] },
+    { "id": "insights", "type": "messagebus", "label": "チャートと要点", "sublabel": "比較 • 傾向 • リスク", "pos": [750, 220], "size": [180, 70] },
+    { "id": "collaboration", "type": "external", "label": "チーム共同作業", "sublabel": "メンバー • 質問雛形 • 履歴", "pos": [750, 420], "size": [180, 70] },
+    { "id": "workspace", "type": "frontend", "label": "ビジュアル作業空間", "sublabel": "編集 • 配置 • 注釈", "pos": [990, 220], "size": [180, 70] },
+    { "id": "sharing", "type": "cloud", "label": "共有と公開", "sublabel": "招待 • 対象者 • 閲覧制御", "pos": [990, 420], "size": [180, 70] },
+    { "id": "decisions", "type": "external", "label": "より良い意思決定", "sublabel": "人事 • 案件 • 営業 • 財務", "pos": [1220, 320], "size": [200, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cognitrix のビジネスインテリジェンス機能", "wraps": ["questions", "onboarding", "analysis", "catalog", "insights", "collaboration", "workspace", "sharing"] }
+  ],
+  "connections": [
+    { "from": "people", "to": "questions", "variant": "emphasis" },
+    { "from": "data", "to": "onboarding", "variant": "emphasis" },
+    { "from": "questions", "to": "analysis", "variant": "emphasis" },
+    { "from": "onboarding", "to": "catalog", "variant": "emphasis" },
+    { "from": "catalog", "to": "analysis", "fromSide": "top", "toSide": "bottom", "variant": "security" },
+    { "from": "analysis", "to": "insights", "variant": "emphasis" },
+    { "from": "insights", "to": "workspace", "variant": "emphasis" },
+    { "from": "insights", "to": "collaboration", "fromSide": "bottom", "toSide": "top" },
+    { "from": "workspace", "to": "sharing", "fromSide": "bottom", "toSide": "top" },
+    { "from": "collaboration", "to": "sharing" },
+    { "from": "sharing", "to": "decisions", "variant": "emphasis" }
+  ],
+  "cards": []
+}

@@ -22,6 +22,7 @@ from .agent_canvas import (
     block_id_for,
     child_page_id_for,
     get_agent_canvas_run_store,
+    normalize_dashboard_chart_type,
     normalize_section_level,
     validate_canvas_tool_arguments,
 )
@@ -1555,7 +1556,13 @@ class ToolCallingService:
         run_id = str(run_context["run_id"])
         workspace_id = str(context.workspace_id or run_context.get("workspace_id") or "").strip()
         title = str(model_arguments["title"]).strip()[:120]
-        chart_type = str(model_arguments["chart_type"]).strip() or "bar"
+        chart_type = normalize_dashboard_chart_type(model_arguments["chart_type"])
+        if chart_type is None:  # Validation above owns the user-facing error.
+            raise ToolExecutionError(
+                code="AGENT_CANVAS_CHART_TYPE_INVALID",
+                message="Unsupported dashboard chart type.",
+                retryable=False,
+            )
         size_preset = str(model_arguments["size_preset"]).strip()
         section_id = str(model_arguments.get("section_id") or "").strip()
         description = str(model_arguments.get("description") or "").strip()

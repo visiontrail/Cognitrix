@@ -113,6 +113,12 @@ Starting a run requires workspace **editor** role (the same bar as `PUT /canvas-
 
 The chat request carries `canvas_format` (the format the user's panel is on — the product principle is "operate the canvas the user is looking at"). v1 implements only `web-design`: any other format is rejected before Phase 1 with a typed error the UI preempts by offering a one-click switch to web-design. New formats later add an executor without changing the wire contract.
 
+### D13. Agent dashboard chart types are a strict, executable catalog
+
+The outline prompt and `place_chart.chart_type` schema expose the same fixed catalog of chart types that the agent-canvas spec builder can render faithfully. The planning prompt includes intent- and data-shape-based selection rules; execution must preserve the approved type. Every exposed type produces a complete ECharts option whose visual series matches that type, including after server hydration. Unsupported free-form strings are rejected rather than silently rendered as bars.
+
+Chart diversity is not itself an optimization target: repeated bars are correct for repeated categorical comparisons. The invariant is that bars are selected only for categorical comparison/ranking, while KPI, time, composition, correlation, matrix, process, hierarchy, profile, target, signed-change, and detail intents use their corresponding chart families when the data shape supports them.
+
 ## Risks / Trade-offs
 
 - **[DeepSeek drifts mid-run: wrong order, skipped `finish_dashboard`, malformed tool args]** → Approval gate pins the plan before execution; each chart is one atomic validated tool call; the between-step shadow summary re-grounds the model; watchdog finalizes the run as `failed`/partial if `finish_dashboard` never arrives; evals in `tests/evals/` cover outline quality and run protocol adherence.

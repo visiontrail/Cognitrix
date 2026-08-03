@@ -7,6 +7,8 @@ import pandas as pd
 import pytest
 
 from apps.api.agent_canvas import (
+    AGENT_DASHBOARD_CHART_TYPES,
+    CANVAS_TOOL_DEFINITIONS,
     clear_agent_canvas_run_store_cache,
     get_agent_canvas_run_store,
 )
@@ -127,6 +129,37 @@ def test_place_chart_rejects_unknown_size_preset(monkeypatch, tmp_path: Path) ->
     assert get_agent_canvas_run_store().count_ops(run_id=run["run_id"]) == 0
 
 
+def test_place_chart_schema_exposes_the_full_executable_chart_catalog() -> None:
+    definition = next(
+        item for item in CANVAS_TOOL_DEFINITIONS if item["function"]["name"] == "place_chart"
+    )
+    chart_type = definition["function"]["parameters"]["properties"]["chart_type"]
+    assert tuple(chart_type["enum"]) == AGENT_DASHBOARD_CHART_TYPES
+
+
+def test_place_chart_rejects_unsupported_chart_type_before_query(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    run = _create_run()
+    response = _invoke(
+        "place_chart",
+        _run_arguments(
+            run,
+            {
+                "title": "Unsupported",
+                "chart_type": "made_up_visual",
+                "size_preset": "half",
+                "sql": "SELECT 'x' AS segment, 1 AS metric_value",
+            },
+        ),
+    )
+    assert response.status == "error"
+    assert response.error is not None
+    assert response.error["code"] == "AGENT_CANVAS_CHART_TYPE_INVALID"
+    assert get_agent_canvas_run_store().count_ops(run_id=run["run_id"]) == 0
+
+
 def test_geometry_fields_rejected_by_guardrails(monkeypatch, tmp_path: Path) -> None:
     _set_canvas_env(monkeypatch, tmp_path)
     guardrails = AgentGuardrails()
@@ -210,6 +243,46 @@ def test_place_chart_success_is_atomic_and_metadata_only(monkeypatch, tmp_path: 
     assert len(assets) == 1
     assert assets[0]["id"] == result["asset_id"]
     assert assets[0]["title"] == "部门人数"
+
+
+def test_place_chart_persists_selected_non_bar_visual_without_downgrade(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+    _seed_dataset()
+    run = _create_run()
+    response = _invoke(
+        "place_chart",
+        _run_arguments(
+            run,
+            {
+                "section_id": "sec-1",
+                "title": "Monthly entries",
+                "chart_type": "area",
+                "size_preset": "wide",
+                "sql": (
+                    "SELECT SUBSTRING(entry_date, 1, 7) AS segment, "
+                    "COUNT(*) AS metric_value FROM employees GROUP BY 1 ORDER BY 1"
+                ),
+            },
+        ),
+        idempotency_key="place-area-faithfully",
+    )
+    assert response.status == "success", response.error
+    result = response.result or {}
+    spec = result["op"]["payload"]["spec"]
+    assert spec["chart_type"] == "area"
+    rendered_series = spec["config"]["option"]["series"][0]
+    assert rendered_series["type"] == "line"
+    assert rendered_series["areaStyle"]
+
+    asset = get_workspace_state_store().list_chart_assets(
+        workspace_id=WORKSPACE_ID, user_id="admin"
+    )[0]
+    assert asset["chartType"] == "area"
+    assert asset["spec"]["chartType"] == "area"
+    assert asset["spec"]["echartsOption"]["series"][0]["type"] == "line"
+    assert asset["spec"]["echartsOption"]["series"][0]["areaStyle"]
 
 
 def test_place_chart_failure_appends_error_placeholder(monkeypatch, tmp_path: Path) -> None:

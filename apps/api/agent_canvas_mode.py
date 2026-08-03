@@ -41,6 +41,7 @@ from .agent_canvas import (
     TEXT_STYLES,
     block_id_for,
     get_agent_canvas_run_store,
+    normalize_dashboard_chart_type,
     normalize_section_level,
 )
 from .agent_guardrails import AgentGuardrailContext, AgentGuardrailError
@@ -1633,9 +1634,14 @@ def _normalize_outline(
                     if chart_count >= max_charts:
                         truncated = True
                         continue
+                    chart_type = normalize_dashboard_chart_type(item_raw.get("chart_type"))
+                    if chart_type is None:
+                        # Planning output is text JSON rather than SDK-schema-validated.
+                        # Never turn an unknown type into a visually misleading bar;
+                        # aliases are normalized above and anything else is unusable.
+                        continue
                     chart_count += 1
                     size_preset = str(item_raw.get("size_preset") or "").strip()
-                    chart_type = str(item_raw.get("chart_type") or "bar").strip() or "bar"
                     if size_preset not in SIZE_PRESETS:
                         size_preset = "kpi" if chart_type in {"single_value", "gauge"} else "half"
                     items.append(

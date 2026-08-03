@@ -48,3 +48,4 @@
 - [x] 6.2 Smoke-flow extension: enable flag → outline → approve → 3-chart run → page exists in snapshot → undo deletes page
 - [x] 6.3 Verify flag-off byte-for-byte neutrality: no tools registered, no new SSE types, no prompt changes (regression test)
 - [x] 6.4 `make test-all` green; update CLAUDE.md architecture notes (SSE event list, tool count, storage layout)
+- [x] 6.5 Fix agent-dashboard chart selection: shared executable chart catalog, semantic selection guidance, faithful non-bar options, persisted asset parity, regression tests, and Browser verification

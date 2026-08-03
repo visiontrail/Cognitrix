@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from apps.api.agent_canvas import SIZE_PRESETS
+from apps.api.agent_canvas import AGENT_DASHBOARD_CHART_TYPES, SIZE_PRESETS
 from apps.api.agent_canvas_mode import _normalize_outline, _parse_agent_canvas_json
 from apps.api.agent_prompting import (
     build_agent_canvas_execution_prompt,
@@ -36,6 +36,15 @@ def test_outline_prompt_pins_the_contract() -> None:
     assert "NEVER include coordinates" in prompt
     # Grounding: outline items must come from inspected data.
     assert "list_tables" in prompt and "describe_table" in prompt
+    # Canvas planning has its own system prompt; it must expose the complete
+    # executable catalog and semantic decision matrix rather than an ellipsis.
+    for chart_type in AGENT_DASHBOARD_CHART_TYPES:
+        assert f"`{chart_type}`" in prompt
+    assert "Do not default every item to `bar`" in prompt
+    assert "values over time or another ordered sequence" in prompt
+    assert "relationship/correlation between two numeric variables" in prompt
+    assert "two-dimensional categorical/time matrix" in prompt
+    assert "variety merely for decoration" in prompt
 
 
 def test_execution_prompt_pins_the_run_protocol() -> None:
@@ -61,6 +70,10 @@ def test_execution_prompt_pins_the_run_protocol() -> None:
     # Budgets and geometry rules restated at execution time.
     assert "more than 8 charts" in prompt
     assert "NEVER pass coordinates" in prompt
+    assert "Preserve the item's approved `chart_type` EXACTLY" in prompt
+    assert "Never replace it with `bar`" in prompt
+    assert "AS series" in prompt
+    assert "`segment` and `metric_value` must both be numeric" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +107,7 @@ def test_outline_normalization_repairs_model_drift() -> None:
                 "items": [
                     {"kind": "chart", "title": "总人数", "chart_type": "single_value", "size_preset": "huge"},
                     {"kind": "chart", "title": "部门人数", "chart_type": "bar"},
+                    {"kind": "chart", "title": "非法类型", "chart_type": "magic_cloud"},
                     {"kind": "text", "content": "说明", "style": "loud"},
                     {"kind": "chart", "title": ""},  # dropped: no title
                     "not-a-dict",  # dropped: wrong shape
@@ -117,6 +131,23 @@ def test_outline_normalization_repairs_model_drift() -> None:
     # Keys are assigned and unique even when the model omitted them.
     keys = [item["key"] for item in items]
     assert len(set(keys)) == len(keys)
+
+
+def test_outline_normalization_never_downgrades_unknown_types_to_bar() -> None:
+    raw = {
+        "title": "T",
+        "sections": [
+            {
+                "title": "S",
+                "items": [
+                    {"kind": "chart", "title": "Unsupported", "chart_type": "magic_cloud"}
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="outline has no chart items"):
+        _normalize_outline(raw, max_charts=12)
 
 
 def test_outline_normalization_caps_chart_count() -> None:

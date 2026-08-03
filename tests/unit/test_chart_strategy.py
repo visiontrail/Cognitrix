@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from apps.api.agent_canvas import AGENT_DASHBOARD_CHART_TYPES
 from apps.api.chart_strategy import ChartStrategyRouter
 
 
@@ -113,3 +114,63 @@ def test_chart_strategy_returns_explainable_route_reason() -> None:
     assert any("engine=" in item for item in decision.reasons)
     assert decision.chart_type == "bar"
     assert decision.engine == "recharts"
+
+
+def test_every_agent_dashboard_chart_type_builds_a_faithful_complete_option() -> None:
+    """The canvas must never retain a rich chart_type while rendering bars.
+
+    This pins the executable catalog end to end at the backend spec boundary;
+    it intentionally checks visual series type rather than metadata alone.
+    """
+    router = ChartStrategyRouter()
+    rows = [
+        {"segment": "1", "series": "A", "metric_value": 10},
+        {"segment": "2", "series": "A", "metric_value": 20},
+        {"segment": "1", "series": "B", "metric_value": 15},
+        {"segment": "2", "series": "B", "metric_value": 25},
+    ]
+    expected_series_type = {
+        "gauge": "gauge",
+        "bar": "bar",
+        "negative_bar": "bar",
+        "grouped_bar": "bar",
+        "stacked_bar": "bar",
+        "line": "line",
+        "stacked_line": "line",
+        "area": "line",
+        "pie": "pie",
+        "scatter": "scatter",
+        "heatmap": "heatmap",
+        "funnel": "funnel",
+        "treemap": "treemap",
+        "radar": "radar",
+    }
+
+    built: dict[str, dict] = {}
+    for chart_type in AGENT_DASHBOARD_CHART_TYPES:
+        built[chart_type] = router.build_spec(
+            metric="Metric",
+            intent="Intent",
+            rows=rows,
+            group_by=["segment", "series"],
+            chart_type=chart_type,
+        )
+
+    assert set(built) == set(AGENT_DASHBOARD_CHART_TYPES)
+    for chart_type, expected in expected_series_type.items():
+        spec = built[chart_type]
+        assert spec["chart_type"] == chart_type
+        option = spec["config"]["option"]
+        assert option["series"], chart_type
+        assert option["series"][0]["type"] == expected, chart_type
+
+    area_series = built["area"]["config"]["option"]["series"][0]
+    assert area_series["areaStyle"]
+    for chart_type in ("stacked_bar", "stacked_line"):
+        assert built[chart_type]["config"]["option"]["series"][0]["stack"] == "total"
+
+    single_option = built["single_value"]["config"]["option"]
+    assert single_option["graphic"] and single_option["series"] == []
+    table_option = built["table"]["config"]["option"]
+    assert table_option["__table__"] is True
+    assert table_option["__rows__"] == rows

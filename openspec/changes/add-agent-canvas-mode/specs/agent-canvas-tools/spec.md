@@ -39,6 +39,21 @@ Canvas tool arguments SHALL be limited to structural fields: section membership,
 - **WHEN** the query inside `place_chart` fails or violates SQL validation
 - **THEN** the tool returns an error result, an error-placeholder op is appended, and no chart asset is persisted
 
+### Requirement: Agent selects from a faithful chart catalog
+The dashboard outline prompt and `place_chart.chart_type` schema SHALL expose one shared, fixed catalog with explicit analytical-intent and data-shape guidance. The agent MUST preserve the approved outline type during execution. Every exposed type MUST produce a complete chart option whose rendered visual family matches the selected type; unsupported values MUST be rejected and MUST NOT silently downgrade to a bar chart.
+
+#### Scenario: Time trend uses a trend chart
+- **WHEN** an outline item represents values over a time or ordered-sequence dimension
+- **THEN** the planning guidance directs the agent to `line` or, for cumulative volume, `area`, rather than a categorical `bar`
+
+#### Scenario: Selected type matches rendered series
+- **WHEN** `place_chart` succeeds with any chart type in the exposed catalog
+- **THEN** the persisted chart asset and streamed spec retain that chart type and contain a complete option for the same visual family
+
+#### Scenario: Unsupported type is rejected
+- **WHEN** `place_chart` receives a chart type outside the exposed catalog
+- **THEN** validation fails before query execution, no chart asset or canvas op is persisted, and no bar fallback is generated
+
 ### Requirement: finish_dashboard is the required terminal call
 The run protocol SHALL require the model to call `finish_dashboard` with a completion summary to end a run as `completed`. If the model stops without calling it, or budgets expire, a watchdog MUST finalize the run with a partial/failed status so no run remains `running` indefinitely.
 

@@ -2,6 +2,34 @@ from __future__ import annotations
 
 import json
 
+from .agent_canvas import AGENT_DASHBOARD_CHART_TYPES
+
+
+_AGENT_DASHBOARD_CHART_GUIDE = (
+    "## Dashboard chart selection — decide from analytical intent and data shape\n"
+    "Choose each chart independently. Do not default every item to `bar`, and do not add "
+    "variety merely for decoration. Repeated bars are correct only when the items are all "
+    "categorical comparisons or rankings. Use these rules:\n"
+    "- `single_value`: exactly one headline KPI (count, total, average, rate).\n"
+    "- `gauge`: one percentage or progress value with a meaningful target/limit; never use "
+    "it for an arbitrary total.\n"
+    "- `line`: values over time or another ordered sequence.\n"
+    "- `area`: cumulative/volume trend over time where magnitude is part of the message.\n"
+    "- `bar`: compare or rank discrete categories.\n"
+    "- `negative_bar`: compare signed delta/variance/net change around zero.\n"
+    "- `grouped_bar`: compare multiple series side by side within each category.\n"
+    "- `stacked_bar`: compare category totals and their part-to-whole composition.\n"
+    "- `stacked_line`: compare how multiple component series accumulate over an ordered axis.\n"
+    "- `pie`: part-to-whole share with no more than 6 meaningful slices; never use it for "
+    "ranking, time, or many categories.\n"
+    "- `scatter`: relationship/correlation between two numeric variables.\n"
+    "- `heatmap`: intensity across a two-dimensional categorical/time matrix.\n"
+    "- `funnel`: an ordered process or conversion pipeline whose stages decrease/progress.\n"
+    "- `treemap`: hierarchical or space-efficient part-to-whole composition with many items.\n"
+    "- `radar`: a common multi-metric profile for a very small number of comparable subjects.\n"
+    "- `table`: exact lookup/detail or a dense multi-column result that a chart would obscure.\n"
+)
+
 _FINAL_ANSWER_EXAMPLE = json.dumps(
     {
         "chart_type": "bar",
@@ -352,8 +380,9 @@ def build_agent_canvas_outline_prompt(*, max_charts: int, max_pages: int = 1) ->
         "(p1, s1, c1, t1 ...). Keys must be unique across the whole outline.\n"
         "- `sections[].level`: 1 for a section heading, 2 for a sub-section nested under "
         "the preceding level-1 section.\n"
-        "- chart items: `kind` = \"chart\", with `title`, one-line `description`, `chart_type` "
-        "(bar, line, pie, area, funnel, single_value, ...), and `size_preset`.\n"
+        "- chart items: `kind` = \"chart\", with `title`, one-line `description`, `chart_type`, "
+        "and `size_preset`. `chart_type` MUST be one of: "
+        f"{', '.join(AGENT_DASHBOARD_CHART_TYPES)}.\n"
         "- text items: `kind` = \"text\", with `style` (title | subtitle | body) and `content`.\n"
         "- `size_preset` meaning: `kpi` = small stat card (use for single_value/gauge), "
         "`half` = half page width (most charts), `wide` = full width (trends, wide "
@@ -361,6 +390,12 @@ def build_agent_canvas_outline_prompt(*, max_charts: int, max_pages: int = 1) ->
         "- NEVER include coordinates, pixel sizes, or grid positions — layout is automatic.\n"
         "- Base every chart item on columns and values that actually exist in the inspected "
         "tables; do not invent fields or entity values.\n"
+        "\n"
+        f"{_AGENT_DASHBOARD_CHART_GUIDE}"
+        "Before finalizing the outline, audit every item: if it is not a categorical "
+        "comparison/ranking, `bar` is usually wrong. A typical overview dashboard naturally "
+        "uses KPI cards for headline numbers, line/area for time, pie/stacked/treemap for "
+        "composition, and bars only for categorical comparisons when those intents exist.\n"
         "\n"
         "The JSON block is machine-parsed. Do not add prose after the closing ```."
     )
@@ -391,6 +426,8 @@ def build_agent_canvas_execution_prompt(
         "3. For every item inside that section, in order:\n"
         "   - chart item → call `place_chart` with: `section_id`, the item's `title`, "
         "`chart_type`, `size_preset`, and the data query (`sql` OR `metric`).\n"
+        "     Preserve the item's approved `chart_type` EXACTLY. Never replace it with `bar`; "
+        "if the query shape is wrong, fix the query instead.\n"
         "   - text item → call `add_text_block` with `section_id`, `content`, `style`.\n"
         "4. Repeat steps 2-3 for every remaining section of the current page.\n"
         "5. Only when the current page is FULLY built, call `add_page` with the next "
@@ -410,6 +447,12 @@ def build_agent_canvas_execution_prompt(
         "and the numeric value is aliased `AS metric_value`. Example:\n"
         "  SELECT department AS segment, COUNT(*) AS metric_value FROM employees "
         "GROUP BY department ORDER BY metric_value DESC\n"
+        "- For grouped_bar, stacked_bar, stacked_line, radar, or heatmap with multiple series, "
+        "also alias the comparison/second-dimension column `AS series`.\n"
+        "- For scatter, `segment` and `metric_value` must both be numeric. For heatmap, "
+        "`segment` and `series` are the two axes and `metric_value` is the intensity.\n"
+        "- For table, return the useful detail columns directly; the segment/metric aliases "
+        "are not required.\n"
         "- For a single_value/gauge chart, return exactly one row "
         "(e.g. SELECT 'total' AS segment, COUNT(*) AS metric_value FROM employees).\n"
         "- Respect the column types returned by `describe_table`. In particular, uploaded "

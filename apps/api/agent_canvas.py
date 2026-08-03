@@ -50,6 +50,44 @@ CANVAS_FORMAT_WEB_DESIGN = "web-design"
 SIZE_PRESETS = ("kpi", "half", "wide", "full")
 TEXT_STYLES = ("title", "subtitle", "body")
 
+# Keep this catalog deliberately smaller than the general chat chart catalog.
+# Agent-canvas charts are produced atomically from a flat readonly query, so we
+# expose only types whose data contract the canvas spec builder can execute and
+# render faithfully. The same tuple drives the SDK tool enum, prompt guidance,
+# argument validation, and outline normalization.
+AGENT_DASHBOARD_CHART_TYPES = (
+    "single_value",
+    "gauge",
+    "bar",
+    "negative_bar",
+    "grouped_bar",
+    "stacked_bar",
+    "line",
+    "stacked_line",
+    "area",
+    "pie",
+    "scatter",
+    "heatmap",
+    "funnel",
+    "treemap",
+    "radar",
+    "table",
+)
+
+_DASHBOARD_CHART_TYPE_ALIASES = {
+    "single-value": "single_value",
+    "singlevalue": "single_value",
+    "negative-bar": "negative_bar",
+    "negativebar": "negative_bar",
+    "grouped-bar": "grouped_bar",
+    "groupedbar": "grouped_bar",
+    "horizontal-bar": "grouped_bar",
+    "stacked-bar": "stacked_bar",
+    "stackedbar": "stacked_bar",
+    "stacked-line": "stacked_line",
+    "stackedline": "stacked_line",
+}
+
 # Section nesting depth. 1 = section heading, 2 = sub-section heading; the client
 # maps them onto the web-design text styles (title / subtitle). Deliberately
 # capped at two levels: deeper nesting has no distinct rendering on the canvas.
@@ -188,7 +226,12 @@ CANVAS_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "title": {"type": "string", "description": "Chart title, in the user's language"},
                     "chart_type": {
                         "type": "string",
-                        "description": "Chart type (bar, line, pie, area, funnel, single_value, ...)",
+                        "enum": list(AGENT_DASHBOARD_CHART_TYPES),
+                        "description": (
+                            "Visual type from the executable dashboard chart catalog. Preserve "
+                            "the approved outline type; choose by analytical intent and data shape, "
+                            "not by habit or for cosmetic variety."
+                        ),
                     },
                     "size_preset": {
                         "type": "string",
@@ -321,6 +364,15 @@ def validate_canvas_tool_arguments(tool_name: str, arguments: dict[str, Any]) ->
                 code="AGENT_CANVAS_TITLE_REQUIRED",
                 message="place_chart requires a non-empty title.",
             )
+        chart_type = normalize_dashboard_chart_type(arguments.get("chart_type"))
+        if chart_type is None:
+            raise AgentCanvasError(
+                code="AGENT_CANVAS_CHART_TYPE_INVALID",
+                message=(
+                    "chart_type must be one of: "
+                    f"{', '.join(AGENT_DASHBOARD_CHART_TYPES)}."
+                ),
+            )
         size_preset = str(arguments.get("size_preset") or "").strip()
         if size_preset not in SIZE_PRESETS:
             raise AgentCanvasError(
@@ -359,6 +411,24 @@ def normalize_section_level(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return level if level in SECTION_LEVELS else None
+
+
+def normalize_dashboard_chart_type(value: Any) -> str | None:
+    """Return a canonical executable dashboard chart type, or ``None``.
+
+    Stored outlines from older builds and model-generated JSON may contain
+    harmless case/hyphen drift. Normalize those aliases, but never coerce an
+    unknown chart family to ``bar``: that was the silent visual downgrade this
+    catalog is designed to prevent at tool execution time.
+    """
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    lower_catalog = {item.lower(): item for item in AGENT_DASHBOARD_CHART_TYPES}
+    direct = lower_catalog.get(normalized.lower())
+    if direct:
+        return direct
+    return _DASHBOARD_CHART_TYPE_ALIASES.get(normalized.lower())
 
 
 def block_id_for(run_id: str, seq: int) -> str:

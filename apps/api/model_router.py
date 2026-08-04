@@ -300,6 +300,9 @@ class ModelRouter:
             "cooldown_remaining_seconds": remaining,
             "failure_threshold": settings.model_router_failure_threshold,
             "slow_ttft_ms": settings.model_router_slow_ttft_ms,
+            "first_token_deadline_ms": int(
+                getattr(settings, "model_router_first_token_deadline_ms", 0) or 0
+            ),
             "slots": {
                 slot: {
                     **(endpoint.public_dict() if endpoint else {"slot": slot, "configured": False}),

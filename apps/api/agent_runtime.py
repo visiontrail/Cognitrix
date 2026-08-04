@@ -724,6 +724,233 @@ class SDKToolInvocationRecord:
     started_at: float = field(default_factory=time.time)
 
 
+# ---------------------------------------------------------------------------
+# Endpoint failover: frame classification and per-attempt bookkeeping.
+#
+# Three frame classes, and why the distinction decides whether failover works
+# at all:
+#
+# * ``SystemMessage(subtype="init")`` — the CLI subprocess is up, *before* any
+#   model round trip. Not a latency signal: it restarts the TTFT clock so
+#   process spawn and MCP setup are not billed to the endpoint.
+# * Any other ``SystemMessage``-shaped frame (``subtype`` str **and** ``data``
+#   dict) — CLI bookkeeping such as ``status``, emitted right after ``init`` and
+#   periodically while the model is still thinking. Also not model output.
+#   ``ResultMessage`` carries ``subtype`` but has no ``data`` attribute, so the
+#   dict check keeps a bare terminal result on the committing side.
+# * Everything else — ``AssistantMessage``/``StreamEvent``/``ResultMessage``.
+#   The first of these required a model round trip, and tools only ever run in
+#   response to a ``tool_use`` block inside an ``AssistantMessage``, so nothing
+#   has executed yet at that point.
+#
+# Counting the middle class as model output is not academic: it pins TTFT at
+# a few hundred ms for every run (so no sample is ever "slow" and the breaker
+# never trips) and marks the attempt as committed (so a hard failure on the
+# actual model call is re-raised instead of failing over). Both failover paths
+# go dead. Classifying by exclusion — anything that is not a ``SystemMessage``
+# shape commits — fails the safe way: at worst one frame commits early, costing
+# a failover opportunity, never a stalled or dropped frame.
+# ---------------------------------------------------------------------------
+
+
+def _is_sdk_init_frame(message: Any) -> bool:
+    """``SystemMessage(subtype='init')`` — CLI is up, model not yet contacted."""
+    return getattr(message, "subtype", None) == "init" and isinstance(
+        getattr(message, "data", None), dict
+    )
+
+
+def _is_sdk_pre_model_frame(message: Any) -> bool:
+    """Any ``SystemMessage``-shaped frame: CLI bookkeeping, never model output."""
+    return isinstance(getattr(message, "subtype", None), str) and isinstance(
+        getattr(message, "data", None), dict
+    )
+
+
+_MILESTONE_INIT = "init"
+_MILESTONE_COMMIT = "commit"
+
+
+@dataclass(slots=True)
+class SDKAttemptState:
+    """Failover bookkeeping for one endpoint attempt.
+
+    ``committed`` is the retry boundary: once a model frame has been consumed,
+    tool side effects may have run and tokens are already paid for, so the
+    attempt can never be replayed on another endpoint.
+    """
+
+    started_at: float
+    first_model_at: float | None = None
+    model_messages: int = 0
+
+    @property
+    def committed(self) -> bool:
+        return self.model_messages > 0
+
+    def ttft_ms(self) -> float | None:
+        """Time to first model frame, or ``None`` if the model never answered."""
+        if self.first_model_at is None:
+            return None
+        return (self.first_model_at - self.started_at) * 1000
+
+    def observe(
+        self,
+        message: Any,
+        milestones: "asyncio.Queue[str] | None" = None,
+    ) -> None:
+        if self.model_messages:
+            self.model_messages += 1
+            return
+        if _is_sdk_init_frame(message):
+            # CLI startup, not model latency — restart the clock so TTFT (and
+            # the first-token deadline) measure the gateway, not process spawn.
+            self.started_at = time.perf_counter()
+            if milestones is not None:
+                milestones.put_nowait(_MILESTONE_INIT)
+            return
+        if _is_sdk_pre_model_frame(message):
+            # Bookkeeping (``status`` and friends). Deliberately does not touch
+            # the clock: a keepalive arriving mid-wait must not extend it.
+            return
+        self.first_model_at = time.perf_counter()
+        self.model_messages = 1
+        if milestones is not None:
+            milestones.put_nowait(_MILESTONE_COMMIT)
+
+
+# Upper bound on how long an abandoned attempt may take to unwind. Only needs
+# headroom over the SDK transport's own bounded close (~20s worst case); it
+# never delays the user, because the wait happens in a detached task.
+_SDK_ATTEMPT_CLEANUP_TIMEOUT_S = 30.0
+
+# Strong references to detached cleanups. asyncio holds only weak references to
+# running tasks, so without this a cleanup can be garbage collected mid-unwind —
+# orphaning the very `claude` subprocess it was reaping.
+_SDK_ATTEMPT_CLEANUPS: set["asyncio.Task[None]"] = set()
+
+
+async def _await_first_token(
+    task: "asyncio.Task[None]",
+    attempt: SDKAttemptState,
+    milestones: "asyncio.Queue[str]",
+    deadline: float,
+) -> bool:
+    """Await one endpoint attempt, giving its first model frame a deadline.
+
+    Returns ``True`` when the deadline expired before the model answered — the
+    caller then abandons the attempt and moves to the next candidate. Returns
+    ``False`` once the attempt finished (successfully or by raising, which is
+    propagated); after the first model frame the deadline is disarmed and the
+    rest of the stream runs untouched.
+
+    A slow-response threshold only labels a sample *after* the token arrives; it
+    cannot bound what the user waits. This can.
+    """
+    if deadline <= 0:
+        await task
+        return False
+
+    deadline_at = time.perf_counter() + deadline
+    waiter: "asyncio.Task[str] | None" = None
+    try:
+        while True:
+            remaining = deadline_at - time.perf_counter()
+            if remaining <= 0:
+                return True
+            if waiter is None:
+                waiter = asyncio.ensure_future(milestones.get())
+            done, _ = await asyncio.wait(
+                {task, waiter},
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                return True
+            if waiter in done:
+                milestone = waiter.result()
+                waiter = None
+                if milestone == _MILESTONE_INIT:
+                    deadline_at = attempt.started_at + deadline
+                    continue
+                break  # committed — the endpoint answered
+            await task  # completed or raised before any model frame
+            return False
+    finally:
+        if waiter is not None:
+            waiter.cancel()
+    await task
+    return False
+
+
+def _detach_sdk_attempt_cleanup(
+    task: "asyncio.Task[None]",
+    *,
+    slot: str,
+    reason: str,
+) -> "asyncio.Task[None]":
+    """Reap an abandoned attempt off the request path.
+
+    Cancelling the attempt unwinds ``ClaudeSDKClient.__aexit__`` inside the
+    attempt's own task, which is what actually reaps the ``claude`` subprocess.
+    That close is bounded but slow (~20s worst case), and the user must not wait
+    for a corpse — so it is detached, then awaited before the turn returns.
+    """
+
+    async def _reap() -> None:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(task, return_exceptions=True),
+                timeout=_SDK_ATTEMPT_CLEANUP_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "agent_sdk_attempt_cleanup_timeout slot=%s reason=%s timeout_s=%.0f; "
+                "the claude subprocess may be orphaned",
+                slot,
+                reason,
+                _SDK_ATTEMPT_CLEANUP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - cleanup must never raise
+            logger.warning(
+                "agent_sdk_attempt_cleanup_failed slot=%s reason=%s error=%s",
+                slot,
+                reason,
+                exc,
+            )
+
+    cleanup = asyncio.ensure_future(_reap())
+    _SDK_ATTEMPT_CLEANUPS.add(cleanup)
+    cleanup.add_done_callback(_SDK_ATTEMPT_CLEANUPS.discard)
+    return cleanup
+
+
+async def drain_sdk_attempt_cleanups(
+    timeout: float = _SDK_ATTEMPT_CLEANUP_TIMEOUT_S,
+) -> None:
+    """Wait for detached attempt teardowns to finish. Never raises.
+
+    Abandoned attempts are reaped off the request path, so at any moment a
+    ``claude`` subprocess may still be closing. Tests use this to make
+    preemption deterministic.
+    """
+    pending = [task for task in list(_SDK_ATTEMPT_CLEANUPS) if not task.done()]
+    if not pending:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "agent_sdk_attempt_cleanup_pending count=%d timeout_s=%.0f",
+            len(pending),
+            timeout,
+        )
+
+
 @dataclass(slots=True)
 class SDKRunContext:
     request: AgentRequest
@@ -1447,17 +1674,19 @@ class AgentRuntime:
             )
 
         final_answer: dict[str, Any] | None = None
-        sdk_messages_seen = 0
-        first_sdk_message_at: float | None = None
 
-        async def execute_sdk_turn(sdk_options: ClaudeAgentOptions) -> None:
-            nonlocal final_answer, sdk_messages_seen, first_sdk_message_at
+        async def execute_sdk_turn(
+            sdk_options: ClaudeAgentOptions,
+            *,
+            attempt: SDKAttemptState | None = None,
+            milestones: "asyncio.Queue[str] | None" = None,
+        ) -> None:
+            nonlocal final_answer
             async with self._sdk_client_factory(options=sdk_options) as client:
                 await client.query(request.message)
                 async for message in client.receive_response():
-                    sdk_messages_seen += 1
-                    if first_sdk_message_at is None:
-                        first_sdk_message_at = time.perf_counter()
+                    if attempt is not None:
+                        attempt.observe(message, milestones)
                     candidate = self._consume_sdk_message(message=message, run_context=run_context)
                     if candidate is not None:
                         final_answer = candidate
@@ -1471,65 +1700,124 @@ class AgentRuntime:
         )
 
         async def execute_routed_sdk_turn() -> None:
-            nonlocal first_sdk_message_at
             candidates: list[Any | None] = endpoint_candidates or [None]
-            for index, endpoint in enumerate(candidates):
-                sdk_options = self._build_sdk_options(
-                    request=request,
-                    session=session,
-                    system_text=system_text,
-                    run_context=run_context,
-                    force_fresh_session=bool(endpoint is not None and endpoint.slot == "backup"),
-                    endpoint=endpoint,
-                )
-                started_attempt = time.perf_counter()
-                first_sdk_message_at = None
-                tool_count_before = len(tool_trace)
-                message_count_before = sdk_messages_seen
-                try:
-                    await execute_sdk_turn(sdk_options)
+            deadline = self._first_token_deadline_seconds()
+            # Teardowns this turn started. Reaped before control goes back to the
+            # caller so a preempted `claude` subprocess is never left behind.
+            detached: list["asyncio.Task[None]"] = []
+            try:
+                for index, endpoint in enumerate(candidates):
+                    slot = endpoint.slot if endpoint is not None else "settings"
+                    has_next = index + 1 < len(candidates)
+                    # Preempting the last candidate would leave the user with
+                    # nothing — slow output beats no output — so the deadline only
+                    # arms while there is somewhere else to go.
+                    attempt_deadline = deadline if (has_next and deadline > 0) else 0.0
+                    sdk_options = self._build_sdk_options(
+                        request=request,
+                        session=session,
+                        system_text=system_text,
+                        run_context=run_context,
+                        force_fresh_session=bool(endpoint is not None and endpoint.slot == "backup"),
+                        endpoint=endpoint,
+                    )
+                    tool_count_before = len(tool_trace)
+                    attempt = SDKAttemptState(started_at=time.perf_counter())
+                    milestones: "asyncio.Queue[str]" = asyncio.Queue()
+                    # The attempt owns the SDK client in its own task: abandoning it
+                    # then delivers the cancellation at the client's own await point,
+                    # so `__aexit__` can unwind and reap the subprocess.
+                    task = asyncio.ensure_future(
+                        execute_sdk_turn(sdk_options, attempt=attempt, milestones=milestones)
+                    )
+                    try:
+                        preempted = await _await_first_token(
+                            task, attempt, milestones, attempt_deadline
+                        )
+                    except asyncio.CancelledError:
+                        if not task.done():
+                            detached.append(
+                                _detach_sdk_attempt_cleanup(
+                                    task, slot=slot, reason="caller_cancelled"
+                                )
+                            )
+                        raise
+                    except Exception as exc:
+                        if _is_missing_claude_session_error(
+                            exc,
+                            stderr_lines=run_context.sdk_stderr_lines,
+                        ):
+                            raise
+                        if endpoint is not None:
+                            model_router.record(
+                                endpoint,
+                                ok=False,
+                                error_kind=type(exc).__name__,
+                                settings=self.settings,
+                            )
+                        can_fail_over = (
+                            has_next
+                            and not attempt.committed
+                            and len(tool_trace) == tool_count_before
+                            and not _has_tool_observation(tool_trace)
+                        )
+                        if not can_fail_over:
+                            raise
+                        logger.warning(
+                            "agent_model_failover conversation_id=%s request_id=%s "
+                            "from_slot=%s to_slot=%s reason=%s error_type=%s",
+                            request.conversation_id,
+                            request.request_id,
+                            slot,
+                            candidates[index + 1].slot,
+                            "stream_error",
+                            type(exc).__name__,
+                        )
+                        continue
+
+                    if preempted:
+                        waited_ms = int((time.perf_counter() - attempt.started_at) * 1000)
+                        detached.append(
+                            _detach_sdk_attempt_cleanup(task, slot=slot, reason="preempt")
+                        )
+                        if endpoint is not None:
+                            model_router.record(
+                                endpoint,
+                                ok=False,
+                                error_kind="first_token_deadline",
+                                settings=self.settings,
+                            )
+                        logger.warning(
+                            "agent_model_failover conversation_id=%s request_id=%s "
+                            "from_slot=%s to_slot=%s reason=%s waited_ms=%d",
+                            request.conversation_id,
+                            request.request_id,
+                            slot,
+                            candidates[index + 1].slot,
+                            "first_token_deadline",
+                            waited_ms,
+                        )
+                        continue
+
                     if endpoint is not None:
                         model_router.record(
                             endpoint,
                             ok=True,
-                            latency_ms=(
-                                (first_sdk_message_at - started_attempt) * 1000
-                                if first_sdk_message_at is not None
-                                else None
-                            ),
+                            latency_ms=attempt.ttft_ms(),
                             settings=self.settings,
                         )
                     return
-                except Exception as exc:
-                    if _is_missing_claude_session_error(
-                        exc,
-                        stderr_lines=run_context.sdk_stderr_lines,
-                    ):
-                        raise
-                    if endpoint is not None:
-                        model_router.record(
-                            endpoint,
-                            ok=False,
-                            error_kind=type(exc).__name__,
-                            settings=self.settings,
+            finally:
+                if detached:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*detached, return_exceptions=True),
+                            timeout=_SDK_ATTEMPT_CLEANUP_TIMEOUT_S,
                         )
-                    can_fail_over = (
-                        index + 1 < len(candidates)
-                        and len(tool_trace) == tool_count_before
-                        and sdk_messages_seen == message_count_before
-                        and not _has_tool_observation(tool_trace)
-                    )
-                    if not can_fail_over:
-                        raise
-                    logger.warning(
-                        "agent_model_failover conversation_id=%s request_id=%s "
-                        "from_slot=%s to_slot=%s error_type=%s",
-                        request.conversation_id,
-                        request.request_id,
-                        endpoint.slot if endpoint is not None else "settings",
-                        candidates[index + 1].slot,
-                        type(exc).__name__,
-                    )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "agent_sdk_attempt_cleanup_pending count=%d", len(detached)
+                        )
 
         try:
             await execute_routed_sdk_turn()
@@ -2235,6 +2523,14 @@ class AgentRuntime:
             },
             specs=successful_payloads,
         )
+
+    def _first_token_deadline_seconds(self) -> float:
+        """First-token preemption deadline in seconds; ``0`` disables it."""
+        try:
+            raw = int(getattr(self.settings, "model_router_first_token_deadline_ms", 0) or 0)
+        except (TypeError, ValueError):  # a bad knob must not break routing
+            return 0.0
+        return raw / 1000.0 if raw > 0 else 0.0
 
     def _build_sdk_options(
         self,

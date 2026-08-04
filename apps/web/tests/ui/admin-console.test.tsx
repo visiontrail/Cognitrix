@@ -102,6 +102,7 @@ const modelSettings: controlApi.ModelSettings = {
     failure_threshold: 2,
     cooldown_seconds: 60,
     slow_ttft_ms: 15000,
+    first_token_deadline_ms: 20000,
   },
   slots: {
     primary: {
@@ -132,6 +133,7 @@ const modelSettings: controlApi.ModelSettings = {
     cooldown_remaining_seconds: 0,
     failure_threshold: 2,
     slow_ttft_ms: 15000,
+    first_token_deadline_ms: 20000,
     slots: {
       primary: {
         slot: "primary",

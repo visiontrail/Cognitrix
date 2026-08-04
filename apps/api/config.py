@@ -18,6 +18,12 @@ PUBLIC_PLACEHOLDER_SECRETS = {
     "replace-with-a-strong-secret",
     "dd904b50ad26343d430462093f66bedc79ec0be5db9c93422fa424ca0781f5d8",
 }
+# Bounds for MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS. Routing decides when to stop
+# using the primary and start paying for the backup, so a mistyped threshold has
+# a bill attached — and one below the floor would preempt runs that were never
+# unhealthy.
+FIRST_TOKEN_DEADLINE_FLOOR_MS = 5000
+FIRST_TOKEN_DEADLINE_CEILING_MS = 600000
 
 
 class Settings(BaseSettings):
@@ -50,6 +56,15 @@ class Settings(BaseSettings):
     )
     model_router_slow_ttft_ms: int = Field(
         default=15000, alias="MODEL_ROUTER_SLOW_TTFT_MS"
+    )
+    # Hard preemption deadline for the first model frame: once it expires the
+    # attempt is abandoned and the next candidate starts immediately. This is
+    # what MODEL_ROUTER_SLOW_TTFT_MS cannot do — that one only labels a sample
+    # *after* the token finally arrives, so it never bounds what the user waits.
+    # Applies only while the attempt is uncommitted and only when another
+    # candidate exists; 0 disables preemption entirely.
+    model_router_first_token_deadline_ms: int = Field(
+        default=20000, alias="MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS"
     )
     anthropic_base_url: str = Field(
         default="https://api.deepseek.com/anthropic",
@@ -216,6 +231,23 @@ class Settings(BaseSettings):
         if value <= 0:
             field_name = str(info.field_name).upper()
             raise ValueError(f"{field_name} must be greater than 0")
+        return value
+
+    @field_validator("model_router_first_token_deadline_ms")
+    @classmethod
+    def validate_first_token_deadline(cls, value: int) -> int:
+        # 0 means "never preempt". Any non-zero value below the floor would
+        # abandon healthy runs: CLI spawn plus a gateway handshake alone costs
+        # seconds before the first token can possibly arrive.
+        if value and not (
+            FIRST_TOKEN_DEADLINE_FLOOR_MS <= value <= FIRST_TOKEN_DEADLINE_CEILING_MS
+        ):
+            raise ValueError(
+                "MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS must be 0 (disabled) or between "
+                f"{FIRST_TOKEN_DEADLINE_FLOOR_MS} and {FIRST_TOKEN_DEADLINE_CEILING_MS}"
+            )
+        if value < 0:
+            raise ValueError("MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS must not be negative")
         return value
 
     @field_validator("agent_skills_max_upload_mb")

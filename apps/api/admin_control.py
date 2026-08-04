@@ -65,6 +65,7 @@ MODEL_SETTING_KEYS = {
     "MODEL_ROUTER_FAILURE_THRESHOLD",
     "MODEL_ROUTER_COOLDOWN_SECONDS",
     "MODEL_ROUTER_SLOW_TTFT_MS",
+    "MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS",
 }
 
 
@@ -110,6 +111,7 @@ class ModelSettingsUpdateRequest(BaseModel):
     failure_threshold: int = 2
     cooldown_seconds: int = 60
     slow_ttft_ms: int = 15000
+    first_token_deadline_ms: int = 20000
 
 
 def get_control_store() -> AdminControlStore:
@@ -352,6 +354,20 @@ async def update_model_settings(
                 "message": "Resolve URL template placeholders before saving",
             },
         )
+    if request.first_token_deadline_ms and request.first_token_deadline_ms < request.slow_ttft_ms:
+        # Preempting before the sample is even labelled "slow" starves the
+        # breaker of the evidence it decides on, and sends traffic to the paid
+        # backup on latency the operator declared acceptable.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "first_token_deadline_below_slow_threshold",
+                "message": (
+                    "First-token deadline must not be lower than the slow-response "
+                    "threshold (0 disables preemption)"
+                ),
+            },
+        )
 
     updates: dict[str, Any] = {
         "MODEL_PRIMARY_PROVIDER": primary_provider,
@@ -373,6 +389,7 @@ async def update_model_settings(
         "MODEL_ROUTER_FAILURE_THRESHOLD": request.failure_threshold,
         "MODEL_ROUTER_COOLDOWN_SECONDS": request.cooldown_seconds,
         "MODEL_ROUTER_SLOW_TTFT_MS": request.slow_ttft_ms,
+        "MODEL_ROUTER_FIRST_TOKEN_DEADLINE_MS": request.first_token_deadline_ms,
     }
     if request.primary_api_key not in (None, ""):
         updates["AI_API_KEY"] = str(request.primary_api_key).strip()
@@ -846,6 +863,7 @@ def _model_settings_payload() -> dict[str, Any]:
             "failure_threshold": settings.model_router_failure_threshold,
             "cooldown_seconds": settings.model_router_cooldown_seconds,
             "slow_ttft_ms": settings.model_router_slow_ttft_ms,
+            "first_token_deadline_ms": settings.model_router_first_token_deadline_ms,
         },
         "slots": {
             slot: endpoint.public_dict()

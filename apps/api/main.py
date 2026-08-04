@@ -356,6 +356,16 @@ async def on_startup() -> None:
             logger.exception("xlsx_bootstrap_unexpected_error")
 
 
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    # Endpoint attempts abandoned by first-token preemption are reaped off the
+    # request path, so a `claude` subprocess may still be closing when the loop
+    # goes away. Give those teardowns a chance to finish.
+    from .agent_runtime import drain_sdk_attempt_cleanups
+
+    await drain_sdk_attempt_cleanups(timeout=10.0)
+
+
 @app.post("/auth/register")
 async def auth_register(request: RegisterRequest, response: Response) -> dict[str, Any]:
     return handle_email_register(request, response)

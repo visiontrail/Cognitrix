@@ -82,6 +82,7 @@ export type ModelRouterState = {
   cooldown_remaining_seconds: number;
   failure_threshold: number;
   slow_ttft_ms: number;
+  first_token_deadline_ms: number;
   slots: Record<string, ModelSlot & { consecutive_failures: number; samples: unknown[] }>;
 };
 
@@ -93,6 +94,7 @@ export type ModelSettings = {
     failure_threshold: number;
     cooldown_seconds: number;
     slow_ttft_ms: number;
+    first_token_deadline_ms: number;
   };
   slots: { primary: ModelSlot; backup: ModelSlot };
   router: ModelRouterState;
@@ -118,6 +120,7 @@ export type ModelSettingsUpdate = {
   failure_threshold: number;
   cooldown_seconds: number;
   slow_ttft_ms: number;
+  first_token_deadline_ms: number;
 };
 
 export type AdminUser = {

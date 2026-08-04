@@ -378,6 +378,7 @@ def test_model_settings_support_primary_backup_and_atomic_save(
             "failure_threshold": 3,
             "cooldown_seconds": 90,
             "slow_ttft_ms": 12000,
+            "first_token_deadline_ms": 18000,
         },
     )
     assert updated.status_code == 200, updated.text
@@ -395,6 +396,54 @@ def test_model_settings_support_primary_backup_and_atomic_save(
     assert effective.ai_model == "yinhe-thinking"
     assert effective.model_backup_enabled is True
     assert effective.model_backup_model == "backup-model"
+    assert effective.model_router_first_token_deadline_ms == 18000
+
+
+def test_router_policy_rejects_out_of_bounds_first_token_deadline(
+    admin_client: tuple[TestClient, dict[str, str]],
+) -> None:
+    client, headers = admin_client
+    payload = {
+        "primary_provider": "yinhe",
+        "primary_openai_url": "https://oneapi.yhroot.com",
+        "primary_anthropic_url": "https://oneapi.yhroot.com",
+        "primary_model": "yinhe-thinking",
+        "primary_fast_model": "yinhe-chat",
+        "backup_enabled": False,
+        "backup_provider": "deepseek",
+        "router_enabled": True,
+        "failure_threshold": 2,
+        "cooldown_seconds": 60,
+        "slow_ttft_ms": 15000,
+    }
+
+    # Preempting before the sample is even labelled "slow" starves the breaker
+    # of evidence and pays for the backup on latency the operator accepted.
+    below_slow = client.put(
+        "/admin/control/models",
+        headers=headers,
+        json={**payload, "first_token_deadline_ms": 9000},
+    )
+    assert below_slow.status_code == 422
+    assert below_slow.json()["detail"]["code"] == "first_token_deadline_below_slow_threshold"
+
+    # Under the floor no endpoint could ever answer in time, healthy or not.
+    below_floor = client.put(
+        "/admin/control/models",
+        headers=headers,
+        json={**payload, "slow_ttft_ms": 1000, "first_token_deadline_ms": 1500},
+    )
+    assert below_floor.status_code == 422
+    assert below_floor.json()["detail"]["code"] == "invalid_model_settings"
+
+    # 0 is the documented "never preempt" value and must stay accepted.
+    disabled = client.put(
+        "/admin/control/models",
+        headers=headers,
+        json={**payload, "first_token_deadline_ms": 0},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["configuration"]["first_token_deadline_ms"] == 0
 
 
 def test_anthropic_probe_uses_messages_protocol(

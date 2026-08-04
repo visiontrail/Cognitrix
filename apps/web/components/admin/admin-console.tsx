@@ -852,6 +852,7 @@ function ModelsSection({
               <ModelNumberField label="连续失败阈值" value={draft.failure_threshold} suffix="次" onChange={(value) => update("failure_threshold", value)} />
               <ModelNumberField label="主力恢复窗口" value={draft.cooldown_seconds} suffix="秒" onChange={(value) => update("cooldown_seconds", value)} />
               <ModelNumberField label="慢响应阈值" value={draft.slow_ttft_ms} suffix="ms" onChange={(value) => update("slow_ttft_ms", value)} />
+              <ModelNumberField label="首字节抢占死线" value={draft.first_token_deadline_ms} suffix="ms" onChange={(value) => update("first_token_deadline_ms", value)} />
             </div>
             <button
               type="button"
@@ -1021,6 +1022,7 @@ function toModelDraft(settings: ModelSettings): ModelSettingsUpdate {
     failure_threshold: settings.configuration.failure_threshold,
     cooldown_seconds: settings.configuration.cooldown_seconds,
     slow_ttft_ms: settings.configuration.slow_ttft_ms,
+    first_token_deadline_ms: settings.configuration.first_token_deadline_ms ?? 0,
   };
 }
 

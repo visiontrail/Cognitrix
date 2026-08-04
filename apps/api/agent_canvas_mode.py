@@ -1031,6 +1031,15 @@ class AgentCanvasModeService:
             language_hint,
         ]
 
+    def _routed_endpoint(self) -> Any | None:
+        """Top routing candidate, or ``None`` to fall back to raw settings."""
+        from .model_router import get_model_router
+
+        candidates = get_model_router().candidates(
+            protocol="anthropic", settings=self.settings
+        )
+        return candidates[0] if candidates else None
+
     def _build_options(
         self,
         *,
@@ -1063,7 +1072,12 @@ class AgentCanvasModeService:
             sdk_tools.append(tool(tool_name, description, input_schema, annotations=annotations)(handler))
 
         server = create_sdk_mcp_server(name=SDK_MCP_SERVER_NAME, version="1.0.0", tools=sdk_tools)
-        env, model = build_sdk_provider_env(self.settings)
+        # Honour the router's current verdict. A canvas run places charts as it
+        # goes, so it cannot be replayed on another endpoint mid-flight — but it
+        # must not keep hammering a primary the breaker has already opened on.
+        env, model = build_sdk_provider_env(
+            self.settings, endpoint=self._routed_endpoint()
+        )
 
         async def can_use_tool(
             tool_name: str,

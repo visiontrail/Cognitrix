@@ -1,6 +1,6 @@
 # Cognitrix — AI-Native 智能商业智能平台
 
-[English](README.md) | 简体中文 | [हिन्दी](README_HI.md) | [Español](README_ES.md) | [日本語](README_JA.md)
+[English](README.md) | 简体中文 | [日本語](README_JA.md)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)

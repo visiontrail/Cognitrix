@@ -1,6 +1,6 @@
 # Cognitrix — AI-Native BI・アナリティクスプラットフォーム
 
-[English](README.md) | [简体中文](README_CN.md) | [हिन्दी](README_HI.md) | [Español](README_ES.md) | 日本語
+[English](README.md) | [简体中文](README_CN.md) | 日本語
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)

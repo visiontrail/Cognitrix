@@ -13,6 +13,14 @@ export type Workspace = {
 
 export type WorkspaceNodeType = "chart" | "text" | "section";
 
+/** Provenance carried by nodes created from the durable agent-canvas op log. */
+export type AgentCanvasNodeMetadata = {
+  agentRunId?: string;
+  agentPageId?: string;
+  agentBlockId?: string;
+  agentPageMarker?: boolean;
+};
+
 export type ChartNodeData = {
   type: "chart";
   assetId: string;
@@ -23,7 +31,7 @@ export type ChartNodeData = {
   assistantRowsComplete?: boolean;
   width: number;
   height: number;
-};
+} & AgentCanvasNodeMetadata;
 
 export type TextNodeData = {
   type: "text";
@@ -33,14 +41,14 @@ export type TextNodeData = {
   color?: string;
   width: number;
   height: number;
-};
+} & AgentCanvasNodeMetadata;
 
 export type SectionNodeData = {
   type: "section";
   title: string;
   width: number;
   height: number;
-};
+} & AgentCanvasNodeMetadata;
 
 export type StickyNoteColor = "yellow" | "blue" | "green" | "pink";
 
@@ -51,7 +59,7 @@ export type StickyNoteNodeData = {
   width: number;
   height: number;
   rotation?: number;
-};
+} & AgentCanvasNodeMetadata;
 
 export type DividerNodeData = {
   type: "divider";
@@ -59,7 +67,7 @@ export type DividerNodeData = {
   lineStyle: "solid" | "dashed";
   width: number;
   rotation?: number;
-};
+} & AgentCanvasNodeMetadata;
 
 export type WorkspaceNodeData = ChartNodeData | TextNodeData | SectionNodeData | StickyNoteNodeData | DividerNodeData;
 

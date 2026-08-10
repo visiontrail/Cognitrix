@@ -37,7 +37,7 @@ import { ChartPreview } from "@/components/charts/chart-preview";
 import { cn } from "@/lib/utils";
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { retryAgentRunItem, stopAgentRun } from "@/lib/chat/agent-canvas";
-import { AGENT_ERROR_CHART_TYPE } from "@/lib/workspace/agent-canvas-layout";
+import { AGENT_ERROR_CHART_TYPE, parseAgentBlockId } from "@/lib/workspace/agent-canvas-layout";
 import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
 import { toChartAsset } from "@/hooks/use-chat";
 import { beginCanvasChartEdit } from "@/lib/chat/canvas-chart-edit";
@@ -102,7 +102,11 @@ export function WebDesignCanvas() {
   // workspace, user editing is disabled and a banner offers a stop control.
   const activeAgentRun = useUIStore((s) => s.activeAgentRun);
   const clearAgentRun = useUIStore((s) => s.clearAgentRun);
-  const agentLocked = Boolean(activeAgentRun && activeAgentRun.workspaceId === activeWorkspaceId);
+  const agentLocked = Boolean(
+    activeAgentRun &&
+    activeAgentRun.workspaceId === activeWorkspaceId &&
+    (!activeAgentRun.canvasFormat || activeAgentRun.canvasFormat === "web-design")
+  );
   const [stopping, setStopping] = useState(false);
 
   const handleStopRun = async () => {
@@ -695,18 +699,6 @@ function ChartBlock({
       )}
     </section>
   );
-}
-
-/** Parse `agent-block-<run_id>-<seq>` back into its retry coordinates. */
-function parseAgentBlockId(blockId: string): { runId: string; seq: number } | null {
-  if (!blockId.startsWith("agent-block-")) return null;
-  const rest = blockId.slice("agent-block-".length);
-  const lastDash = rest.lastIndexOf("-");
-  if (lastDash <= 0) return null;
-  const runId = rest.slice(0, lastDash);
-  const seq = Number(rest.slice(lastDash + 1));
-  if (!runId || !Number.isFinite(seq)) return null;
-  return { runId, seq };
 }
 
 /**

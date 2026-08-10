@@ -4,6 +4,14 @@ import { getCanvasFormatPreset, getCanvasPageStride } from "./canvas-formats";
 
 export type CanvasPoint = { x: number; y: number };
 export type CanvasSize = { width: number; height: number };
+export type CanvasPlacementOptions = {
+  /** First y-coordinate considered on an unbounded canvas. */
+  startY?: number;
+  /** Optional horizontal content band for coherent unbounded layouts. */
+  contentWidth?: number;
+  /** First physical page considered on a bounded canvas. */
+  startPageIndex?: number;
+};
 
 type Rect = { left: number; top: number; right: number; bottom: number };
 
@@ -80,7 +88,8 @@ export function findOpenCanvasPosition(
   nodes: Node[] | WorkspaceNode[],
   size: CanvasSize,
   canvasFormatId: WorkspaceCanvasFormatId = "infinite",
-  pageCount = 1
+  pageCount = 1,
+  options: CanvasPlacementOptions = {}
 ): CanvasPoint {
   const obstacles = (nodes as Node[])
     .filter((node) => !node.hidden)
@@ -94,15 +103,27 @@ export function findOpenCanvasPosition(
   const bounded = preset.width != null && preset.height != null;
 
   if (!bounded) {
+    const startY = Number.isFinite(options.startY)
+      ? Math.max(INFINITE_START.y, Number(options.startY))
+      : INFINITE_START.y;
+    const contentWidth = Number.isFinite(options.contentWidth)
+      ? Math.max(size.width, Number(options.contentWidth))
+      : null;
     if (obstacles.length === 0) {
-      return { x: INFINITE_START.x, y: INFINITE_START.y };
+      return { x: INFINITE_START.x, y: startY };
     }
     for (let row = 0; row < MAX_SCAN_ROWS; row += 1) {
       for (let col = 0; col < INFINITE_COLUMNS; col += 1) {
         const candidate = {
           x: INFINITE_START.x + col * stepX,
-          y: INFINITE_START.y + row * stepY,
+          y: startY + row * stepY,
         };
+        if (
+          contentWidth != null &&
+          candidate.x + size.width > INFINITE_START.x + contentWidth
+        ) {
+          continue;
+        }
         if (!collides(toCandidateRect(candidate, size), obstacles)) {
           return candidate;
         }
@@ -110,7 +131,7 @@ export function findOpenCanvasPosition(
     }
     const lowestBottom = obstacles.reduce(
       (max, rect) => Math.max(max, rect.bottom),
-      INFINITE_START.y
+      startY
     );
     return { x: INFINITE_START.x, y: lowestBottom + PLACEMENT_GAP };
   }
@@ -121,9 +142,13 @@ export function findOpenCanvasPosition(
   const maxRows = Math.max(1, Math.floor((usableHeight + PLACEMENT_GAP) / stepY));
   const stride = getCanvasPageStride(preset);
   const pages = Math.max(1, Math.trunc(pageCount));
+  const startPageIndex = Math.min(
+    pages - 1,
+    Math.max(0, Math.trunc(options.startPageIndex ?? 0))
+  );
 
   // Fill page one first, then spill onto each subsequent page.
-  for (let page = 0; page < pages; page += 1) {
+  for (let page = startPageIndex; page < pages; page += 1) {
     const pageTop = page * stride;
     for (let row = 0; row < maxRows; row += 1) {
       for (let col = 0; col < columns; col += 1) {

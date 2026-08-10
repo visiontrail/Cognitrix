@@ -801,6 +801,7 @@ async def list_agent_run_ops(
         "run_id": run_id,
         "status": run["status"],
         "page_id": run["page_id"],
+        "canvas_format": run["canvas_format"],
         "summary": run.get("summary"),
         # Each op carries its own page: a multi-page run must replay onto the
         # same pages it was built on, not collapse back onto the run root.

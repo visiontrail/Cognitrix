@@ -17,7 +17,7 @@
 
 ## 3. Agent-mode runtime (backend)
 
-- [x] 3.1 Route selection: `agent_mode: true` + `canvas_format` on `POST /chat/stream`; reject non-`web-design` formats with a typed error before planning; require workspace editor role at run start
+- [x] 3.1 Route selection: `agent_mode: true` + `canvas_format` on `POST /chat/stream`; accept every publishable format and reject unknown formats with a typed error before planning; require workspace editor role at run start
 - [x] 3.2 Outline phase: budgeted planning turn with read-only tools producing the outline JSON; emit `confirmation_required` (`confirmation_type: dashboard_outline`) + `final` `awaiting_confirmation`, persisting pending state on the run record (reuse the multi-chart confirmation state-machine pattern)
 - [x] 3.3 Confirmation handling: validate `confirmation_id`, honor deselected items, reject stale/oversized confirmations; `auto_approve: true` path skips the pause but still records the outline
 - [x] 3.4 Execution phase: SDK loop under agent-mode budgets (`max_turns`, watchdog timeout), first op `create_page` (`agent-<run_id>`), between-step semantic-shadow summary injected into context, per-item failure isolation, watchdog finalization when `finish_dashboard` never arrives
@@ -27,7 +27,7 @@
 
 ## 4. Frontend: mode entry and approval
 
-- [x] 4.1 Agent-mode toggle in the chat composer (visible only when the backend reports the flag; follow the web-search toggle precedent), sending `agent_mode` + `canvas_format`; prompt a one-click switch when the active canvas is not web-design
+- [x] 4.1 Agent-mode toggle in the chat composer (visible only when the backend reports the flag; follow the web-search toggle precedent), sending `agent_mode` + the active `canvas_format` without changing formats
 - [x] 4.2 Outline approval card (reuse the multi-chart confirmation UI pattern): sections + chart items with deselection, approve/cancel, count display; "skip approval" preference persisted in localStorage and sent as `auto_approve`
 - [x] 4.3 i18n dictionary entries for all new UI strings (zh/en)
 - [x] 4.4 Vitest: toggle gating, format-switch prompt, approval card select/approve/cancel, auto-approve preference
@@ -35,12 +35,12 @@
 ## 5. Frontend: op application and run UX
 
 - [x] 5.1 `canvas_op` SSE handling in the chat stream consumer; op dispatcher with deterministic block ids and idempotent skip of already-applied ops
-- [x] 5.2 Workspace-store actions: create run page (sidebar section with server-provided id), apply section/text/chart/error-placeholder ops via `findSlot`/preset→grid-span mapping in strict seq order, mark dirty for autosave
-- [x] 5.3 Soft lock: run-active flag in `ui-store`, disable web-design drag/resize/edit while running, banner with stop button wired to the stop endpoint, lock cleared on all terminal statuses
+- [x] 5.2 Workspace-store actions: create a web-design run page or a provenance-tagged React Flow run region, apply section/text/chart/error-placeholder ops via format-specific deterministic placement, auto-paginate bounded formats, mark dirty for autosave
+- [x] 5.3 Soft lock: run-active flag in `ui-store`, disable editing in the run's target format while running, banner with stop button wired to the stop endpoint, lock cleared on all terminal statuses
 - [x] 5.4 Error placeholder block component with retry (re-executes the single item; success replaces the placeholder in place)
 - [x] 5.5 Reconnect/replay: on load, query active/latest run, replay ops after last applied seq onto the run page, re-attach to live tail when still running
 - [x] 5.6 Run-level undo ("撤销本次生成"): delete the run's page via the existing sidebar-item removal cascade; assets remain in the library
-- [x] 5.7 Vitest: op application determinism (same ops → same layout), idempotent replay, soft-lock behavior, undo removes only the run page; Playwright e2e: happy-path run on the web-design canvas
+- [x] 5.7 Vitest: op application determinism, idempotent replay, in-bounds placement on every fixed publish preset, soft-lock behavior, format-aware undo; Playwright e2e: happy-path runs on web-design, infinite, and fixed-page canvases
 
 ## 6. Quality gates and rollout
 

@@ -9,6 +9,7 @@ import {
   tailAgentRun,
 } from "@/lib/chat/agent-canvas";
 import { applyAgentCanvasWireOp, type AgentCanvasOpDeps } from "@/lib/workspace/agent-canvas-ops";
+import { isAgentNodeForRun } from "@/lib/workspace/agent-canvas-layout";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
@@ -54,9 +55,12 @@ export function useAgentCanvasRunRecovery({ enabled }: { enabled: boolean }) {
       const isRunning = RUNNING_STATUSES.has(run.status);
 
       if (!isRunning) {
-        const pageExists = (useWorkspaceStore.getState().webDesign.pages ?? []).some(
-          (page) => page.id === run.pageId
-        );
+        const workspace = useWorkspaceStore.getState();
+        const pageExists =
+          (workspace.webDesign.pages ?? []).some((page) => page.id === run.pageId) ||
+          [workspace.nodes, ...Object.values(workspace.nodesByFormat)].some((nodes) =>
+            (nodes ?? []).some((node) => isAgentNodeForRun(node, run.runId))
+          );
         useUIStore.getState().clearAgentRun(run.runId);
         if (!pageExists) return;
         const { ops } = await fetchAgentRunOps(run.runId, 0);
@@ -71,6 +75,7 @@ export function useAgentCanvasRunRecovery({ enabled }: { enabled: boolean }) {
         runId: run.runId,
         pageId: run.pageId,
         workspaceId,
+        canvasFormat: run.canvasFormat,
       });
       const { ops } = await fetchAgentRunOps(run.runId, 0);
       if (cancelled) {

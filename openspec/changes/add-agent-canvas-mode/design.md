@@ -25,7 +25,6 @@ Constraints:
 **Non-Goals:**
 
 - Editing/iterating an existing canvas page (`read_canvas`, block mutation on user-authored content) — explicitly deferred; every run starts from a fresh page.
-- Free-layout and fixed-size canvas formats (the wire contract carries the format; only `web-design` is implemented in v1).
 - Concurrent user + agent editing of the same page (soft lock instead).
 - Server-side canvas document / CRDT / multi-writer collaboration.
 - Auto-publishing the result (`/p/{token}` flow remains a manual follow-up).
@@ -93,13 +92,13 @@ Stop: `POST /chat/agent-runs/{run_id}/stop` sets a cancel flag checked between t
 
 - *Alternative — cancel the run on disconnect*: rejected; it turns a reflexive F5 into losing a multi-minute task, the exact failure long-horizon mode exists to avoid.
 
-### D8. Fresh page per run; undo = delete the page
+### D8. Fresh page or isolated run region per run; undo is provenance-scoped
 
-The first op of every run is `create_page {page_id, title}`; the client creates a new web-design sidebar section/page and all subsequent ops target it. Existing pages are never touched, which is why v1 needs no canvas-read tool surface. "撤销本次生成" removes the page via the existing sidebar-item removal path (which already cascades page + zones).
+The first op of every run is `create_page {page_id, title}`. On `web-design`, the client creates a new sidebar section/page. On the infinite canvas it creates an isolated, collision-free vertical region; on fixed formats it starts on a fresh physical page and spills onto additional bounded pages as required. Generated React Flow nodes carry run/page/block provenance. "撤销本次生成" removes the web page cascade or all provenance-matching nodes without touching user-authored content.
 
 ### D9. Soft lock during a run
 
-While a run is active for the visible workspace, the web-design editor disables drag/resize/edit interactions and shows a banner ("Agent 正在编排此页面") with a stop button. Chat remains usable. Lock state lives in `ui-store` keyed by the run, cleared on any terminal run status.
+While a run is active for the visible workspace and target format, that canvas editor disables drag/resize/edit interactions and shows a banner ("Agent 正在编排此页面") with a stop button. Chat remains usable and other canvas-format buckets remain accessible. Lock state lives in `ui-store` keyed by the run and format, cleared on any terminal run status.
 
 ### D10. Budgets, flags, and enforcement
 
@@ -109,9 +108,9 @@ New settings (all parsed in `config.py`): `AGENT_CANVAS_MODE_ENABLED` (default `
 
 Starting a run requires workspace **editor** role (the same bar as `PUT /canvas-snapshot`); the outline phase alone still requires editor since its purpose is canvas mutation. Audit events are metadata-only, consistent with the existing philosophy: `agent_run_start`, `agent_run_finish` (status, op count, chart count, duration), `agent_run_stop`, `agent_canvas_op` (type + duration only — never titles, SQL, or data).
 
-### D12. Format gating at the contract level
+### D12. Format routing at the contract level
 
-The chat request carries `canvas_format` (the format the user's panel is on — the product principle is "operate the canvas the user is looking at"). v1 implements only `web-design`: any other format is rejected before Phase 1 with a typed error the UI preempts by offering a one-click switch to web-design. New formats later add an executor without changing the wire contract.
+The chat request carries `canvas_format` (the format the user's panel is on — the product principle is "operate the canvas the user is looking at"). Every publishable format is accepted; unknown or removed format ids are rejected before Phase 1. The server repeats `canvas_format` on outline, op, replay, active-run, retry, and terminal payloads so reconnecting clients never infer the target from current UI state. The client routes web-design ops into the grid/page engine and all other formats into bounded/unbounded React Flow placement without changing the active format.
 
 ### D13. Agent dashboard chart types are a strict, executable catalog
 

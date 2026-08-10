@@ -799,6 +799,7 @@ async function streamAssistantResponse({
               runId: op.runId,
               pageId: op.pageId,
               workspaceId,
+              canvasFormat: op.canvasFormat,
             });
           }
           applyAgentCanvasWireOp(op, canvasOpDeps);
@@ -839,6 +840,7 @@ async function streamAssistantResponse({
             agentRun = {
               runId: payload.run_id,
               pageId: payload.page_id,
+              canvasFormat: normalizeRunCanvasFormat(payload.canvas_format),
               status,
               placedCount: asNumber(payload.placed_count),
               failedCount: asNumber(payload.failed_count),
@@ -989,6 +991,7 @@ function mapAgentRunOutline(
   return {
     confirmationId: String(payload.confirmation_id ?? ""),
     runId: String(payload.run_id ?? ""),
+    canvasFormat: normalizeRunCanvasFormat(payload.canvas_format),
     pageTitle: String(payload.page_title ?? ""),
     sections,
     proposedChartCount: asNumber(payload.proposed_chart_count),
@@ -1001,6 +1004,21 @@ function mapAgentRunOutline(
     pagesTruncated: Boolean(payload.pages_truncated),
     approved,
   };
+}
+
+function normalizeRunCanvasFormat(value: unknown): import("@/types/workspace").WorkspaceCanvasFormatId {
+  switch (value) {
+    case "infinite":
+    case "web-design":
+    case "a4-portrait":
+    case "a4-landscape":
+    case "a3-portrait":
+    case "letter-portrait":
+    case "wide-16-9":
+      return value;
+    default:
+      return "web-design";
+  }
 }
 
 function mapMultiChartConfirmation(payload: Record<string, unknown>): MultiChartConfirmation {

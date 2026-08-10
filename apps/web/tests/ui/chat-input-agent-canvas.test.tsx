@@ -131,28 +131,23 @@ describe("ChatInput agent-mode switch", () => {
     expect(sendMutate.mock.calls[1][0]).toMatchObject({ sessionId: "s1", agentCanvas: false });
   });
 
-  it("prompts a one-click format switch and blocks sending on other formats", async () => {
+  it.each([
+    "infinite",
+    "a4-portrait",
+    "a4-landscape",
+    "a3-portrait",
+    "letter-portrait",
+    "wide-16-9",
+  ] as const)("sends Agent mode directly on the %s canvas", async (canvasFormat) => {
     capabilities.agentCanvasModeEnabled = true;
-    useWorkspaceStore.setState({ canvasFormat: { id: "infinite" } });
+    useWorkspaceStore.setState({ canvasFormat: { id: canvasFormat } });
     const user = userEvent.setup();
     renderInput();
 
     await user.click(screen.getByTestId("agent-mode-toggle"));
-
-    const prompt = screen.getByTestId("agent-canvas-format-prompt");
-    expect(prompt).toBeInTheDocument();
-
-    // Sending is blocked while the format mismatches.
     const input = screen.getByLabelText("Chat Input");
     await user.type(input, "生成销售概览仪表盘{Enter}");
-    expect(sendMutate).not.toHaveBeenCalled();
-
-    // One-click switch clears the prompt and unblocks sending.
-    await user.click(screen.getByRole("button", { name: "Switch to web design" }));
-    expect(useWorkspaceStore.getState().canvasFormat.id).toBe("web-design");
     expect(screen.queryByTestId("agent-canvas-format-prompt")).not.toBeInTheDocument();
-
-    await user.type(screen.getByLabelText("Chat Input"), "{Enter}");
     expect(sendMutate).toHaveBeenCalledTimes(1);
     expect(sendMutate.mock.calls[0][0]).toMatchObject({ agentCanvas: true });
   });

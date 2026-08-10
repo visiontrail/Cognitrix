@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { CanvasChartEditTarget } from "@/types/chat";
+import type { WorkspaceCanvasFormatId } from "@/types/workspace";
 
 export type ActivePanel = "chat" | "workspace" | "both" | "catalog";
 
@@ -9,6 +10,7 @@ export type ActiveAgentRun = {
   runId: string;
   pageId: string;
   workspaceId: string;
+  canvasFormat?: WorkspaceCanvasFormatId;
 };
 
 type UIState = {

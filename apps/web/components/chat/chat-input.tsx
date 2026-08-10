@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { BookMarked, ChevronRight, FileSpreadsheet, LayoutDashboard, Plus, Send, Square, WandSparkles, X } from "lucide-react";
+import { BookMarked, ChevronRight, FileSpreadsheet, Plus, Send, Square, WandSparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
@@ -105,8 +105,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const chartOptions = useMemo(() => getQueryChartTypeOptions(locale), [locale]);
   const capabilities = useBackendCapabilities();
   const activeOptions = useMemo(() => selectedGenerationOptions(selectedOptions), [selectedOptions]);
-  const canvasFormatId = useWorkspaceStore((s) => s.canvasFormat.id);
-  const setCanvasFormat = useWorkspaceStore((s) => s.setCanvasFormat);
   // Agent mode is a sticky per-conversation mode, not a per-message option: it
   // lives in the chat store keyed by session, survives sends and reloads, and
   // is flipped only by its own switch. Offered only when the backend reports
@@ -115,9 +113,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const agentMode = useChatStore((s) => s.agentModeBySession[sessionId] === true) && agentModeAvailable;
   const setAgentMode = useChatStore((s) => s.setAgentMode);
   const agentOption = findGenerationOption("agent_canvas");
-  // Agent mode v1 operates on the web-design canvas only: prompt a one-click
-  // switch instead of letting the backend reject the turn.
-  const agentFormatMismatch = agentMode && !chartEditTarget && canvasFormatId !== "web-design";
   const columns = useWorkspaceColumns(activeWorkspaceId);
   const approvalOptions = useMemo(
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
@@ -202,7 +197,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const handleSubmit = useCallback(() => {
     const content = composerText.trim();
     if ((!content && !selectedFile) || isSending || inputLockedByApproval) return;
-    if (agentFormatMismatch) return;
     const chartType = resolveSelectedChartType({
       explicitSelection: selectedChartType,
       text: content,
@@ -234,7 +228,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       textareaRef.current?.focus();
     });
   }, [
-    agentFormatMismatch,
     agentMode,
     composerText,
     inputLockedByApproval,
@@ -634,26 +627,6 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
                 </div>
               );
             })}
-          </div>
-        ) : null}
-
-        {agentFormatMismatch ? (
-          <div
-            data-testid="agent-canvas-format-prompt"
-            className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-comfortable border border-terracotta/30 bg-terracotta/10 px-3 py-2"
-          >
-            <p className="flex items-center gap-1.5 text-caption text-charcoal-warm">
-              <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-terracotta" />
-              {t("chat.agentCanvas.switchFormatPrompt")}
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setCanvasFormat({ id: "web-design" })}
-            >
-              {t("chat.agentCanvas.switchFormatAction")}
-            </Button>
           </div>
         ) : null}
 

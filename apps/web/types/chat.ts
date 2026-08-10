@@ -133,6 +133,7 @@ export type AgentRunOutlineSection = {
 export type AgentRunOutline = {
   confirmationId: string;
   runId: string;
+  canvasFormat: import("./workspace").WorkspaceCanvasFormatId;
   pageTitle: string;
   sections: AgentRunOutlineSection[];
   proposedChartCount: number;
@@ -158,6 +159,7 @@ export type AgentRunConfirmationSubmission = {
 export type AgentRunSummary = {
   runId: string;
   pageId: string;
+  canvasFormat: import("./workspace").WorkspaceCanvasFormatId;
   status: string;
   placedCount: number;
   failedCount: number;

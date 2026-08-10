@@ -2,6 +2,8 @@ import { API_BASE_URL } from "@/lib/api-base";
 import { getAuthorizationHeader } from "@/lib/auth/session";
 import { parseSSEStream } from "@/lib/chat/sse";
 import { isRecord } from "@/lib/utils";
+import { CANVAS_FORMAT_PRESETS } from "@/lib/workspace/canvas-formats";
+import type { WorkspaceCanvasFormatId } from "@/types/workspace";
 
 /**
  * Client surface for agent-canvas runs: wire types for `canvas_op` SSE events,
@@ -18,6 +20,7 @@ export type AgentCanvasOpType =
 
 export type AgentCanvasWireOp = {
   runId: string;
+  canvasFormat: WorkspaceCanvasFormatId;
   seq: number;
   opType: AgentCanvasOpType;
   pageId: string;
@@ -28,11 +31,23 @@ export type AgentCanvasRunInfo = {
   runId: string;
   workspaceId: string;
   pageId: string;
+  canvasFormat: WorkspaceCanvasFormatId;
   status: string;
   lastSeq: number;
 };
 
 const AUTO_APPROVE_STORAGE_KEY = "cognitrix.agentCanvas.autoApprove";
+const CANVAS_FORMAT_IDS = new Set<WorkspaceCanvasFormatId>(
+  CANVAS_FORMAT_PRESETS.map((preset) => preset.id)
+);
+
+function normalizeAgentCanvasFormat(value: unknown): WorkspaceCanvasFormatId {
+  const format = String(value ?? "");
+  // Old persisted runs and pre-format wire events were web-design-only.
+  return CANVAS_FORMAT_IDS.has(format as WorkspaceCanvasFormatId)
+    ? (format as WorkspaceCanvasFormatId)
+    : "web-design";
+}
 
 const configuredClearance = Number(process.env.NEXT_PUBLIC_DEFAULT_CLEARANCE ?? 1);
 const DEFAULT_AUTH_CONTEXT = {
@@ -79,6 +94,7 @@ export function parseAgentCanvasWireOp(payload: unknown): AgentCanvasWireOp | nu
   }
   return {
     runId,
+    canvasFormat: normalizeAgentCanvasFormat(payload.canvas_format),
     seq,
     opType,
     pageId,
@@ -104,6 +120,7 @@ export async function fetchActiveAgentRun(workspaceId: string): Promise<AgentCan
     runId: String(run.run_id ?? ""),
     workspaceId: String(run.workspace_id ?? ""),
     pageId: String(run.page_id ?? ""),
+    canvasFormat: normalizeAgentCanvasFormat(run.canvas_format),
     status: String(run.status ?? ""),
     lastSeq: Number(run.last_seq ?? 0) || 0,
   };
@@ -124,6 +141,7 @@ export async function fetchAgentRunOps(
   const body = (await response.json()) as {
     status?: string;
     page_id?: string;
+    canvas_format?: string;
     ops?: Array<Record<string, unknown>>;
   };
   const pageId = String(body.page_id ?? "");
@@ -131,6 +149,7 @@ export async function fetchAgentRunOps(
     .map((op) =>
       parseAgentCanvasWireOp({
         run_id: runId,
+        canvas_format: op.canvas_format ?? body.canvas_format,
         // Per-op page first: a multi-page run replays onto the pages it was
         // built on. The run-level page id is the fallback for ops written
         // before multi-page runs existed.

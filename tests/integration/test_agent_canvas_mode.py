@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import pandas as pd
+import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 from fastapi.testclient import TestClient
 
@@ -183,6 +184,63 @@ def _agent_mode_body(workspace_id: str, **extra: Any) -> dict[str, Any]:
         "canvas_format": "web-design",
         **extra,
     }
+
+
+@pytest.mark.parametrize(
+    "canvas_format",
+    [
+        "infinite",
+        "web-design",
+        "a4-portrait",
+        "a4-landscape",
+        "a3-portrait",
+        "letter-portrait",
+        "wide-16-9",
+    ],
+)
+def test_outline_accepts_every_publishable_canvas_format(
+    monkeypatch, tmp_path: Path, canvas_format: str
+) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name=f"Canvas {canvas_format}")
+        _seed_workspace_dataset(workspace_id)
+        _install_scripted_canvas_client([_outline_script])
+
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, canvas_format=canvas_format),
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            events, _ = read_sse_events(response)
+
+    assert not [event for event in events if event["event"] == "error"]
+    confirmation = next(
+        event["data"] for event in events if event["event"] == "confirmation_required"
+    )
+    assert confirmation["canvas_format"] == canvas_format
+
+
+def test_outline_rejects_unknown_canvas_format_before_planning(monkeypatch, tmp_path: Path) -> None:
+    _set_canvas_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        headers = auth_headers(client, user_id="admin", project_id="north", role="admin")
+        workspace_id = _create_workspace(client, headers, name="Unsupported Canvas")
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=_agent_mode_body(workspace_id, canvas_format="poster-custom"),
+            headers=headers,
+        ) as response:
+            events, _ = read_sse_events(response)
+
+    assert events[0]["event"] == "error"
+    assert events[0]["data"]["code"] == "AGENT_CANVAS_FORMAT_UNSUPPORTED"
 
 
 def test_full_outline_approve_run_completed(monkeypatch, tmp_path: Path) -> None:

@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: canvas_op is a new SSE event type with a stable contract
-Agent-mode runs SHALL emit `canvas_op` SSE events alongside the existing event types. Every `canvas_op` payload carries `run_id`, `seq`, `op_type` (`create_page`, `add_section`, `add_text_block`, `place_chart`, `error_placeholder`), an op-type-specific payload, and deterministic block ids derived from `run_id` + `seq`. Consumers that do not understand `canvas_op` are unaffected because the event type is additive.
+Agent-mode runs SHALL emit `canvas_op` SSE events alongside the existing event types. Every `canvas_op` payload carries `run_id`, `canvas_format`, `seq`, `op_type` (`create_page`, `add_section`, `add_text_block`, `place_chart`, `error_placeholder`), an op-type-specific payload, and deterministic block ids derived from `run_id` + `seq`. Consumers that do not understand `canvas_op` are unaffected because the event type is additive.
 
 #### Scenario: Ops stream during execution
 - **WHEN** an approved run places its first chart
@@ -13,19 +13,19 @@ Agent-mode runs SHALL emit `canvas_op` SSE events alongside the existing event t
 - **WHEN** a non-agent-mode turn streams
 - **THEN** no `canvas_op` events are emitted and all existing event types behave as before
 
-### Requirement: Every run begins by creating a fresh web-design page
-The first op of every run SHALL be `create_page` with a server-generated `page_id` (`agent-<run_id>`) and a title. The client creates a new web-design sidebar section/page with that id and applies all subsequent ops of the run to that page only. Pre-existing pages and their content MUST never be modified by a run.
+### Requirement: Every run begins by creating a fresh page or isolated region
+The first op of every run SHALL be `create_page` with a server-generated `page_id` (`agent-<run_id>`), canvas format, and title. The client creates a web-design sidebar page, an isolated infinite-canvas region, or a fresh bounded physical page as appropriate. Pre-existing content MUST never be modified by a run.
 
-#### Scenario: New page created on run start
+#### Scenario: New target created on run start
 - **WHEN** the client receives the run's `create_page` op
-- **THEN** a new web-design page with the server-provided id appears in the sidebar and becomes the active page
+- **THEN** a new target with the server-provided page id appears in the recorded canvas format
 
 #### Scenario: Existing content untouched
-- **WHEN** a run executes on a workspace whose web-design canvas already has pages
-- **THEN** no zone, text zone, or sidebar item outside the run's page is created, modified, or removed
+- **WHEN** a run executes on a workspace whose target canvas already has content
+- **THEN** no page, node, zone, text zone, or sidebar item outside the run target is modified or removed
 
 ### Requirement: The client computes all geometry deterministically
-On receiving ops, the client SHALL derive block coordinates using the existing deterministic layout engine (slot finding and compaction) in strict `seq` order, mapping each `size_preset` to fixed grid spans. Given the same op sequence on an empty page, the resulting layout MUST be identical across sessions and reloads.
+On receiving ops, the client SHALL derive block coordinates using the format-specific deterministic layout engine in strict `seq` order, mapping each `size_preset` to a grid span or pixel footprint. Given the same op sequence and starting snapshot, the resulting layout MUST be identical across sessions and reloads. Bounded formats MUST add physical pages rather than place nodes outside page boundaries.
 
 #### Scenario: Preset maps to grid span
 - **WHEN** a `place_chart` op with `size_preset: kpi` is applied
@@ -65,22 +65,22 @@ A failed chart item SHALL appear on the run's page as an error placeholder block
 - **THEN** the placeholder is replaced by the chart block without moving other blocks
 
 ### Requirement: The canvas is soft-locked during an active run
-While a run is active for the visible workspace, the web-design editor SHALL disable user drag, resize, and edit interactions and display a run banner with a stop control. Chat remains fully usable. The lock MUST clear on every terminal run status.
+While a run is active for the visible workspace, the target canvas-format editor SHALL disable user drag, resize, and edit interactions and display a run banner with a stop control. Chat remains fully usable. The lock MUST clear on every terminal run status.
 
 #### Scenario: Editing disabled during run
 - **WHEN** a run is `running` on the visible workspace
-- **THEN** block drag/resize/edit interactions on the web-design canvas are disabled and a banner with a stop button is shown
+- **THEN** block drag/resize/edit interactions on the target canvas format are disabled and a banner with a stop button is shown
 
 #### Scenario: Lock released on completion
 - **WHEN** the run reaches any terminal status (`completed`, `stopped`, `failed`, partial)
 - **THEN** the soft lock clears and normal editing is restored
 
-### Requirement: A run can be undone by deleting its page
-The UI SHALL offer a run-level undo that removes the run's page (cascading its zones and text zones) via the existing sidebar-item removal path. Undo affects only the run's page; chart assets remain in the asset library.
+### Requirement: A run can be undone without touching other content
+The UI SHALL offer a run-level undo that removes the run's web page cascade or all provenance-matching React Flow nodes. Undo affects only the run target; chart assets remain in the asset library.
 
-#### Scenario: Undo removes only the run's page
+#### Scenario: Undo removes only the run target
 - **WHEN** the user invokes undo for a completed run
-- **THEN** the run's page and all its blocks are removed, other pages are unchanged, and the run's chart assets remain available in the asset library
+- **THEN** the run's page or generated nodes are removed, other content is unchanged, and the run's chart assets remain available in the asset library
 
 ### Requirement: Persistence continues through the existing snapshot path
 Applied ops mark the workspace dirty and are persisted by the existing debounced canvas-snapshot autosave. The server MUST NOT write the canvas snapshot directly during a run; reconciliation after missed autosaves happens through idempotent op replay on load.

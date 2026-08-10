@@ -17,16 +17,20 @@ The chat composer SHALL expose an Agent-mode toggle only when the backend report
 - **WHEN** `AGENT_CANVAS_MODE_ENABLED=false`
 - **THEN** the guardrail tool whitelist excludes all canvas tools and the system prompt contains no agent-mode instructions
 
-### Requirement: Unsupported canvas formats are rejected before planning
-Agent mode v1 SHALL operate only on the `web-design` canvas format. When the request carries any other format, the backend MUST reject the turn with a typed error before the outline phase starts, and the UI SHALL offer a one-click switch to the web-design format before sending.
+### Requirement: Every publishable canvas format is supported
+Agent mode SHALL operate on `web-design`, `infinite`, and every configured fixed publish preset. The request, durable run, streamed/replayed ops, and terminal payload MUST preserve the selected format. Unknown formats MUST be rejected before the outline phase starts.
 
-#### Scenario: Non-web-design format rejected
-- **WHEN** an agent-mode request arrives with `canvas_format` other than `web-design`
-- **THEN** the backend emits an `error` SSE event with a stable error code and performs no planning, no tool calls, and no run creation
+#### Scenario: Publishable formats are accepted
+- **WHEN** an agent-mode request arrives with any configured publishable `canvas_format`
+- **THEN** the backend plans the run and every resulting canvas op targets that exact format
 
-#### Scenario: UI preempts the rejection
-- **WHEN** the user enables Agent mode while the workspace panel is on a non-web-design canvas
-- **THEN** the composer surfaces a prompt to switch to the web-design canvas before the message can be sent in Agent mode
+#### Scenario: Unknown format rejected
+- **WHEN** an agent-mode request carries an unknown `canvas_format`
+- **THEN** the backend emits `AGENT_CANVAS_FORMAT_UNSUPPORTED` before planning, tool calls, or run creation
+
+#### Scenario: Fixed canvas placement remains publishable
+- **WHEN** ops fill a bounded A4/A3/Letter/16:9 page
+- **THEN** placement continues on an automatically added physical page and every generated node remains inside a page boundary
 
 ### Requirement: Dashboard outline approval gates execution by default
 An agent-mode turn SHALL first produce a dashboard outline (ordered sections, chart items with one-line descriptions and size presets, estimated chart count) and MUST pause for user approval before any canvas mutation. The pause reuses the confirmation contract: a `confirmation_required` SSE event with `confirmation_type: dashboard_outline` and a terminal `final` event with `status: awaiting_confirmation`. The user can approve, deselect individual chart items, or cancel. The backend MUST validate the confirmation against the pending run state and reject stale or oversized confirmations.

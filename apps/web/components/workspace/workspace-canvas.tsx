@@ -21,10 +21,12 @@ import {
   PanOnScrollMode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Layers, Trash2, Ungroup } from "lucide-react";
+import { Bot, Layers, Square, Trash2, Ungroup } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useUIStore } from "@/stores/ui-store";
+import { stopAgentRun } from "@/lib/chat/agent-canvas";
 import {
   getCanvasFormatPreset,
   getCanvasPageCount,
@@ -83,6 +85,15 @@ export function WorkspaceCanvas() {
   const groupNodes = useWorkspaceStore((s) => s.groupNodes);
   const ungroupNodes = useWorkspaceStore((s) => s.ungroupNodes);
   const deleteCanvasPage = useWorkspaceStore((s) => s.deleteCanvasPage);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const activeAgentRun = useUIStore((s) => s.activeAgentRun);
+  const clearAgentRun = useUIStore((s) => s.clearAgentRun);
+  const agentLocked = Boolean(
+    activeAgentRun &&
+    activeAgentRun.workspaceId === activeWorkspaceId &&
+    (!activeAgentRun.canvasFormat || activeAgentRun.canvasFormat === canvasFormat.id)
+  );
+  const [stopping, setStopping] = useState(false);
 
   const [nodes, setNodes] = useNodesState(normalizeWorkspaceNodes(storeNodes));
   const [edges, setEdges] = useEdgesState(storeEdges as Edge[]);
@@ -124,6 +135,7 @@ export function WorkspaceCanvas() {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      if (agentLocked) return;
       const nextNodes = applyNodeChanges(changes, nodesRef.current);
       nodesRef.current = nextNodes;
       setNodes(nextNodes);
@@ -135,15 +147,29 @@ export function WorkspaceCanvas() {
         setStoreNodes(nextNodes as WorkspaceNode[]);
       }
     },
-    [setNodes, setStoreNodes]
+    [agentLocked, setNodes, setStoreNodes]
   );
 
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      if (agentLocked) return;
       setEdges((eds) => applyEdgeChanges(changes, eds));
     },
-    [setEdges]
+    [agentLocked, setEdges]
   );
+
+  const handleStopRun = useCallback(async () => {
+    if (!activeAgentRun || stopping) return;
+    setStopping(true);
+    try {
+      const status = await stopAgentRun(activeAgentRun.runId);
+      if (status && status !== "running" && status !== "awaiting_approval") {
+        clearAgentRun(activeAgentRun.runId);
+      }
+    } finally {
+      setStopping(false);
+    }
+  }, [activeAgentRun, clearAgentRun, stopping]);
 
   const selectedNodeIds = selectedNodes.map((node) => node.id);
   const selectedGroupableCount = selectedNodes.filter((node) => node.data.type !== "section").length;
@@ -206,7 +232,10 @@ export function WorkspaceCanvas() {
         nodeTypes={nodeTypes}
         defaultViewport={storeViewport}
         onViewportChange={setViewport}
-        deleteKeyCode={["Backspace", "Delete"]}
+        deleteKeyCode={agentLocked ? null : ["Backspace", "Delete"]}
+        nodesDraggable={!agentLocked}
+        nodesConnectable={!agentLocked}
+        elementsSelectable={!agentLocked}
         multiSelectionKeyCode="Shift"
         selectionOnDrag
         panOnDrag={[1, 2]}
@@ -217,7 +246,22 @@ export function WorkspaceCanvas() {
         proOptions={{ hideAttribution: true }}
         {...scrollPanProps}
       >
-        {selectedNodes.length > 1 && (
+        {agentLocked && (
+          <Panel position="top-center" className="canvas-export-ignore">
+            <div
+              data-testid="agent-run-banner"
+              className="flex items-center gap-3 rounded-md border border-[#d97757]/40 bg-[#fff6ef]/95 px-3 py-2 text-sm font-medium text-[#8a4a2f] shadow-whisper backdrop-blur dark:bg-[#2b201d]/95 dark:text-[#f4c98f]"
+            >
+              <Bot className="h-4 w-4 animate-pulse" />
+              <span>{t("workspace.webDesign.agentLockBanner")}</span>
+              <Button variant="outline" size="sm" onClick={handleStopRun} disabled={stopping}>
+                <Square className="h-3.5 w-3.5" />
+                {t("workspace.webDesign.agentLockStop")}
+              </Button>
+            </div>
+          </Panel>
+        )}
+        {!agentLocked && selectedNodes.length > 1 && (
           <Panel position="top-center" className="canvas-export-ignore">
             <div className="flex items-center gap-1 rounded-md border border-border-cream bg-ivory/95 px-2 py-1.5 text-xs text-stone-gray shadow-ring-warm backdrop-blur">
               <span className="px-1.5 font-medium text-near-black">
@@ -293,7 +337,7 @@ export function WorkspaceCanvas() {
                 )}
               </div>
             ))}
-            {pageCount > 1 &&
+            {!agentLocked && pageCount > 1 &&
               pageRects.map((rect) => (
                 <button
                   key={`delete-${rect.index}`}

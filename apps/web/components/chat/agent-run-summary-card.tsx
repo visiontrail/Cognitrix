@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { isAgentNodeForRun } from "@/lib/workspace/agent-canvas-layout";
 import type { AgentRunSummary } from "@/types/chat";
 
 /**
@@ -16,9 +17,15 @@ import type { AgentRunSummary } from "@/types/chat";
 export function AgentRunSummaryCard({ run }: { run: AgentRunSummary }) {
   const { t } = useI18n();
   const undoAgentRun = useWorkspaceStore((s) => s.undoAgentRun);
-  const pageExists = useWorkspaceStore((s) =>
-    (s.webDesign.pages ?? []).some((page) => page.id === run.pageId)
-  );
+  const pageExists = useWorkspaceStore((s) => {
+    if ((s.webDesign.pages ?? []).some((page) => page.id === run.pageId)) return true;
+    // Search every node bucket as well as the live bucket. This keeps undo
+    // available for legacy terminal events that predate `canvas_format`, and
+    // when the user switches formats before opening the summary card.
+    return [s.nodes, ...Object.values(s.nodesByFormat)].some((nodes) =>
+      (nodes ?? []).some((node) => isAgentNodeForRun(node, run.runId))
+    );
+  });
   const [undone, setUndone] = useState(false);
 
   const { icon, labelKey } = useMemo(() => {

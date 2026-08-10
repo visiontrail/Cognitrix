@@ -2,7 +2,7 @@
 
 import { memo, useRef, useState, useCallback } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { GripVertical, Trash2, Pencil, Check, X, Copy, ImageDown, WandSparkles } from "lucide-react";
+import { Check, Copy, GripVertical, ImageDown, Pencil, RotateCcw, Trash2, TriangleAlert, WandSparkles, X } from "lucide-react";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,10 @@ import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useUIStore } from "@/stores/ui-store";
 import { beginCanvasChartEdit } from "@/lib/chat/canvas-chart-edit";
+import { retryAgentRunItem } from "@/lib/chat/agent-canvas";
+import { AGENT_ERROR_CHART_TYPE, parseAgentBlockId } from "@/lib/workspace/agent-canvas-layout";
+import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
+import { toChartAsset } from "@/hooks/use-chat";
 import { generateId } from "@/lib/utils";
 import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
@@ -37,6 +41,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(nodeData.title);
   const [isCopying, setIsCopying] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   const handleSaveTitle = useCallback(() => {
     updateNode(id, { data: { ...nodeData, title: editTitle } as any });
@@ -101,6 +106,60 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
   const nodeWidth = width ?? nodeData.width ?? DEFAULT_CHART_NODE_WIDTH;
   const nodeHeight = height ?? nodeData.height ?? DEFAULT_CHART_NODE_HEIGHT;
   const chartHeight = Math.max(nodeHeight - CHART_NODE_HEADER_HEIGHT, 180);
+  const retryTarget = nodeData.agentBlockId ? parseAgentBlockId(nodeData.agentBlockId) : null;
+
+  const handleRetry = useCallback(async () => {
+    if (!retryTarget || isRetrying) return;
+    setIsRetrying(true);
+    try {
+      const op = await retryAgentRunItem(retryTarget.runId, retryTarget.seq);
+      const applied = op
+        ? applyAgentCanvasWireOp(op, {
+            toAsset: (rawSpec, meta) =>
+              toChartAsset(rawSpec, {
+                sessionId: "",
+                messageId: retryTarget.runId,
+                prompt: meta.title,
+                assetId: meta.assetId,
+                title: meta.title,
+              }),
+          })
+        : false;
+      if (applied) toast.success(t("workspace.webDesign.agentError.retrySuccess"));
+      else toast.error(t("workspace.webDesign.agentError.retryFailed"));
+    } catch {
+      toast.error(t("workspace.webDesign.agentError.retryFailed"));
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [isRetrying, retryTarget, t]);
+
+  if (nodeData.chartType === AGENT_ERROR_CHART_TYPE) {
+    return (
+      <div
+        data-testid="agent-error-placeholder"
+        className="flex flex-col items-center justify-center gap-2 rounded-comfortable border border-dashed border-red-300 bg-red-50/90 p-4 text-center shadow-whisper dark:border-red-500/40 dark:bg-red-950/30"
+        style={{ width: nodeWidth, height: nodeHeight }}
+      >
+        <TriangleAlert className="h-6 w-6 text-red-400" />
+        <p className="font-medium text-red-700 dark:text-red-300">{nodeData.title}</p>
+        <p className="line-clamp-3 text-xs text-red-500 dark:text-red-400">
+          {nodeData.spec.subtitle || t("workspace.webDesign.agentError.defaultMessage")}
+        </p>
+        <div className="nodrag mt-1 flex items-center gap-2">
+          {retryTarget && (
+            <Button size="sm" variant="outline" onClick={handleRetry} disabled={isRetrying}>
+              <RotateCcw className={`h-3.5 w-3.5 ${isRetrying ? "animate-spin" : ""}`} />
+              {t("workspace.webDesign.agentError.retry")}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => removeNode(id)}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

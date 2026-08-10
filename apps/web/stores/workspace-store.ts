@@ -10,6 +10,7 @@ import {
   normalizeCanvasFormat,
 } from "@/lib/workspace/canvas-formats";
 import { getCanvasBackgroundPreset } from "@/lib/workspace/canvas-backgrounds";
+import { findOpenCanvasPosition } from "@/lib/workspace/canvas-layout";
 import {
   WORKSPACE_SELECTION_STORAGE_KEY,
   WORKSPACE_SNAPSHOT_STORAGE_KEY,
@@ -34,6 +35,8 @@ import {
 } from "@/lib/workspace/web-design-layout";
 import {
   AGENT_ERROR_CHART_TYPE,
+  agentRunIdFromRootPageId,
+  isAgentNodeForRun,
   textStyleForSectionLevel,
   type AgentCanvasStoreOp,
 } from "@/lib/workspace/agent-canvas-layout";
@@ -137,6 +140,139 @@ type WorkspaceState = {
   /** Run-level undo: delete the run's page (cascade) and its chart nodes. */
   undoAgentRun: (pageId: string) => void;
 };
+
+function nodeFootprint(node: WorkspaceNode): { width: number; height: number } {
+  const data = node.data as { width?: number; height?: number };
+  const width = Number(node.width ?? node.measured?.width ?? data.width ?? 0);
+  const height = Number(node.height ?? node.measured?.height ?? data.height ?? 24);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 320,
+    height: Number.isFinite(height) && height > 0 ? height : 180,
+  };
+}
+
+function lowestNodeBottom(nodes: WorkspaceNode[]): number {
+  return nodes.reduce((lowest, node) => {
+    if (node.hidden || node.parentId) return lowest;
+    return Math.max(lowest, Number(node.position?.y ?? 0) + nodeFootprint(node).height);
+  }, 0);
+}
+
+function applyAgentOpToNodeCanvas(
+  state: WorkspaceState,
+  op: AgentCanvasStoreOp
+): { applied: boolean; patch: Partial<WorkspaceState> } {
+  const formatId = op.canvasFormat;
+  const isActive = state.canvasFormat.id === formatId;
+  const targetNodes = [...(isActive ? state.nodes : (state.nodesByFormat[formatId] ?? []))];
+  const nodeId = op.type === "create_page" ? op.node.id : op.node.id;
+  const existingIndex = targetNodes.findIndex((node) => node.id === nodeId);
+
+  if (existingIndex >= 0) {
+    if (op.type !== "place_chart") return { applied: false, patch: {} };
+    const existing = targetNodes[existingIndex];
+    if (
+      existing.data.type !== "chart" ||
+      existing.data.chartType !== AGENT_ERROR_CHART_TYPE ||
+      op.node.data.type !== "chart"
+    ) {
+      return { applied: false, patch: {} };
+    }
+    const existingData = existing.data;
+    const replacementData = op.node.data;
+    targetNodes[existingIndex] = {
+      ...op.node,
+      id: existing.id,
+      position: existing.position,
+      width: existing.width,
+      height: existing.height,
+      initialWidth: existing.initialWidth,
+      initialHeight: existing.initialHeight,
+      data: {
+        ...replacementData,
+        width: existingData.width,
+        height: existingData.height,
+      },
+    };
+    return {
+      applied: true,
+      patch: {
+        nodesByFormat: { ...state.nodesByFormat, [formatId]: targetNodes },
+        ...(isActive ? { nodes: targetNodes } : {}),
+        hasUnsavedChanges: true,
+      },
+    };
+  }
+
+  const preset = getCanvasFormatPreset(formatId);
+  const bounded = isBoundedCanvasFormat(preset);
+  const currentPageCount = getCanvasPageCount(formatId, state.canvasPages);
+  const runNodes = targetNodes.filter((node) => isAgentNodeForRun(node, op.runId));
+  const size = nodeFootprint(op.node);
+  let position: { x: number; y: number };
+  let nextPageCount = currentPageCount;
+
+  if (op.type === "create_page") {
+    if (bounded) {
+      const relevant = runNodes.length > 0 ? runNodes : targetNodes;
+      const startPage = relevant.length > 0 ? getMaxOccupiedCanvasPage(relevant, preset) + 1 : 0;
+      nextPageCount = Math.max(currentPageCount, startPage + 1);
+      position = findOpenCanvasPosition(
+        targetNodes,
+        size,
+        formatId,
+        nextPageCount,
+        { startPageIndex: startPage }
+      );
+    } else {
+      const relevant = runNodes.length > 0 ? runNodes : targetNodes;
+      const startY = relevant.length > 0 ? lowestNodeBottom(relevant) + 64 : 50;
+      position = findOpenCanvasPosition(targetNodes, size, formatId, 1, { startY });
+    }
+  } else {
+    const marker = runNodes.find(
+      (node) => node.data.agentPageId === op.pageId && node.data.agentPageMarker
+    );
+    if (!marker) return { applied: false, patch: {} };
+
+    if (bounded) {
+      const stride = getCanvasPageStride(preset);
+      const startPage = Math.max(0, Math.floor(Number(marker.position?.y ?? 0) / stride));
+      // Include one spare physical page so dense dashboard sections spill
+      // safely without ever landing outside a publishable page boundary.
+      const searchPageCount = Math.max(currentPageCount + 1, startPage + 2);
+      position = findOpenCanvasPosition(
+        targetNodes,
+        size,
+        formatId,
+        searchPageCount,
+        { startPageIndex: startPage }
+      );
+      const placedPage = Math.max(0, Math.floor(position.y / stride));
+      nextPageCount = Math.max(currentPageCount, placedPage + 1);
+    } else {
+      const markerSize = nodeFootprint(marker);
+      position = findOpenCanvasPosition(targetNodes, size, formatId, 1, {
+        startY: Number(marker.position?.y ?? 0) + markerSize.height + 24,
+        contentWidth: markerSize.width,
+      });
+    }
+  }
+
+  const placedNode: WorkspaceNode = { ...op.node, position };
+  targetNodes.push(placedNode);
+  return {
+    applied: true,
+    patch: {
+      nodesByFormat: { ...state.nodesByFormat, [formatId]: targetNodes },
+      ...(isActive ? { nodes: targetNodes } : {}),
+      ...(bounded && nextPageCount !== currentPageCount
+        ? { canvasPages: { ...state.canvasPages, [formatId]: nextPageCount } }
+        : {}),
+      hasUnsavedChanges: true,
+    },
+  };
+}
 
 function loadPersistedWorkspaceSelection(): PersistedWorkspaceSelection | null {
   const state = safeLoadFromStorage<Partial<PersistedWorkspaceSelection>>(WORKSPACE_SELECTION_STORAGE_KEY);
@@ -857,6 +993,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   applyAgentCanvasOp: (op) => {
     let applied = false;
     set((state) => {
+      if (op.canvasFormat !== "web-design") {
+        const result = applyAgentOpToNodeCanvas(state, op);
+        applied = result.applied;
+        return result.patch;
+      }
+
       const layout = ensureWebDesignPages(state.webDesign);
 
       if (op.type === "create_page") {
@@ -883,17 +1025,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const sidebar = hasParent
           ? appendSidebarChild(layout.sidebar, parentId, sidebarItem)
           : [...layout.sidebar, sidebarItem];
-        // Runs always target the web-design format (design D8/D12): stash the
-        // current format's nodes and surface the web-design bucket.
-        const nodesByFormat = { ...state.nodesByFormat, [state.canvasFormat.id]: state.nodes };
-        const edgesByFormat = { ...state.edgesByFormat, [state.canvasFormat.id]: state.edges };
+        const nodesByFormat = { ...state.nodesByFormat };
+        const edgesByFormat = { ...state.edgesByFormat };
+        const isWebDesignActive = state.canvasFormat.id === "web-design";
+        if (isWebDesignActive) {
+          nodesByFormat["web-design"] = state.nodes;
+          edgesByFormat["web-design"] = state.edges;
+        }
         applied = true;
         return {
-          nodes: nodesByFormat["web-design"] ?? [],
-          edges: edgesByFormat["web-design"] ?? [],
+          ...(isWebDesignActive
+            ? {
+                nodes: nodesByFormat["web-design"] ?? [],
+                edges: edgesByFormat["web-design"] ?? [],
+              }
+            : {}),
           nodesByFormat,
           edgesByFormat,
-          canvasFormat: { id: "web-design" },
           webDesign: {
             ...layout,
             sidebar,
@@ -1011,7 +1159,46 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => {
       const layout = ensureWebDesignPages(state.webDesign);
       const page = (layout.pages ?? []).find((item) => item.id === pageId);
-      if (!page) return {};
+      if (!page) {
+        const runId = agentRunIdFromRootPageId(pageId);
+        if (!runId) return {};
+        const removeFrom = (nodes: WorkspaceNode[] | undefined) =>
+          (nodes ?? []).filter((node) => !isAgentNodeForRun(node, runId));
+        const removedIds = new Set(
+          [
+            ...state.nodes,
+            ...Object.values(state.nodesByFormat).flatMap((nodes) => nodes ?? []),
+          ]
+            .filter((node) => isAgentNodeForRun(node, runId))
+            .map((node) => node.id)
+        );
+        if (!removedIds.size) return {};
+
+        const nodesByFormat = Object.fromEntries(
+          Object.entries(state.nodesByFormat).map(([format, nodes]) => [format, removeFrom(nodes)])
+        ) as Partial<Record<WorkspaceCanvasFormatId, WorkspaceNode[]>>;
+        const edgesByFormat = Object.fromEntries(
+          Object.entries(state.edgesByFormat).map(([format, edges]) => [
+            format,
+            (edges ?? []).filter(
+              (edge) => !removedIds.has(edge.source) && !removedIds.has(edge.target)
+            ),
+          ])
+        ) as Partial<Record<WorkspaceCanvasFormatId, WorkspaceEdge[]>>;
+        const nodes = removeFrom(state.nodes);
+        const edges = state.edges.filter(
+          (edge) => !removedIds.has(edge.source) && !removedIds.has(edge.target)
+        );
+        nodesByFormat[state.canvasFormat.id] = nodes;
+        edgesByFormat[state.canvasFormat.id] = edges;
+        return {
+          nodes,
+          edges,
+          nodesByFormat,
+          edgesByFormat,
+          hasUnsavedChanges: true,
+        };
+      }
 
       // Reuse the sidebar-item removal cascade (page + zones), then drop the
       // pages' chart nodes from the web-design bucket. Chart assets stay in

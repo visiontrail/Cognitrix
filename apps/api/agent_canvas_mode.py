@@ -26,7 +26,6 @@ from claude_agent_sdk import (
 )
 
 from .agent_canvas import (
-    CANVAS_FORMAT_WEB_DESIGN,
     CANVAS_TOOL_DEFINITIONS,
     CANVAS_TOOL_NAMES,
     RUN_STATUS_AWAITING_APPROVAL,
@@ -36,6 +35,7 @@ from .agent_canvas import (
     RUN_STATUS_PARTIAL,
     RUN_STATUS_RUNNING,
     RUN_STATUS_STOPPED,
+    SUPPORTED_AGENT_CANVAS_FORMATS,
     SIZE_PRESETS,
     TERMINAL_RUN_STATUSES,
     TEXT_STYLES,
@@ -188,12 +188,12 @@ class AgentCanvasModeService:
 
         # ------ New agent-mode turn: validate, plan, pause (or auto-run) ------
         canvas_format = str(request.canvas_format or "").strip()
-        if canvas_format != CANVAS_FORMAT_WEB_DESIGN:
+        if canvas_format not in SUPPORTED_AGENT_CANVAS_FORMATS:
             for _item in _error_final(
                 base,
                 code="AGENT_CANVAS_FORMAT_UNSUPPORTED",
                 message=(
-                    "Agent mode currently supports only the web-design canvas format. "
+                    "Agent mode requires a supported publishable canvas format. "
                     f"Got: '{canvas_format or 'none'}'."
                 ),
             ):
@@ -1455,6 +1455,7 @@ class AgentCanvasModeService:
         return {
             **base,
             "run_id": run["run_id"],
+            "canvas_format": run["canvas_format"],
             "seq": int(op["seq"]),
             "op_type": str(op["op_type"]),
             "page_id": page_id,
@@ -1468,6 +1469,7 @@ class AgentCanvasModeService:
             "status": run["status"],
             "run_id": run["run_id"],
             "page_id": run["page_id"],
+            "canvas_format": run["canvas_format"],
             "text": str(summary.get("text") or ""),
             "placed_count": int(summary.get("placed") or 0),
             "failed_count": int(summary.get("failed") or 0),

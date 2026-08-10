@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AgentCanvasWireOp } from "../../lib/chat/agent-canvas";
 import { applyAgentCanvasWireOp, type AgentCanvasOpDeps } from "../../lib/workspace/agent-canvas-ops";
 import { AGENT_ERROR_CHART_TYPE } from "../../lib/workspace/agent-canvas-layout";
+import { getCanvasFormatPreset, getCanvasPageStride } from "../../lib/workspace/canvas-formats";
 import { pageToLayoutItems } from "../../lib/workspace/web-design-layout";
 import { useAssetStore } from "../../stores/asset-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -30,7 +31,7 @@ function wireOp(
   opType: AgentCanvasWireOp["opType"],
   payload: Record<string, unknown>
 ): AgentCanvasWireOp {
-  return { runId: RUN_ID, seq, opType, pageId: PAGE_ID, payload };
+  return { runId: RUN_ID, canvasFormat: "web-design", seq, opType, pageId: PAGE_ID, payload };
 }
 
 function blockId(seq: number): string {
@@ -65,7 +66,7 @@ function wireOpOnPage(
   pageId: string,
   payload: Record<string, unknown>
 ): AgentCanvasWireOp {
-  return { runId: RUN_ID, seq, opType, pageId, payload };
+  return { runId: RUN_ID, canvasFormat: "web-design", seq, opType, pageId, payload };
 }
 
 /** A run that opens a second page mid-flight (one page per department). */
@@ -120,6 +121,7 @@ function resetStores() {
     edges: [],
     nodesByFormat: {},
     edgesByFormat: {},
+    canvasPages: {},
     canvasFormat: { id: "web-design" },
     webDesign: {
       grid: { columns: 12, rowUnit: 72, rows: [] },
@@ -308,5 +310,59 @@ describe("agent canvas op application", () => {
 
     useUIStore.getState().clearAgentRun(RUN_ID);
     expect(useUIStore.getState().activeAgentRun).toBeNull();
+  });
+
+  it("lays out and undoes a run on the infinite canvas without switching formats", () => {
+    useWorkspaceStore.setState({ canvasFormat: { id: "infinite" } });
+    const ops = RUN_OPS.map((op) => ({ ...op, canvasFormat: "infinite" as const }));
+
+    for (const op of ops) expect(applyAgentCanvasWireOp(op, deps)).toBe(true);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.canvasFormat.id).toBe("infinite");
+    expect(state.nodes).toHaveLength(5);
+    expect(state.nodes.every((node) => node.data.agentRunId === RUN_ID)).toBe(true);
+    expect(state.nodes[0].data.agentPageMarker).toBe(true);
+    expect(new Set(state.nodes.map((node) => `${node.position.x},${node.position.y}`)).size).toBe(5);
+    const marker = state.nodes[0];
+    const contentRight = marker.position.x + Number(marker.width ?? marker.data.width);
+    expect(
+      state.nodes.every(
+        (node) => node.position.x + Number(node.width ?? node.data.width) <= contentRight
+      )
+    ).toBe(true);
+
+    for (const op of ops) expect(applyAgentCanvasWireOp(op, deps)).toBe(false);
+    useWorkspaceStore.getState().undoAgentRun(PAGE_ID);
+    expect(useWorkspaceStore.getState().nodes).toHaveLength(0);
+  });
+
+  it.each([
+    "a4-portrait",
+    "a4-landscape",
+    "a3-portrait",
+    "letter-portrait",
+    "wide-16-9",
+  ] as const)("keeps generated nodes inside publishable %s pages", (canvasFormat) => {
+    useWorkspaceStore.setState({ canvasFormat: { id: canvasFormat } });
+    const ops = RUN_OPS.map((op) => ({ ...op, canvasFormat }));
+    for (const op of ops) expect(applyAgentCanvasWireOp(op, deps)).toBe(true);
+
+    const state = useWorkspaceStore.getState();
+    const preset = getCanvasFormatPreset(canvasFormat);
+    const stride = getCanvasPageStride(preset);
+    const pageCount = state.canvasPages[canvasFormat] ?? 1;
+    expect(pageCount).toBeGreaterThanOrEqual(1);
+    for (const node of state.nodes) {
+      const width = Number(node.width ?? node.data.width);
+      const height = Number(node.height ?? node.data.height ?? 24);
+      const pageIndex = Math.floor(node.position.y / stride);
+      const localY = node.position.y - pageIndex * stride;
+      expect(node.position.x).toBeGreaterThanOrEqual(0);
+      expect(node.position.x + width).toBeLessThanOrEqual(preset.width!);
+      expect(localY).toBeGreaterThanOrEqual(0);
+      expect(localY + height).toBeLessThanOrEqual(preset.height!);
+      expect(pageIndex).toBeLessThan(pageCount);
+    }
   });
 });

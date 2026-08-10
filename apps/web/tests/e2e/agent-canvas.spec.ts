@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Happy-path agent-canvas run on the web-design canvas, with the backend fully
- * mocked at the network layer: outline → approve → canvas ops stream in →
- * blocks appear on the page → run completes → run-level undo removes the page.
+ * Happy-path agent-canvas runs across web, infinite, and fixed canvases, with
+ * the backend mocked at the network layer: outline → approve → canvas ops
+ * stream in → blocks appear → run completes → format-aware undo.
  */
 
 const corsHeaders = {
@@ -25,6 +25,17 @@ function sse(events: Array<{ event: string; data: Record<string, unknown> }>): s
   return events
     .map((item, index) => `id: ${index + 1}\nevent: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`)
     .join("");
+}
+
+function withCanvasFormat(stream: string, canvasFormat: string): string {
+  return stream
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("data: ")) return line;
+      const payload = JSON.parse(line.slice("data: ".length)) as Record<string, unknown>;
+      return `data: ${JSON.stringify({ ...payload, canvas_format: canvasFormat })}`;
+    })
+    .join("\n");
 }
 
 function chartSpec(title: string, rows: Array<Record<string, unknown>>) {
@@ -293,8 +304,12 @@ async function mockBackend(
   return chatBodies;
 }
 
-/** Enable Agent mode, switch the canvas to web-design, and send `prompt`. */
-async function startAgentRun(page: import("@playwright/test").Page, prompt: string) {
+/** Enable Agent mode on the requested canvas format and send `prompt`. */
+async function startAgentRun(
+  page: import("@playwright/test").Page,
+  prompt: string,
+  canvasLabel = "Web Page Design"
+) {
   await page.goto("/");
 
   // Start a conversation so the composer is available.
@@ -309,11 +324,10 @@ async function startAgentRun(page: import("@playwright/test").Page, prompt: stri
   await agentToggle.click();
   await expect(agentToggle).toHaveAttribute("aria-checked", "true");
 
-  // The default canvas is not web-design: take the one-click switch.
-  const formatPrompt = page.getByTestId("agent-canvas-format-prompt");
-  if (await formatPrompt.isVisible().catch(() => false)) {
-    await page.getByRole("button", { name: "Switch to web design" }).click();
-    await expect(formatPrompt).not.toBeVisible();
+  const canvasFormat = page.getByRole("button", { name: "Canvas size" });
+  if (!(await canvasFormat.textContent())?.includes(canvasLabel)) {
+    await canvasFormat.click();
+    await page.getByRole("menuitem").filter({ hasText: canvasLabel }).click();
   }
 
   await page.getByLabel("Chat Input").fill(prompt);
@@ -350,6 +364,37 @@ test("agent mode builds a dashboard on the web-design canvas and undo removes it
   await expect(page.getByLabel("Chart zone 部门人数", { exact: true })).not.toBeVisible();
   await expect(pageTitleInput(page, "销售概览")).not.toBeVisible();
   await expect(page.getByTestId("agent-run-summary-card")).toBeVisible();
+});
+
+test("agent mode builds and undoes a dashboard on the infinite canvas", async ({ page }) => {
+  const chatBodies = await mockBackend(page, {
+    outline: withCanvasFormat(outlineEvents, "infinite"),
+    run: withCanvasFormat(runEvents, "infinite"),
+  });
+  await startAgentRun(page, "生成无限画布销售概览", "Infinite canvas");
+
+  await page.getByTestId("agent-run-outline-card").getByRole("button", { name: "Generate 2 charts" }).click();
+  await expect(page.getByTestId("agent-run-summary-card")).toBeVisible();
+  await expect(page.locator(".react-flow__node-chartNode").filter({ hasText: "部门人数" })).toBeVisible();
+  await expect(page.locator(".react-flow__node-textNode").filter({ hasText: "销售概览" })).toBeVisible();
+  expect(chatBodies[0].canvas_format).toBe("infinite");
+
+  await page.getByRole("button", { name: "Undo this run" }).click();
+  await expect(page.locator(".react-flow__node-chartNode").filter({ hasText: "部门人数" })).not.toBeVisible();
+});
+
+test("agent mode builds a dashboard on a fixed publish page", async ({ page }) => {
+  const chatBodies = await mockBackend(page, {
+    outline: withCanvasFormat(outlineEvents, "a4-portrait"),
+    run: withCanvasFormat(runEvents, "a4-portrait"),
+  });
+  await startAgentRun(page, "生成 A4 销售简报", "A4 portrait");
+
+  await page.getByTestId("agent-run-outline-card").getByRole("button", { name: "Generate 2 charts" }).click();
+  await expect(page.getByTestId("agent-run-summary-card")).toBeVisible();
+  await expect(page.locator(".workspace-page-frame").first()).toBeVisible();
+  await expect(page.locator(".react-flow__node-chartNode").filter({ hasText: "部门人数" })).toBeVisible();
+  expect(chatBodies[0].canvas_format).toBe("a4-portrait");
 });
 
 const focusedEditEvents = sse([

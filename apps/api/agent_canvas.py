@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from .config import get_settings
+from .published_pages import CANVAS_FORMAT_KINDS
 from .sqlite_support import connect as sqlite_connect
 
 # ---------------------------------------------------------------------------
@@ -43,7 +44,10 @@ TERMINAL_RUN_STATUSES = frozenset(
 )
 ACTIVE_RUN_STATUSES = frozenset({RUN_STATUS_AWAITING_APPROVAL, RUN_STATUS_RUNNING})
 
-CANVAS_FORMAT_WEB_DESIGN = "web-design"
+# Agent runs operate on every canvas format that can be published. Keeping the
+# source of truth in ``published_pages`` prevents the composer/runtime from
+# drifting when a new publish preset is added.
+SUPPORTED_AGENT_CANVAS_FORMATS = frozenset(CANVAS_FORMAT_KINDS)
 
 # Structure-only size presets (design D2). The client maps each preset to a
 # fixed grid span; the server never computes or accepts geometry.

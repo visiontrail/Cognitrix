@@ -26,6 +26,7 @@ import {
   TriangleAlert,
   Type,
   Users,
+  WandSparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ import { retryAgentRunItem, stopAgentRun } from "@/lib/chat/agent-canvas";
 import { AGENT_ERROR_CHART_TYPE } from "@/lib/workspace/agent-canvas-layout";
 import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
 import { toChartAsset } from "@/hooks/use-chat";
+import { beginCanvasChartEdit } from "@/lib/chat/canvas-chart-edit";
 import { useUIStore } from "@/stores/ui-store";
 import { useI18n } from "@/lib/i18n/context";
 import {
@@ -452,6 +454,8 @@ function FluidGridEditor({
             active={isActive}
             rectPx={rectPx}
             chartHeight={hPx(item.h) - CHART_HEADER_PX}
+            pageId={page.id}
+            zoneId={zone.id}
             onPointerDownMove={(event) => beginDrag(event, zone.id, "move")}
             onPointerDownResize={(event, mode) => beginDrag(event, zone.id, mode)}
             onKeyDown={(event) => handleBlockKeyDown(event, item)}
@@ -538,6 +542,8 @@ function ChartBlock({
   active,
   rectPx,
   chartHeight,
+  pageId,
+  zoneId,
   onPointerDownMove,
   onPointerDownResize,
   onKeyDown,
@@ -549,6 +555,8 @@ function ChartBlock({
   active: boolean;
   rectPx: { left: number; top: number; width: number; height: number };
   chartHeight: number;
+  pageId: string;
+  zoneId: string;
   onPointerDownMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerDownResize: (event: ReactPointerEvent<HTMLElement>, mode: DragMode) => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
@@ -557,6 +565,7 @@ function ChartBlock({
   const { t } = useI18n();
   const chartCaptureRef = useRef<HTMLDivElement>(null);
   const [isCopying, setIsCopying] = useState(false);
+  const isAiEditTarget = useUIStore((s) => s.chartEditTarget?.nodeId === node.id);
 
   const handleCopyAsPng = async () => {
     if (!chartCaptureRef.current) {
@@ -578,6 +587,24 @@ function ChartBlock({
     }
   };
 
+  const handleEditWithAi = () => {
+    const result = beginCanvasChartEdit({
+      nodeId: node.id,
+      data: node.data,
+      pageId,
+      zoneId,
+    });
+    if (result === "no_session") {
+      toast.error(t("workspace.node.aiEditNoConversation"));
+      return;
+    }
+    if (result === "no_workspace") {
+      toast.error(t("chat.toast.noWorkspace"));
+      return;
+    }
+    toast.success(t("workspace.node.aiEditSelected", { title: node.data.title }));
+  };
+
   return (
     <section
       aria-label={t("workspace.webDesign.aria.chartZone", { title: node.data.title })}
@@ -585,7 +612,7 @@ function ChartBlock({
       onKeyDown={onKeyDown}
       className={cn(
         "group absolute overflow-hidden rounded-md border bg-white dark:bg-[#1c1c38]",
-        active
+        active || isAiEditTarget
           ? "border-[#c89b62] shadow-lg dark:border-[#d97757]"
           : "border-[#e2dccf] dark:border-white/10",
         !preview &&
@@ -608,6 +635,21 @@ function ChartBlock({
         </div>
         {!preview && (
           <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={isAiEditTarget ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  className="h-6 w-6"
+                  onClick={handleEditWithAi}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  aria-label={t("workspace.node.editWithAIAria", { title: node.data.title })}
+                >
+                  <WandSparkles className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("workspace.node.editWithAI")}</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

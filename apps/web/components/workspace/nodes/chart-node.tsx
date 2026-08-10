@@ -2,7 +2,7 @@
 
 import { memo, useRef, useState, useCallback } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { GripVertical, Trash2, Pencil, Check, X, Copy, ImageDown } from "lucide-react";
+import { GripVertical, Trash2, Pencil, Check, X, Copy, ImageDown, WandSparkles } from "lucide-react";
 import { ChartPreview } from "@/components/charts/chart-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { canCopyPngToClipboard, copyElementAsPngToClipboard } from "@/lib/charts/copy-chart-as-png";
 import { useI18n } from "@/lib/i18n/context";
 import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useUIStore } from "@/stores/ui-store";
+import { beginCanvasChartEdit } from "@/lib/chat/canvas-chart-edit";
 import { generateId } from "@/lib/utils";
 import { toast } from "sonner";
 import type { ChartNodeData } from "@/types/workspace";
@@ -30,6 +32,7 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
   const removeNode = useWorkspaceStore((s) => s.removeNode);
   const addNode = useWorkspaceStore((s) => s.addNode);
   const nodes = useWorkspaceStore((s) => s.nodes);
+  const isAiEditTarget = useUIStore((s) => s.chartEditTarget?.nodeId === id);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(nodeData.title);
@@ -82,6 +85,19 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
     }
   }, [t]);
 
+  const handleEditWithAi = useCallback(() => {
+    const result = beginCanvasChartEdit({ nodeId: id, data: nodeData });
+    if (result === "no_session") {
+      toast.error(t("workspace.node.aiEditNoConversation"));
+      return;
+    }
+    if (result === "no_workspace") {
+      toast.error(t("chat.toast.noWorkspace"));
+      return;
+    }
+    toast.success(t("workspace.node.aiEditSelected", { title: nodeData.title }));
+  }, [id, nodeData, t]);
+
   const nodeWidth = width ?? nodeData.width ?? DEFAULT_CHART_NODE_WIDTH;
   const nodeHeight = height ?? nodeData.height ?? DEFAULT_CHART_NODE_HEIGHT;
   const chartHeight = Math.max(nodeHeight - CHART_NODE_HEADER_HEIGHT, 180);
@@ -89,7 +105,9 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
   return (
     <div
       className={`relative bg-ivory rounded-comfortable border shadow-whisper transition-shadow ${
-        selected ? "border-terracotta shadow-[0px_0px_0px_2px_#c96442]" : "border-border-cream"
+        selected || isAiEditTarget
+          ? "border-terracotta shadow-[0px_0px_0px_2px_#c96442]"
+          : "border-border-cream"
       }`}
       style={{
         width: nodeWidth,
@@ -144,6 +162,19 @@ function ChartNodeComponent({ id, data, selected, width, height }: NodeProps) {
         )}
 
         <div className="canvas-export-ignore nodrag flex items-center gap-0.5 shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isAiEditTarget ? "secondary" : "ghost"}
+                size="icon-sm"
+                onClick={handleEditWithAi}
+                aria-label={t("workspace.node.editWithAIAria", { title: nodeData.title })}
+              >
+                <WandSparkles className="w-3 h-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("workspace.node.editWithAI")}</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

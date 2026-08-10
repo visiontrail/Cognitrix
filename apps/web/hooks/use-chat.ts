@@ -38,6 +38,7 @@ import { buildRichTreemapFallbackOption } from "@/lib/charts/treemap-option";
 import { applyDataLabels } from "@/lib/charts/data-labels";
 import { generationOptionIdsFromPayload } from "@/lib/chat/generation-options";
 import { generateId, isRecord } from "@/lib/utils";
+import { toast } from "sonner";
 import type { ChartAsset, ChartSpec, ChartType, KnownChartType } from "@/types/chart";
 import { getAutoApprovePreference, parseAgentCanvasWireOp } from "@/lib/chat/agent-canvas";
 import { applyAgentCanvasWireOp } from "@/lib/workspace/agent-canvas-ops";
@@ -45,6 +46,7 @@ import type {
   AgentRunConfirmationSubmission,
   AgentRunOutline,
   AgentRunSummary,
+  CanvasChartEditTarget,
   ChatMessage,
   ChatSession,
   MessageSource,
@@ -209,6 +211,7 @@ export function useSendMessage() {
       showDataLabels,
       webSearch,
       agentCanvas,
+      chartEditTarget,
       agentRunConfirmation,
       multiChartConfirmation,
     }: {
@@ -221,6 +224,7 @@ export function useSendMessage() {
       showDataLabels?: boolean;
       webSearch?: boolean;
       agentCanvas?: boolean;
+      chartEditTarget?: CanvasChartEditTarget;
       agentRunConfirmation?: AgentRunConfirmationSubmission;
       multiChartConfirmation?: MultiChartConfirmationSubmission;
     }) => {
@@ -289,6 +293,7 @@ export function useSendMessage() {
           showDataLabels,
           webSearch,
           agentCanvas,
+          chartEditTarget,
           agentRunConfirmation,
           multiChartConfirmation,
           workspaceId,
@@ -343,7 +348,10 @@ export function useSendMessage() {
       }
       return { sessionId, optimistic: true };
     },
-    onSuccess: ({ assistantMessage, chartAsset, chartAssets, preAppended, catalogRefreshWorkspaceId }, { sessionId }) => {
+    onSuccess: (
+      { assistantMessage, chartAsset, chartAssets, preAppended, catalogRefreshWorkspaceId },
+      { sessionId, chartEditTarget }
+    ) => {
       if (preAppended) {
         useChatStore.getState().replaceMessage(sessionId, assistantMessage.id, assistantMessage);
       } else {
@@ -354,6 +362,18 @@ export function useSendMessage() {
       }
       for (const asset of chartAssets ?? []) {
         addAsset(asset);
+      }
+      if (chartEditTarget && chartAsset) {
+        const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+        const replaced =
+          activeWorkspaceId === chartEditTarget.workspaceId &&
+          useWorkspaceStore.getState().replaceChartNodeAsset(chartEditTarget.nodeId, chartAsset);
+        if (replaced) {
+          useUIStore.getState().clearChartEditTarget(chartEditTarget.nodeId);
+          toast.success(t("chat.chartEdit.updated", { title: chartAsset.title }));
+        } else {
+          toast.error(t("chat.chartEdit.targetMissing"));
+        }
       }
       touchSession(sessionId, {
         lastMessage: assistantMessage.content,
@@ -535,6 +555,7 @@ async function streamAssistantResponse({
   showDataLabels,
   webSearch,
   agentCanvas,
+  chartEditTarget,
   agentRunConfirmation,
   multiChartConfirmation,
   workspaceId,
@@ -549,6 +570,7 @@ async function streamAssistantResponse({
   showDataLabels?: boolean;
   webSearch?: boolean;
   agentCanvas?: boolean;
+  chartEditTarget?: CanvasChartEditTarget;
   agentRunConfirmation?: AgentRunConfirmationSubmission;
   multiChartConfirmation?: MultiChartConfirmationSubmission;
   workspaceId: string;
@@ -601,7 +623,7 @@ async function streamAssistantResponse({
   let terminalReason: "final" | "error" | "closed" = "closed";
   let planningStepCounter = 0;
   let toolStepCount = 0;
-  const isAgentCanvasTurn = Boolean(agentCanvas || agentRunConfirmation);
+  const isAgentCanvasTurn = Boolean(!chartEditTarget && (agentCanvas || agentRunConfirmation));
   const canvasOpDeps = {
     toAsset: (rawSpec: unknown, meta: { assetId: string; title: string }) =>
       toChartAsset(rawSpec, {
@@ -635,11 +657,23 @@ async function streamAssistantResponse({
         response_locale: responseLocale,
         conversation_id: sessionId,
         request_id: generateId(),
-        agent_mode: agentCanvas ?? false,
-        canvas_format: agentCanvas
+        agent_mode: chartEditTarget ? false : (agentCanvas ?? false),
+        canvas_format: !chartEditTarget && agentCanvas
           ? useWorkspaceStore.getState().canvasFormat.id
           : null,
-        auto_approve: agentCanvas ? getAutoApprovePreference() : false,
+        auto_approve: !chartEditTarget && agentCanvas ? getAutoApprovePreference() : false,
+        chart_edit_context: chartEditTarget
+          ? {
+              node_id: chartEditTarget.nodeId,
+              zone_id: chartEditTarget.zoneId ?? null,
+              page_id: chartEditTarget.pageId ?? null,
+              asset_id: chartEditTarget.assetId,
+              title: chartEditTarget.title,
+              chart_type: chartEditTarget.chartType,
+              spec: chartEditTarget.spec,
+              assistant_rows: chartEditTarget.assistantRows ?? [],
+            }
+          : null,
         agent_run_confirmation: agentRunConfirmation
           ? {
               confirmation_id: agentRunConfirmation.confirmationId,

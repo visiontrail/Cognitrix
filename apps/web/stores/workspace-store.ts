@@ -50,6 +50,7 @@ import type {
   WebDesignTextZone,
   WebDesignTextStyle,
 } from "@/types/workspace";
+import type { ChartAsset } from "@/types/chart";
 
 const DEFAULT_WEB_DESIGN_LAYOUT: WebDesignLayout = {
   grid: createFluidGrid(),
@@ -97,6 +98,8 @@ type WorkspaceState = {
   addNode: (node: WorkspaceNode) => void;
   addNodeToWebDesign: (node: WorkspaceNode) => void;
   updateNode: (nodeId: string, data: Partial<WorkspaceNode>) => void;
+  /** Replace one chart's asset/spec without changing its canvas geometry. */
+  replaceChartNodeAsset: (nodeId: string, asset: ChartAsset) => boolean;
   removeNode: (nodeId: string) => void;
   removeNodes: (nodeIds: string[]) => void;
   groupNodes: (nodeIds: string[], title?: string) => string | null;
@@ -306,6 +309,57 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ),
       hasUnsavedChanges: true,
     })),
+
+  replaceChartNodeAsset: (nodeId, asset) => {
+    let replaced = false;
+    const replaceIn = (nodes: WorkspaceNode[] | undefined): WorkspaceNode[] =>
+      (nodes ?? []).map((node) => {
+        if (node.id !== nodeId || node.data.type !== "chart") return node;
+        replaced = true;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            assetId: asset.id,
+            title: asset.title,
+            chartType: asset.chartType,
+            spec: asset.spec,
+            assistantRows: asset.assistantRows,
+            assistantRowsComplete: asset.assistantRowsComplete,
+          },
+        };
+      });
+
+    set((state) => {
+      const nodes = replaceIn(state.nodes);
+      const nodesByFormat = Object.fromEntries(
+        Object.entries(state.nodesByFormat).map(([format, formatNodes]) => [
+          format,
+          replaceIn(formatNodes),
+        ])
+      ) as Partial<Record<WorkspaceCanvasFormatId, WorkspaceNode[]>>;
+      const pages = state.webDesign.pages?.map((page) => ({
+        ...page,
+        zones: page.zones.map((zone) =>
+          zone.nodeId === nodeId ? { ...zone, chartId: asset.id } : zone
+        ),
+      }));
+
+      if (!replaced) return {};
+      const activePage = pages?.find((page) => page.id === state.webDesign.activePageId);
+      return {
+        nodes,
+        nodesByFormat,
+        webDesign: {
+          ...state.webDesign,
+          ...(pages ? { pages } : {}),
+          ...(activePage ? { grid: activePage.grid, zones: activePage.zones } : {}),
+        },
+        hasUnsavedChanges: true,
+      };
+    });
+    return replaced;
+  },
 
   removeNode: (nodeId) =>
     set((state) => ({
@@ -1359,4 +1413,3 @@ function removeSidebarItem(items: WebDesignSidebarItem[], itemId: string): WebDe
     .filter((item) => item.id !== itemId)
     .map((item) => ({ ...item, children: removeSidebarItem(item.children, itemId) }));
 }
-

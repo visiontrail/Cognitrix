@@ -36,6 +36,10 @@ vi.mock("../../hooks/use-backend-capabilities", () => ({
   useBackendCapabilities: () => capabilities,
 }));
 
+vi.mock("../../components/charts/chart-preview", () => ({
+  ChartPreview: ({ spec }: { spec: { title: string } }) => <div>{`Preview: ${spec.title}`}</div>,
+}));
+
 function renderInput(sessionId = "s1") {
   return render(
     React.createElement(I18nProvider, null, React.createElement(ChatInput, { sessionId })),
@@ -53,7 +57,7 @@ describe("ChatInput agent-mode switch", () => {
       pendingIngestionSetupBySession: {},
       agentModeBySession: {},
     });
-    useUIStore.setState({ isSending: false, sendingBySession: {} });
+    useUIStore.setState({ isSending: false, sendingBySession: {}, chartEditTarget: null });
     useWorkspaceStore.setState({ activeWorkspaceId: null, canvasFormat: { id: "web-design" } });
   });
 
@@ -151,5 +155,66 @@ describe("ChatInput agent-mode switch", () => {
     await user.type(screen.getByLabelText("Chat Input"), "{Enter}");
     expect(sendMutate).toHaveBeenCalledTimes(1);
     expect(sendMutate.mock.calls[0][0]).toMatchObject({ agentCanvas: true });
+  });
+
+  it("shows the selected canvas chart and submits it as a focused edit target", async () => {
+    capabilities.agentCanvasModeEnabled = true;
+    useChatStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          title: "Canvas edits",
+          createdAt: "2026-08-10T00:00:00Z",
+          updatedAt: "2026-08-10T00:00:00Z",
+          messageCount: 0,
+        },
+      ],
+      activeSessionId: "s1",
+      agentModeBySession: { s1: true },
+    });
+    useWorkspaceStore.setState({ activeWorkspaceId: "ws-1", canvasFormat: { id: "web-design" } });
+    useUIStore.setState({
+      chartEditTarget: {
+        sessionId: "s1",
+        workspaceId: "ws-1",
+        canvasFormat: "web-design",
+        nodeId: "node-chart-1",
+        zoneId: "zone-chart-1",
+        pageId: "page-1",
+        assetId: "asset-chart-1",
+        title: "Department headcount",
+        chartType: "bar",
+        spec: {
+          chartType: "bar",
+          title: "Department headcount",
+          echartsOption: { __rows__: [{ segment: "HR", metric_value: 24 }] },
+        },
+        assistantRows: [{ segment: "HR", metric_value: 24 }],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderInput();
+
+    expect(screen.getByTestId("chart-edit-context")).toBeInTheDocument();
+    expect(screen.getByText("Preview: Department headcount")).toBeInTheDocument();
+    expect(screen.getByLabelText("Chat Input")).toHaveAttribute(
+      "placeholder",
+      "Tell the agent how to change this chart…"
+    );
+
+    await user.type(screen.getByLabelText("Chat Input"), "Change it to a donut chart{Enter}");
+
+    expect(sendMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s1",
+        content: "Change it to a donut chart",
+        agentCanvas: true,
+        chartEditTarget: expect.objectContaining({
+          nodeId: "node-chart-1",
+          assetId: "asset-chart-1",
+        }),
+      })
+    );
   });
 });

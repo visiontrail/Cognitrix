@@ -213,6 +213,69 @@ describe("workspace store selection persistence", () => {
     expect(useWorkspaceStore.getState().hasUnsavedChanges).toBe(true);
   });
 
+  it("replaces a web-design chart asset in place without changing its zone geometry", async () => {
+    vi.resetModules();
+    const { useWorkspaceStore } = await import("../../stores/workspace-store");
+    const original = chartNode("chart-1", 0, 0);
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      canvasFormat: { id: "web-design" },
+      nodes: [original],
+      nodesByFormat: { "web-design": [original] },
+      webDesign: {
+        grid: { columns: 12, rowUnit: 72, rows: [] },
+        zones: [
+          { id: "zone-1", nodeId: "chart-1", chartId: "chart-1", column: 2, row: 3, colSpan: 6, rowSpan: 4 },
+        ],
+        sidebar: [{ id: "page-1", label: "Page", pageId: "page-1", anchorRowId: "row-1", children: [] }],
+        pages: [
+          {
+            id: "page-1",
+            title: "Page",
+            grid: { columns: 12, rowUnit: 72, rows: [] },
+            zones: [
+              { id: "zone-1", nodeId: "chart-1", chartId: "chart-1", column: 2, row: 3, colSpan: 6, rowSpan: 4 },
+            ],
+          },
+        ],
+        activePageId: "page-1",
+        preview: false,
+      },
+      hasUnsavedChanges: false,
+    });
+
+    const replaced = useWorkspaceStore.getState().replaceChartNodeAsset("chart-1", {
+      id: "asset-revised",
+      title: "Revised chart",
+      chartType: "pie",
+      spec: { chartType: "pie", title: "Revised chart", echartsOption: { series: [] } },
+      assistantRows: [{ segment: "HR", metric_value: 24 }],
+      assistantRowsComplete: true,
+      sourceMeta: { sessionId: "s1", messageId: "m1", prompt: "make it a pie" },
+      createdAt: "2026-08-10T00:00:00Z",
+      updatedAt: "2026-08-10T00:00:00Z",
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(replaced).toBe(true);
+    expect(state.nodes).toHaveLength(1);
+    expect(state.nodes[0].position).toEqual({ x: 0, y: 0 });
+    expect(state.nodes[0].data).toMatchObject({
+      assetId: "asset-revised",
+      title: "Revised chart",
+      chartType: "pie",
+    });
+    expect(state.webDesign.pages?.[0].zones[0]).toEqual({
+      id: "zone-1",
+      nodeId: "chart-1",
+      chartId: "asset-revised",
+      column: 2,
+      row: 3,
+      colSpan: 6,
+      rowSpan: 4,
+    });
+  });
+
   it("stores canvas backgrounds per format and round-trips them through a snapshot", async () => {
     vi.resetModules();
     const { useWorkspaceStore } = await import("../../stores/workspace-store");

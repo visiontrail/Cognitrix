@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { CanvasChartEditTarget } from "@/types/chat";
 
 export type ActivePanel = "chat" | "workspace" | "both" | "catalog";
 
@@ -20,6 +21,7 @@ type UIState = {
   isSaving: boolean;
   catalogOverlayInWorkspace: boolean;
   activeAgentRun: ActiveAgentRun | null;
+  chartEditTarget: CanvasChartEditTarget | null;
 
   setActivePanel: (panel: ActivePanel) => void;
   setChatSidebarOpen: (open: boolean) => void;
@@ -32,6 +34,8 @@ type UIState = {
   setIsSaving: (value: boolean) => void;
   setCatalogOverlayInWorkspace: (value: boolean) => void;
   setActiveAgentRun: (run: ActiveAgentRun | null) => void;
+  setChartEditTarget: (target: CanvasChartEditTarget | null) => void;
+  clearChartEditTarget: (nodeId?: string) => void;
   /** Clear the soft lock only if it belongs to the given run. */
   clearAgentRun: (runId: string) => void;
 };
@@ -46,6 +50,7 @@ export const useUIStore = create<UIState>((set) => ({
   isSaving: false,
   catalogOverlayInWorkspace: false,
   activeAgentRun: null,
+  chartEditTarget: null,
 
   setActivePanel: (panel) => set({ activePanel: panel, catalogOverlayInWorkspace: false }),
   setChatSidebarOpen: (open) => set({ chatSidebarOpen: open }),
@@ -70,6 +75,11 @@ export const useUIStore = create<UIState>((set) => ({
   setIsSaving: (value) => set({ isSaving: value }),
   setCatalogOverlayInWorkspace: (value) => set({ catalogOverlayInWorkspace: value }),
   setActiveAgentRun: (run) => set({ activeAgentRun: run }),
+  setChartEditTarget: (target) => set({ chartEditTarget: target }),
+  clearChartEditTarget: (nodeId) =>
+    set((state) =>
+      !nodeId || state.chartEditTarget?.nodeId === nodeId ? { chartEditTarget: null } : {}
+    ),
   clearAgentRun: (runId) =>
     set((state) =>
       state.activeAgentRun?.runId === runId ? { activeAgentRun: null } : {}

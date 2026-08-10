@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { ChartNode } from "../../components/workspace/nodes/chart-node";
 import { useWorkspaceStore } from "../../stores/workspace-store";
+import { useChatStore } from "../../stores/chat-store";
+import { useUIStore } from "../../stores/ui-store";
 import type { ChartNodeData, WorkspaceNode } from "../../types/workspace";
 
 const toBlobMock = vi.fn();
@@ -101,6 +103,19 @@ describe("ChartNode", () => {
       viewport: { x: 0, y: 0, zoom: 1 },
       hasUnsavedChanges: false,
     });
+    useChatStore.setState({
+      sessions: [
+        {
+          id: "session-1",
+          title: "Chart edit",
+          createdAt: "2026-08-10T00:00:00Z",
+          updatedAt: "2026-08-10T00:00:00Z",
+          messageCount: 0,
+        },
+      ],
+      activeSessionId: "session-1",
+    });
+    useUIStore.setState({ activePanel: "workspace", chartEditTarget: null });
   });
 
   afterEach(() => {
@@ -114,6 +129,7 @@ describe("ChartNode", () => {
       viewport: { x: 0, y: 0, zoom: 1 },
       hasUnsavedChanges: false,
     });
+    useUIStore.setState({ chartEditTarget: null });
   });
 
   it("deletes the corresponding table node from the canvas", async () => {
@@ -143,6 +159,22 @@ describe("ChartNode", () => {
         })
       );
       expect(clipboardWriteMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("attaches the chart to the active conversation for an in-place AI edit", async () => {
+    renderChartNode(tableNodeData);
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit Employee Table with AI" }));
+
+    expect(useUIStore.getState().activePanel).toBe("both");
+    expect(useUIStore.getState().chartEditTarget).toMatchObject({
+      sessionId: "session-1",
+      workspaceId: "ws-test",
+      nodeId: "node-table",
+      assetId: "asset-table",
+      title: "Employee Table",
+      chartType: "table",
     });
   });
 });

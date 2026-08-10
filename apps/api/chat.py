@@ -34,6 +34,19 @@ class AgentRunConfirmationPayload(BaseModel):
     selected_item_keys: list[str] | None = None
 
 
+class ChartEditContextPayload(BaseModel):
+    """One existing canvas chart selected for a focused AI revision."""
+
+    node_id: str = Field(min_length=1, max_length=240)
+    zone_id: str | None = Field(default=None, max_length=240)
+    page_id: str | None = Field(default=None, max_length=240)
+    asset_id: str = Field(min_length=1, max_length=240)
+    title: str = Field(min_length=1, max_length=240)
+    chart_type: str = Field(min_length=1, max_length=80)
+    spec: dict[str, Any]
+    assistant_rows: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+
+
 class ChatStreamRequest(BaseModel):
     user_id: str
     project_id: str
@@ -57,6 +70,10 @@ class ChatStreamRequest(BaseModel):
     canvas_format: str | None = None
     auto_approve: bool = False
     agent_run_confirmation: AgentRunConfirmationPayload | None = None
+    # Focused chart editing is deliberately routed through the normal BI agent:
+    # it returns one spec that the client swaps into the existing node, rather
+    # than opening a fresh dashboard-generation page.
+    chart_edit_context: ChartEditContextPayload | None = None
 
 
 @dataclass(slots=True)
@@ -208,7 +225,12 @@ class ChatStreamService:
             ):
                 yield _format_sse(event)
 
-        is_agent_canvas_request = bool(request.agent_mode or request.agent_run_confirmation)
+        # A focused edit supersedes sticky dashboard mode for this turn: it
+        # must yield one replacement spec, not create a new canvas page.
+        is_agent_canvas_request = bool(
+            request.chart_edit_context is None
+            and (request.agent_mode or request.agent_run_confirmation)
+        )
         if (
             not request.message
             and request.multi_chart_confirmation is None
@@ -380,6 +402,9 @@ class ChatStreamService:
             clearance=request.clearance,
             multi_chart_confirmation=request.multi_chart_confirmation.model_dump()
             if request.multi_chart_confirmation
+            else None,
+            chart_edit_context=request.chart_edit_context.model_dump()
+            if request.chart_edit_context
             else None,
         )
         async for event_type, payload in self.agent_runtime.run_turn_stream(agent_request):

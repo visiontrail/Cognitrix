@@ -152,13 +152,35 @@ const runEvents = sse([
 
 async function mockBackend(
   page: import("@playwright/test").Page,
-  streams: { outline: string; run: string }
+  streams: { outline: string; run: string; edit?: string }
 ) {
-  await page.route("http://127.0.0.1:8000/**", async (route) => {
+  const chatBodies: Record<string, unknown>[] = [];
+  // The application now gates `/` behind email/password auth. Seed the same
+  // cookie + token cache that the login flow writes so this canvas-focused
+  // spec starts inside the authenticated shell instead of testing the form.
+  await page.context().addCookies([
+    {
+      name: "cognitrix_session",
+      value: "e2e-session",
+      domain: "127.0.0.1",
+      path: "/",
+    },
+  ]);
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "cognitrix:user-token:v2",
+      JSON.stringify({
+        accessToken:
+          "e30.eyJzdWIiOiJkZW1vLXVzZXIiLCJwcm9qZWN0X2lkIjoiZGVtby1wcm9qZWN0Iiwicm9sZSI6Im93bmVyIiwiY2xlYXJhbmNlIjo5fQ.sig",
+        expiresAt: 4102444800,
+      })
+    );
+  });
+  await page.route("**/api/backend/**", async (route) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
-    const path = url.pathname;
+    const path = url.pathname.replace(/^\/api\/backend/, "");
 
     if (method === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders, body: "" });
@@ -183,6 +205,8 @@ async function mockBackend(
           email: "demo@example.com",
           display_name: "Demo",
           job_id: null,
+          role: "owner",
+          status: "active",
           last_login_at: null,
           available_workspaces: [{ workspace_id: "ws-e2e", name: "E2E WS", role: "owner" }],
         }),
@@ -225,7 +249,12 @@ async function mockBackend(
 
     if (path === "/chat/stream" && method === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>;
-      const payload = body.agent_run_confirmation ? streams.run : streams.outline;
+      chatBodies.push(body);
+      const payload = body.chart_edit_context
+        ? (streams.edit ?? streams.outline)
+        : body.agent_run_confirmation
+          ? streams.run
+          : streams.outline;
       await route.fulfill({
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
@@ -261,6 +290,7 @@ async function mockBackend(
 
     await route.fulfill({ status: 404, headers: jsonHeaders, body: JSON.stringify({ code: "NOT_FOUND" }) });
   });
+  return chatBodies;
 }
 
 /** Enable Agent mode, switch the canvas to web-design, and send `prompt`. */
@@ -268,10 +298,10 @@ async function startAgentRun(page: import("@playwright/test").Page, prompt: stri
   await page.goto("/");
 
   // Start a conversation so the composer is available.
-  const newConversation = page.getByRole("button", { name: "New conversation" });
-  if (await newConversation.isVisible().catch(() => false)) {
-    await newConversation.click();
-  }
+  const newConversation = page.getByRole("button", { name: "New conversation", exact: true });
+  await expect(newConversation).toBeVisible();
+  await newConversation.click();
+  await expect(page.getByLabel("Chat Input")).toBeVisible();
 
   // Agent mode is a sticky per-conversation switch in the composer, not a
   // per-message row in the "+" menu.
@@ -290,6 +320,10 @@ async function startAgentRun(page: import("@playwright/test").Page, prompt: stri
   await page.keyboard.press("Enter");
 }
 
+function pageTitleInput(page: import("@playwright/test").Page, title: string) {
+  return page.locator(`input[value="${title}"]`);
+}
+
 test("agent mode builds a dashboard on the web-design canvas and undo removes it", async ({ page }) => {
   await mockBackend(page, { outline: outlineEvents, run: runEvents });
   await startAgentRun(page, "生成销售概览仪表盘");
@@ -303,18 +337,86 @@ test("agent mode builds a dashboard on the web-design canvas and undo removes it
   // Approve: the run streams canvas ops onto a fresh web-design page.
   await outlineCard.getByRole("button", { name: "Generate 2 charts" }).click();
 
-  await expect(page.getByTestId("agent-run-summary-card")).toBeVisible();
-  await expect(page.getByText("Dashboard completed: 2 charts placed.")).toBeVisible();
+  const summaryCard = page.getByTestId("agent-run-summary-card");
+  await expect(summaryCard).toBeVisible();
+  await expect(summaryCard.getByText("Dashboard completed: 2 charts placed.")).toBeVisible();
 
   // The run page exists in the web-design sidebar with the section + charts.
-  await expect(page.getByDisplayValue("销售概览")).toBeVisible();
+  await expect(pageTitleInput(page, "销售概览")).toBeVisible();
   await expect(page.getByLabel("Chart zone 部门人数")).toBeVisible();
 
   // Run-level undo removes only the run's page.
   await page.getByRole("button", { name: "Undo this run" }).click();
-  await expect(page.getByLabel("Chart zone 部门人数")).not.toBeVisible();
-  await expect(page.getByDisplayValue("销售概览")).not.toBeVisible();
+  await expect(page.getByLabel("Chart zone 部门人数", { exact: true })).not.toBeVisible();
+  await expect(pageTitleInput(page, "销售概览")).not.toBeVisible();
   await expect(page.getByTestId("agent-run-summary-card")).toBeVisible();
+});
+
+const focusedEditEvents = sse([
+  { event: "planning", data: { text: "Updating the selected canvas chart..." } },
+  {
+    event: "spec",
+    data: {
+      spec: {
+        engine: "recharts",
+        chart_type: "pie",
+        title: "部门人数占比",
+        data: [
+          { segment: "HR", metric_value: 24 },
+          { segment: "PM", metric_value: 18 },
+        ],
+        config: { xKey: "segment", yKey: "metric_value" },
+      },
+    },
+  },
+  {
+    event: "final",
+    data: {
+      status: "completed",
+      text: "Updated the selected chart to show department share.",
+    },
+  },
+]);
+
+test("a generated canvas chart can be attached to chat and replaced in place by the agent", async ({
+  page,
+}) => {
+  const chatBodies = await mockBackend(page, {
+    outline: outlineEvents,
+    run: runEvents,
+    edit: focusedEditEvents,
+  });
+  await startAgentRun(page, "生成销售概览仪表盘");
+  await page.getByTestId("agent-run-outline-card").getByRole("button", { name: "Generate 2 charts" }).click();
+
+  const originalZone = page.getByLabel("Chart zone 部门人数");
+  await expect(originalZone).toBeVisible();
+  await originalZone.hover();
+  await originalZone.getByRole("button", { name: "Edit 部门人数 with AI" }).click();
+
+  const editContext = page.getByTestId("chart-edit-context");
+  await expect(editContext).toBeVisible();
+  await expect(editContext.getByText("部门人数", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Chat Input").fill("改成环形图并显示百分比");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByLabel("Chart zone 部门人数占比")).toBeVisible();
+  await expect(page.getByLabel("Chart zone 部门人数", { exact: true })).not.toBeVisible();
+  await expect(page.getByLabel(/^Chart zone /)).toHaveCount(2);
+  await expect(editContext).not.toBeVisible();
+  await expect(pageTitleInput(page, "销售概览")).toBeVisible();
+
+  await expect.poll(() => chatBodies.find((body) => body.chart_edit_context)).toMatchObject({
+    agent_mode: false,
+    chart_edit_context: {
+      node_id: `node-agent-block-${RUN_ID}-4`,
+      page_id: PAGE_ID,
+      asset_id: "asset-e2e-2",
+      title: "部门人数",
+      chart_type: "bar",
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -510,17 +612,19 @@ test("agent mode creates one sidebar page per outline page and undo removes them
   await expect(outlineCard.getByText("平台组", { exact: true })).toBeVisible();
 
   await outlineCard.getByRole("button", { name: "Generate 2 charts" }).click();
-  await expect(page.getByText("Dashboard completed: 2 charts placed.")).toBeVisible();
+  await expect(
+    page.getByTestId("agent-run-summary-card").getByText("Dashboard completed: 2 charts placed.")
+  ).toBeVisible();
 
   // Both pages exist in the web-design page sidebar…
-  await expect(page.getByDisplayValue("总览")).toBeVisible();
-  await expect(page.getByDisplayValue("平台组")).toBeVisible();
+  await expect(pageTitleInput(page, "总览")).toBeVisible();
+  await expect(pageTitleInput(page, "平台组")).toBeVisible();
   // …and the canvas is showing the page the agent finished on.
   await expect(page.getByLabel("Chart zone 平台组人数")).toBeVisible();
 
   // Run-level undo removes the root page AND the page nested under it.
   await page.getByRole("button", { name: "Undo this run" }).click();
-  await expect(page.getByDisplayValue("总览")).not.toBeVisible();
-  await expect(page.getByDisplayValue("平台组")).not.toBeVisible();
+  await expect(pageTitleInput(page, "总览")).not.toBeVisible();
+  await expect(pageTitleInput(page, "平台组")).not.toBeVisible();
   await expect(page.getByLabel("Chart zone 平台组人数")).not.toBeVisible();
 });

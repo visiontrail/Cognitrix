@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import { BookMarked, ChevronRight, FileSpreadsheet, LayoutDashboard, Plus, Send, Square, X } from "lucide-react";
+import { BookMarked, ChevronRight, FileSpreadsheet, LayoutDashboard, Plus, Send, Square, WandSparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores/chat-store";
@@ -36,6 +36,7 @@ import { useMarkSavedPromptUsed, useSavedPrompts } from "@/hooks/use-saved-promp
 import { capabilitiesToGenerationOptions, insertAtSelection } from "@/lib/saved-prompts/template";
 import type { SavedPrompt } from "@/lib/saved-prompts/types";
 import { ALLOWED_ATTACHMENT_EXTENSIONS, selectChatAttachment } from "@/lib/chat/attachment";
+import { ChartPreview } from "@/components/charts/chart-preview";
 
 // Concrete Tailwind classes per generation-option tone. Kept as full literal
 // strings (not interpolated) so the JIT compiler always emits them.
@@ -64,6 +65,13 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const clearPendingSetup = useChatStore((s) => s.clearPendingIngestionSetup);
   const isSending = useUIStore((s) => Boolean(s.sendingBySession[sessionId]));
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const chartEditTarget = useUIStore((s) =>
+    s.chartEditTarget?.sessionId === sessionId &&
+    s.chartEditTarget.workspaceId === activeWorkspaceId
+      ? s.chartEditTarget
+      : null
+  );
+  const clearChartEditTarget = useUIStore((s) => s.clearChartEditTarget);
   const sendMessage = useSendMessage();
   const confirmSetup = useConfirmIngestionSetup();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -109,7 +117,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   const agentOption = findGenerationOption("agent_canvas");
   // Agent mode v1 operates on the web-design canvas only: prompt a one-click
   // switch instead of letting the backend reject the turn.
-  const agentFormatMismatch = agentMode && canvasFormatId !== "web-design";
+  const agentFormatMismatch = agentMode && !chartEditTarget && canvasFormatId !== "web-design";
   const columns = useWorkspaceColumns(activeWorkspaceId);
   const approvalOptions = useMemo(
     () => collectPendingApprovalOptions(pendingApproval?.plan.humanApproval.options),
@@ -150,6 +158,11 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     lastSessionIdRef.current = sessionId;
     setSelectedFile(null);
   }, [sessionId, setSelectedFile]);
+
+  useEffect(() => {
+    if (!chartEditTarget) return;
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [chartEditTarget]);
 
   useEffect(() => {
     if (!actionMenuOpen) return;
@@ -204,6 +217,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       // Sticky mode: carried by every turn of this conversation, and
       // deliberately not reset below with the per-message selections.
       agentCanvas: agentMode,
+      chartEditTarget: chartEditTarget ?? undefined,
     });
     setComposerText("");
     setSelectedChartType(null);
@@ -228,6 +242,7 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
     selectedChartType,
     selectedOptions,
     selectedFile,
+    chartEditTarget,
     sendMessage,
     sessionId,
     setComposerText,
@@ -469,6 +484,41 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
   return (
     <div className="border-t border-border-cream bg-ivory px-4 py-3 shrink-0">
       <div className="max-w-4xl mx-auto space-y-2">
+        {chartEditTarget ? (
+          <section
+            data-testid="chart-edit-context"
+            aria-label={t("chat.chartEdit.contextAria", { title: chartEditTarget.title })}
+            className="relative overflow-hidden rounded-comfortable border border-terracotta/30 bg-[linear-gradient(120deg,rgba(201,100,66,0.10),rgba(245,240,232,0.78))] shadow-[0_10px_28px_rgba(80,58,41,0.08)]"
+          >
+            <div className="grid min-h-[116px] grid-cols-[minmax(132px,0.8fr)_minmax(0,1.2fr)_auto] items-stretch">
+              <div className="overflow-hidden border-r border-terracotta/15 bg-parchment/80 p-1">
+                <ChartPreview spec={chartEditTarget.spec} height={108} />
+              </div>
+              <div className="flex min-w-0 flex-col justify-center gap-1 px-3 py-2.5">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-terracotta">
+                  <WandSparkles className="h-3.5 w-3.5" />
+                  {t("chat.chartEdit.badge")}
+                </p>
+                <p className="truncate text-body-sm font-semibold text-near-black" title={chartEditTarget.title}>
+                  {chartEditTarget.title}
+                </p>
+                <p className="text-caption text-stone-gray">
+                  {t("chat.chartEdit.instruction", { chartType: chartEditTarget.chartType })}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="m-2 self-start rounded-full p-1 text-stone-gray transition-colors hover:bg-ivory/80 hover:text-near-black focus:outline-none focus-visible:ring-2 focus-visible:ring-terracotta"
+                onClick={() => clearChartEditTarget(chartEditTarget.nodeId)}
+                aria-label={t("chat.chartEdit.remove", { title: chartEditTarget.title })}
+                disabled={isSending}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {pendingSetup ? (
           <IngestionSetupCard
             initialSeed={pendingSetup.plan.suggestedCatalogSeed}
@@ -849,6 +899,8 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
               placeholder={
                 inputLockedByApproval
                   ? t("chat.ingestion.approvalInputLocked")
+                  : chartEditTarget
+                    ? t("chat.chartEdit.placeholder")
                   : agentMode
                     ? t("chat.agentCanvas.placeholder")
                     : t("chat.inputPlaceholder")
@@ -911,7 +963,9 @@ export function ChatInput({ sessionId }: { sessionId: string }) {
       </div>
 
       <p className="text-label text-stone-gray text-center mt-2">
-        {agentMode
+        {chartEditTarget
+          ? t("chat.chartEdit.hint")
+          : agentMode
           ? t("chat.inputHintWithAgentCanvas")
           : activeOptions.length > 1
           ? t("chat.inputHintWithOptions", { count: activeOptions.length })

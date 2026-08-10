@@ -164,6 +164,23 @@ export type AgentRunSummary = {
   skippedCount: number;
 };
 
+// Ephemeral bridge from a canvas chart into the chat composer. The target is
+// intentionally not persisted: it represents the user's current editing
+// gesture, while the eventual replacement is saved in the workspace snapshot.
+export type CanvasChartEditTarget = {
+  sessionId: string;
+  workspaceId: string;
+  canvasFormat: import("./workspace").WorkspaceCanvasFormatId;
+  nodeId: string;
+  zoneId?: string;
+  pageId?: string;
+  assetId: string;
+  title: string;
+  chartType: string;
+  spec: import("./chart").ChartSpec;
+  assistantRows?: Record<string, unknown>[];
+};
+
 export type SendMessageResponse = {
   message: ChatMessage;
   assistantResponse: AssistantResponse;

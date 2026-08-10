@@ -25,3 +25,6 @@ infra/docker/.docker-data/
 logs/dev-local/*
 sample_data/project_management_nonstructure.xlsx
 sample_data/gs_hr_roster.xlsx
+
+# Local high-resolution demo recordings. README GIF derivatives are tracked.
+docs/media/demos/videos/

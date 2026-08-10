@@ -61,6 +61,24 @@ Key differentiators versus traditional BI tools (Tableau, Power BI, Metabase):
 
 ---
 
+## Product Demos
+
+### Finance operations: Excel to interactive analysis
+
+Upload `sample_data/finance_operations_sample.xlsx`, ask about budget versus actuals and monthly variance, then turn the generated charts into a two-page finance workspace.
+
+![Finance operations Excel analysis demo](docs/media/demos/finance-operations-demo.gif)
+
+### Project management: Agent-generated web dashboard
+
+Upload `sample_data/project_management_sample.xlsx`, investigate delivery and budget risks, and let Agent mode build a three-page executive dashboard for portfolio overview, risks, and resources.
+
+![Project management Agent dashboard demo](docs/media/demos/project-management-agent-demo.gif)
+
+> These animations are deterministic local replays calculated from the bundled workbooks. Configure model credentials to run the same ingestion and Agent steps live.
+
+---
+
 ## Functional Architecture
 
 [![Cognitrix functional architecture](docs/diagrams/functional-architecture-en.svg)](docs/diagrams/functional-architecture-en.html)

@@ -46,6 +46,24 @@ Cognitrix は、ETL パイプライン、固定ダッシュボード、SQL の�
 
 ---
 
+## プロダクトデモ
+
+### 財務オペレーション: Excel から対話型分析へ
+
+`sample_data/finance_operations_sample.xlsx` をアップロードし、部門別の予算対実績と月次差異を質問して、生成されたチャートを 2 ページの財務 Workspace にまとめます。
+
+![財務オペレーション Excel 分析デモ](docs/media/demos/finance-operations-demo.gif)
+
+### プロジェクト管理: Agent が複数ページの Web ダッシュボードを生成
+
+`sample_data/project_management_sample.xlsx` をアップロードし、納期・予算リスクを分析して、Agent mode でポートフォリオ概要、リスク、リソースの 3 ページを生成します。
+
+![プロジェクト管理 Agent ダッシュボードデモ](docs/media/demos/project-management-agent-demo.gif)
+
+> アニメーションは、同梱 Workbook の実データから計算した決定論的なローカル再生です。Model credential を設定すると、同じ ingestion / Agent workflow をライブ実行できます。
+
+---
+
 ## 機能アーキテクチャ
 
 [![Cognitrix 機能アーキテクチャ](docs/diagrams/functional-architecture-ja.svg)](docs/diagrams/functional-architecture-ja.html)

@@ -61,6 +61,24 @@
 
 ---
 
+## 产品演示
+
+### 财务运营：从 Excel 到交互式分析
+
+上传 `sample_data/finance_operations_sample.xlsx`，询问各部门预算与实际支出、月度差异，再把生成的图表组织成两页财务工作台。
+
+![财务运营 Excel 分析演示](docs/media/demos/finance-operations-demo.gif)
+
+### 项目管理：Agent 自动生成多页网页看板
+
+上传 `sample_data/project_management_sample.xlsx`，分析交付与预算风险，并让 Agent 模式生成包含项目总览、风险和资源的三页管理看板。
+
+![项目管理 Agent 网页看板演示](docs/media/demos/project-management-agent-demo.gif)
+
+> 动画使用仓库自带 Excel 的真实计算结果进行确定性本地回放；配置模型凭据后，可以实时运行相同的入库与 Agent 流程。
+
+---
+
 ## 功能架构
 
 [![Cognitrix 功能架构](docs/diagrams/functional-architecture-zh-cn.svg)](docs/diagrams/functional-architecture-zh-cn.html)

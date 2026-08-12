@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeftOpen, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,8 +17,6 @@ export function WorkspaceCatalogPage({ onClose }: { onClose?: () => void }) {
     const workspace = s.workspaces.find((item) => item.id === s.activeWorkspaceId);
     return workspace?.title ?? null;
   });
-  const chatSidebarOpen = useUIStore((s) => s.chatSidebarOpen);
-  const setChatSidebarOpen = useUIStore((s) => s.setChatSidebarOpen);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
 
   const handleClose = onClose ?? (() => setActivePanel("both"));
@@ -31,11 +29,6 @@ export function WorkspaceCatalogPage({ onClose }: { onClose?: () => void }) {
     <div className="flex h-full flex-col bg-parchment">
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border-cream bg-ivory px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          {!chatSidebarOpen && (
-            <Button variant="ghost" size="icon-sm" onClick={() => setChatSidebarOpen(true)}>
-              <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          )}
           <div className="min-w-0">
             <h1 className="font-serif text-feature text-near-black">
               {t("workspace.catalog.title")}

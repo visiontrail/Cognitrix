@@ -480,6 +480,124 @@ def test_agent_runtime_rejects_ungrounded_final_answer_without_sdk_tool_use(
     assert not any(item.get("event") == "tool_use" for item in result.tool_trace)
 
 
+def test_agent_runtime_accepts_tool_free_presentation_edit_grounded_by_selected_chart(
+    monkeypatch, tmp_path: Path
+) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        dataset_table = upload_dataset(
+            client,
+            rows=[
+                {"employee_id": "E-501", "department": "HR"},
+                {"employee_id": "E-502", "department": "PM"},
+            ],
+        )
+        chart_rows = [
+            {"department": "HR", "metric_value": 1},
+            {"department": "PM", "metric_value": 1},
+        ]
+        runtime = get_agent_runtime()
+        install_scripted_sdk_client(
+            runtime,
+            lambda prompt, options: {  # type: ignore[no-untyped-def]
+                "tool_calls": [],
+                "final_answer": {
+                    "chart_type": "pie",
+                    "title": "部门人数占比",
+                    "x_key": "department",
+                    "y_key": "metric_value",
+                    "name_key": "department",
+                    "metric_name": "headcount",
+                    # Reordering existing rows is a valid presentation edit.
+                    "rows": [
+                        {"department": "PM", "metric_value": 1.0},
+                        {"department": "HR", "metric_value": 1.0},
+                    ],
+                    "conclusion": "已将所选图表改为饼图。",
+                    "scope": "沿用所选图表的数据范围",
+                    "anomalies": "none",
+                },
+            },
+        )
+        result = runtime.run_turn(
+            AgentRequest(
+                conversation_id="agent-runtime-conv-focused-chart-edit",
+                request_id="agent-runtime-req-focused-chart-edit",
+                user_id="alice",
+                project_id="north",
+                dataset_table=dataset_table,
+                message="请改用饼图",
+                preferred_chart_type="pie",
+                role="viewer",
+                department="HR",
+                clearance=1,
+                chart_edit_context={
+                    "node_id": "node-1",
+                    "asset_id": "asset-1",
+                    "title": "部门人数",
+                    "chart_type": "bar",
+                    "spec": {"chartType": "bar"},
+                    "assistant_rows": chart_rows,
+                },
+            )
+        )
+
+    assert result.final_status == "completed"
+    assert result.spec["chart_type"] == "pie"
+    assert result.spec["data"] == list(reversed(chart_rows))
+    assert result.ai_state["latest_result"]["anomalies"] == "none"
+    assert not any(item.get("event") == "tool_use" for item in result.tool_trace)
+
+
+def test_agent_runtime_rejects_tool_free_chart_edit_that_changes_selected_chart_data(
+    monkeypatch, tmp_path: Path
+) -> None:
+    set_agent_env(monkeypatch, tmp_path)
+    runtime = get_agent_runtime()
+    install_scripted_sdk_client(
+        runtime,
+        lambda prompt, options: {  # type: ignore[no-untyped-def]
+            "tool_calls": [],
+            "final_answer": {
+                "chart_type": "pie",
+                "title": "部门人数占比",
+                "x_key": "department",
+                "y_key": "metric_value",
+                "rows": [{"department": "HR", "metric_value": 999}],
+                "conclusion": "已修改。",
+                "scope": "未知",
+                "anomalies": "none",
+            },
+        },
+    )
+
+    result = runtime.run_turn(
+        AgentRequest(
+            conversation_id="agent-runtime-conv-unsafe-chart-edit",
+            request_id="agent-runtime-req-unsafe-chart-edit",
+            user_id="alice",
+            project_id="north",
+            dataset_table="employees",
+            message="请改用饼图",
+            role="viewer",
+            department="HR",
+            clearance=1,
+            chart_edit_context={
+                "node_id": "node-1",
+                "asset_id": "asset-1",
+                "title": "部门人数",
+                "chart_type": "bar",
+                "spec": {"chartType": "bar"},
+                "assistant_rows": [{"department": "HR", "metric_value": 1}],
+            },
+        )
+    )
+
+    assert result.spec["chart_type"] == "empty"
+    assert result.ai_state["latest_result"]["anomalies"] == "no_tool_observation"
+
+
 def test_sdk_tool_execution_errors_are_model_visible_observations(monkeypatch, tmp_path: Path) -> None:
     set_agent_env(monkeypatch, tmp_path)
     runtime = get_agent_runtime()

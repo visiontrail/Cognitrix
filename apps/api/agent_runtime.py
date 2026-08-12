@@ -1917,8 +1917,19 @@ class AgentRuntime:
         has_current_observation = _has_tool_observation(tool_trace)
         has_current_grounding = _has_grounding_tool_observation(tool_trace)
         has_prior_grounding = _has_grounding_tool_observation(session.last_tool_trace)
-        if final_answer is not None and (has_current_observation or has_prior_grounding):
-            if has_current_observation and not has_current_grounding and not has_prior_grounding:
+        has_chart_edit_grounding = _is_grounded_chart_edit_answer(
+            final_answer=final_answer,
+            chart_edit_context=request.chart_edit_context,
+        )
+        if final_answer is not None and (
+            has_current_observation or has_prior_grounding or has_chart_edit_grounding
+        ):
+            if (
+                has_current_observation
+                and not has_current_grounding
+                and not has_prior_grounding
+                and not has_chart_edit_grounding
+            ):
                 final_answer = _empty_rows_final_answer(final_answer, locale=response_locale)
             final_answer = _repair_answer_locale_if_needed(
                 answer=final_answer,
@@ -4066,6 +4077,43 @@ def _has_grounding_tool_observation(tool_trace: list[dict[str, Any]]) -> bool:
 
 def _has_tool_observation(tool_trace: list[dict[str, Any]]) -> bool:
     return any(item.get("event") == "tool_result" for item in tool_trace)
+
+
+def _is_grounded_chart_edit_answer(
+    *,
+    final_answer: dict[str, Any] | None,
+    chart_edit_context: dict[str, Any] | None,
+) -> bool:
+    """Accept a tool-free focused edit only when it reuses the supplied rows.
+
+    A canvas chart can come from another chat session, so the current agent
+    session may have no prior tool trace. Presentation-only edits are still
+    grounded by the selected chart's rows, but the model must not be allowed to
+    introduce or remove data while bypassing the normal BI-tool requirement.
+    Row order may change because sorting is a supported presentation edit.
+    """
+    if final_answer is None or not isinstance(chart_edit_context, dict):
+        return False
+
+    answer_rows = final_answer.get("rows")
+    context_rows = chart_edit_context.get("assistant_rows")
+    if not isinstance(answer_rows, list) or not answer_rows:
+        return False
+    if not isinstance(context_rows, list) or not context_rows:
+        return False
+    if len(answer_rows) != len(context_rows):
+        return False
+    if not all(isinstance(row, dict) for row in answer_rows + context_rows):
+        return False
+
+    unmatched_context_rows = list(context_rows)
+    for answer_row in answer_rows:
+        try:
+            match_index = unmatched_context_rows.index(answer_row)
+        except ValueError:
+            return False
+        unmatched_context_rows.pop(match_index)
+    return not unmatched_context_rows
 
 
 def _normalize_response_locale(locale: str | None, message: str | None = None) -> str:
